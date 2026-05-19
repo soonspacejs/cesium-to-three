@@ -1,0 +1,581 @@
+Cesium ground source extraction
+Updated: 2026-05-19 16:42:37 +08:00
+Source archive: d:\my\explore\cesium\packages.zip
+
+Seeds:
+  engine/Source/Core/CircleGeometry.js
+  engine/Source/Core/CorridorGeometry.js
+  engine/Source/Core/EllipseGeometry.js
+  engine/Source/Core/GeometryPipeline.js
+  engine/Source/Core/GroundPolylineGeometry.js
+  engine/Source/Core/PolygonGeometry.js
+  engine/Source/Core/RectangleGeometry.js
+  engine/Source/Core/VertexFormat.js
+  engine/Source/DataSources/GroundGeometryUpdater.js
+  engine/Source/DataSources/StaticGroundGeometryColorBatch.js
+  engine/Source/DataSources/StaticGroundGeometryPerMaterialBatch.js
+  engine/Source/DataSources/StaticGroundPolylinePerMaterialBatch.js
+  engine/Source/Scene/ClassificationPrimitive.js
+  engine/Source/Scene/ClassificationType.js
+  engine/Source/Scene/GlobeDepth.js
+  engine/Source/Scene/GroundPolylinePrimitive.js
+  engine/Source/Scene/GroundPrimitive.js
+  engine/Source/Scene/InvertClassification.js
+  engine/Source/Scene/OrderedGroundPrimitiveCollection.js
+  engine/Source/Scene/ShadowVolumeAppearance.js
+  engine/Source/Scene/TranslucentTileClassification.js
+  engine/Source/Shaders/Builtin/Constants/degreesPerRadian.glsl
+  engine/Source/Shaders/Builtin/Constants/depthRange.glsl
+  engine/Source/Shaders/Builtin/Constants/epsilon1.glsl
+  engine/Source/Shaders/Builtin/Constants/epsilon2.glsl
+  engine/Source/Shaders/Builtin/Constants/epsilon3.glsl
+  engine/Source/Shaders/Builtin/Constants/epsilon4.glsl
+  engine/Source/Shaders/Builtin/Constants/epsilon5.glsl
+  engine/Source/Shaders/Builtin/Constants/epsilon6.glsl
+  engine/Source/Shaders/Builtin/Constants/epsilon7.glsl
+  engine/Source/Shaders/Builtin/Constants/infinity.glsl
+  engine/Source/Shaders/Builtin/Constants/oneOverPi.glsl
+  engine/Source/Shaders/Builtin/Constants/oneOverTwoPi.glsl
+  engine/Source/Shaders/Builtin/Constants/passCesium3DTile.glsl
+  engine/Source/Shaders/Builtin/Constants/passCesium3DTileClassification.glsl
+  engine/Source/Shaders/Builtin/Constants/passCesium3DTileClassificationIgnoreShow.glsl
+  engine/Source/Shaders/Builtin/Constants/passCesium3DTileEdges.glsl
+  engine/Source/Shaders/Builtin/Constants/passCesium3DTileEdgesDirect.glsl
+  engine/Source/Shaders/Builtin/Constants/passClassification.glsl
+  engine/Source/Shaders/Builtin/Constants/passCompute.glsl
+  engine/Source/Shaders/Builtin/Constants/passEnvironment.glsl
+  engine/Source/Shaders/Builtin/Constants/passGaussianSplats.glsl
+  engine/Source/Shaders/Builtin/Constants/passGlobe.glsl
+  engine/Source/Shaders/Builtin/Constants/passOpaque.glsl
+  engine/Source/Shaders/Builtin/Constants/passOverlay.glsl
+  engine/Source/Shaders/Builtin/Constants/passTerrainClassification.glsl
+  engine/Source/Shaders/Builtin/Constants/passTranslucent.glsl
+  engine/Source/Shaders/Builtin/Constants/passVoxels.glsl
+  engine/Source/Shaders/Builtin/Constants/pi.glsl
+  engine/Source/Shaders/Builtin/Constants/piOverFour.glsl
+  engine/Source/Shaders/Builtin/Constants/piOverSix.glsl
+  engine/Source/Shaders/Builtin/Constants/piOverThree.glsl
+  engine/Source/Shaders/Builtin/Constants/piOverTwo.glsl
+  engine/Source/Shaders/Builtin/Constants/radiansPerDegree.glsl
+  engine/Source/Shaders/Builtin/Constants/sceneMode2D.glsl
+  engine/Source/Shaders/Builtin/Constants/sceneMode3D.glsl
+  engine/Source/Shaders/Builtin/Constants/sceneModeColumbusView.glsl
+  engine/Source/Shaders/Builtin/Constants/sceneModeMorphing.glsl
+  engine/Source/Shaders/Builtin/Constants/solarRadius.glsl
+  engine/Source/Shaders/Builtin/Constants/threePiOver2.glsl
+  engine/Source/Shaders/Builtin/Constants/twoPi.glsl
+  engine/Source/Shaders/Builtin/Constants/webMercatorMaxLatitude.glsl
+  engine/Source/Shaders/Builtin/Functions/acesTonemapping.glsl
+  engine/Source/Shaders/Builtin/Functions/alphaWeight.glsl
+  engine/Source/Shaders/Builtin/Functions/antialias.glsl
+  engine/Source/Shaders/Builtin/Functions/applyHSBShift.glsl
+  engine/Source/Shaders/Builtin/Functions/approximateSphericalCoordinates.glsl
+  engine/Source/Shaders/Builtin/Functions/approximateTanh.glsl
+  engine/Source/Shaders/Builtin/Functions/backFacing.glsl
+  engine/Source/Shaders/Builtin/Functions/branchFreeTernary.glsl
+  engine/Source/Shaders/Builtin/Functions/cascadeColor.glsl
+  engine/Source/Shaders/Builtin/Functions/cascadeDistance.glsl
+  engine/Source/Shaders/Builtin/Functions/cascadeMatrix.glsl
+  engine/Source/Shaders/Builtin/Functions/cascadeWeights.glsl
+  engine/Source/Shaders/Builtin/Functions/clipPolygons.glsl
+  engine/Source/Shaders/Builtin/Functions/columbusViewMorph.glsl
+  engine/Source/Shaders/Builtin/Functions/computeAtmosphereColor.glsl
+  engine/Source/Shaders/Builtin/Functions/computeGroundAtmosphereScattering.glsl
+  engine/Source/Shaders/Builtin/Functions/computePosition.glsl
+  engine/Source/Shaders/Builtin/Functions/computeScattering.glsl
+  engine/Source/Shaders/Builtin/Functions/computeTextureTransform.glsl
+  engine/Source/Shaders/Builtin/Functions/cosineAndSine.glsl
+  engine/Source/Shaders/Builtin/Functions/decodeRGB8.glsl
+  engine/Source/Shaders/Builtin/Functions/decompressTextureCoordinates.glsl
+  engine/Source/Shaders/Builtin/Functions/depthClamp.glsl
+  engine/Source/Shaders/Builtin/Functions/eastNorthUpToEyeCoordinates.glsl
+  engine/Source/Shaders/Builtin/Functions/ellipsoidContainsPoint.glsl
+  engine/Source/Shaders/Builtin/Functions/ellipsoidTextureCoordinates.glsl
+  engine/Source/Shaders/Builtin/Functions/equalsEpsilon.glsl
+  engine/Source/Shaders/Builtin/Functions/eyeOffset.glsl
+  engine/Source/Shaders/Builtin/Functions/eyeToWindowCoordinates.glsl
+  engine/Source/Shaders/Builtin/Functions/fastApproximateAtan.glsl
+  engine/Source/Shaders/Builtin/Functions/fog.glsl
+  engine/Source/Shaders/Builtin/Functions/gammaCorrect.glsl
+  engine/Source/Shaders/Builtin/Functions/geodeticSurfaceNormal.glsl
+  engine/Source/Shaders/Builtin/Functions/getDefaultMaterial.glsl
+  engine/Source/Shaders/Builtin/Functions/getDynamicAtmosphereLightDirection.glsl
+  engine/Source/Shaders/Builtin/Functions/getLambertDiffuse.glsl
+  engine/Source/Shaders/Builtin/Functions/getSpecular.glsl
+  engine/Source/Shaders/Builtin/Functions/getWaterNoise.glsl
+  engine/Source/Shaders/Builtin/Functions/HSBToRGB.glsl
+  engine/Source/Shaders/Builtin/Functions/HSLToRGB.glsl
+  engine/Source/Shaders/Builtin/Functions/hue.glsl
+  engine/Source/Shaders/Builtin/Functions/inverseGamma.glsl
+  engine/Source/Shaders/Builtin/Functions/isEmpty.glsl
+  engine/Source/Shaders/Builtin/Functions/isFull.glsl
+  engine/Source/Shaders/Builtin/Functions/latitudeToWebMercatorFraction.glsl
+  engine/Source/Shaders/Builtin/Functions/linearToSrgb.glsl
+  engine/Source/Shaders/Builtin/Functions/lineDistance.glsl
+  engine/Source/Shaders/Builtin/Functions/luminance.glsl
+  engine/Source/Shaders/Builtin/Functions/maximumComponent.glsl
+  engine/Source/Shaders/Builtin/Functions/metersPerPixel.glsl
+  engine/Source/Shaders/Builtin/Functions/modelToWindowCoordinates.glsl
+  engine/Source/Shaders/Builtin/Functions/multiplyWithColorBalance.glsl
+  engine/Source/Shaders/Builtin/Functions/nearFarScalar.glsl
+  engine/Source/Shaders/Builtin/Functions/octDecode.glsl
+  engine/Source/Shaders/Builtin/Functions/packDepth.glsl
+  engine/Source/Shaders/Builtin/Functions/pbrLighting.glsl
+  engine/Source/Shaders/Builtin/Functions/pbrNeutralTonemapping.glsl
+  engine/Source/Shaders/Builtin/Functions/phong.glsl
+  engine/Source/Shaders/Builtin/Functions/planeDistance.glsl
+  engine/Source/Shaders/Builtin/Functions/pointAlongRay.glsl
+  engine/Source/Shaders/Builtin/Functions/rayEllipsoidIntersectionInterval.glsl
+  engine/Source/Shaders/Builtin/Functions/raySphereIntersectionInterval.glsl
+  engine/Source/Shaders/Builtin/Functions/readDepth.glsl
+  engine/Source/Shaders/Builtin/Functions/readNonPerspective.glsl
+  engine/Source/Shaders/Builtin/Functions/reverseLogDepth.glsl
+  engine/Source/Shaders/Builtin/Functions/RGBToHSB.glsl
+  engine/Source/Shaders/Builtin/Functions/RGBToHSL.glsl
+  engine/Source/Shaders/Builtin/Functions/RGBToXYZ.glsl
+  engine/Source/Shaders/Builtin/Functions/round.glsl
+  engine/Source/Shaders/Builtin/Functions/saturation.glsl
+  engine/Source/Shaders/Builtin/Functions/shadowDepthCompare.glsl
+  engine/Source/Shaders/Builtin/Functions/shadowVisibility.glsl
+  engine/Source/Shaders/Builtin/Functions/signNotZero.glsl
+  engine/Source/Shaders/Builtin/Functions/sphericalHarmonics.glsl
+  engine/Source/Shaders/Builtin/Functions/srgbToLinear.glsl
+  engine/Source/Shaders/Builtin/Functions/tangentToEyeSpaceMatrix.glsl
+  engine/Source/Shaders/Builtin/Functions/textureCube.glsl
+  engine/Source/Shaders/Builtin/Functions/transformPlane.glsl
+  engine/Source/Shaders/Builtin/Functions/translateRelativeToEye.glsl
+  engine/Source/Shaders/Builtin/Functions/translucentPhong.glsl
+  engine/Source/Shaders/Builtin/Functions/transpose.glsl
+  engine/Source/Shaders/Builtin/Functions/unpackClippingExtents.glsl
+  engine/Source/Shaders/Builtin/Functions/unpackDepth.glsl
+  engine/Source/Shaders/Builtin/Functions/unpackFloat.glsl
+  engine/Source/Shaders/Builtin/Functions/unpackTexture.glsl
+  engine/Source/Shaders/Builtin/Functions/unpackUint.glsl
+  engine/Source/Shaders/Builtin/Functions/valueTransform.glsl
+  engine/Source/Shaders/Builtin/Functions/vertexLogDepth.glsl
+  engine/Source/Shaders/Builtin/Functions/windowToEyeCoordinates.glsl
+  engine/Source/Shaders/Builtin/Functions/writeDepthClamp.glsl
+  engine/Source/Shaders/Builtin/Functions/writeLogDepth.glsl
+  engine/Source/Shaders/Builtin/Functions/writeNonPerspective.glsl
+  engine/Source/Shaders/Builtin/Functions/XYZToRGB.glsl
+  engine/Source/Shaders/Builtin/Structs/depthRangeStruct.glsl
+  engine/Source/Shaders/Builtin/Structs/material.glsl
+  engine/Source/Shaders/Builtin/Structs/materialInput.glsl
+  engine/Source/Shaders/Builtin/Structs/modelMaterial.glsl
+  engine/Source/Shaders/Builtin/Structs/modelVertexOutput.glsl
+  engine/Source/Shaders/Builtin/Structs/ray.glsl
+  engine/Source/Shaders/Builtin/Structs/raySegment.glsl
+  engine/Source/Shaders/Builtin/Structs/shadowParameters.glsl
+  engine/Source/Shaders/PolylineShadowVolumeFS.glsl
+  engine/Source/Shaders/PolylineShadowVolumeMorphFS.glsl
+  engine/Source/Shaders/PolylineShadowVolumeMorphVS.glsl
+  engine/Source/Shaders/PolylineShadowVolumeVS.glsl
+  engine/Source/Shaders/PostProcessStages/CompositeTranslucentClassification.glsl
+  engine/Source/Shaders/PostProcessStages/PassThrough.glsl
+  engine/Source/Shaders/PostProcessStages/PassThroughDepth.glsl
+  engine/Source/Shaders/ShadowVolumeAppearanceFS.glsl
+  engine/Source/Shaders/ShadowVolumeAppearanceVS.glsl
+  engine/Source/Shaders/ShadowVolumeFS.glsl
+  engine/Source/Workers/createCircleGeometry.js
+  engine/Source/Workers/createCorridorGeometry.js
+  engine/Source/Workers/createEllipseGeometry.js
+  engine/Source/Workers/createGroundPolylineGeometry.js
+  engine/Source/Workers/createPolygonGeometry.js
+  engine/Source/Workers/createRectangleGeometry.js
+
+Extracted files: 394
+Files:
+  engine/Source/Core/appendForwardSlash.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/ApproximateTerrainHeights.js  [imported by engine/Source/Core/GroundPolylineGeometry.js]
+  engine/Source/Core/ArcType.js  [imported by engine/Source/Core/GroundPolylineGeometry.js]
+  engine/Source/Core/arrayRemoveDuplicates.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/assert.js  [imported by engine/Source/Renderer/VertexArray.js]
+  engine/Source/Core/AssociativeArray.js  [imported by engine/Source/DataSources/StaticGroundGeometryColorBatch.js]
+  engine/Source/Core/AttributeCompression.js  [imported by engine/Source/Core/GeometryPipeline.js]
+  engine/Source/Core/AxisAlignedBoundingBox.js  [imported by engine/Source/Core/EllipsoidTangentPlane.js]
+  engine/Source/Core/barycentricCoordinates.js  [imported by engine/Source/Core/GeometryPipeline.js]
+  engine/Source/Core/binarySearch.js  [imported by engine/Source/Core/JulianDate.js]
+  engine/Source/Core/BoundingRectangle.js  [imported by engine/Source/Core/PolygonGeometry.js]
+  engine/Source/Core/BoundingSphere.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/BoxGeometry.js  [imported by engine/Source/Renderer/CubeMap.js]
+  engine/Source/Core/buildModuleUrl.js  [imported by engine/Source/Core/ApproximateTerrainHeights.js]
+  engine/Source/Core/Cartesian2.js  [imported by engine/Source/Core/EllipseGeometry.js]
+  engine/Source/Core/Cartesian3.js  [imported by engine/Source/Core/CircleGeometry.js]
+  engine/Source/Core/Cartesian4.js  [imported by engine/Source/Core/GeometryPipeline.js]
+  engine/Source/Core/Cartographic.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/Check.js  [imported by engine/Source/Core/CircleGeometry.js]
+  engine/Source/Core/CircleGeometry.js  [seed]
+  engine/Source/Core/clone.js  [imported by engine/Source/Scene/Primitive.js]
+  engine/Source/Core/Color.js  [imported by engine/Source/DataSources/StaticGroundGeometryColorBatch.js]
+  engine/Source/Core/ColorGeometryInstanceAttribute.js  [imported by engine/Source/DataSources/StaticGroundGeometryColorBatch.js]
+  engine/Source/Core/combine.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Core/ComponentDatatype.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/CompressedTextureBuffer.js  [imported by engine/Source/Core/KTX2Transcoder.js]
+  engine/Source/Core/CornerType.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/CorridorGeometry.js  [seed]
+  engine/Source/Core/CorridorGeometryLibrary.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/createGuid.js  [imported by engine/Source/Renderer/Texture.js]
+  engine/Source/Core/CubicRealPolynomial.js  [imported by engine/Source/Core/QuarticRealPolynomial.js]
+  engine/Source/Core/defer.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/defined.js  [imported by engine/Source/Core/CircleGeometry.js]
+  engine/Source/Core/destroyObject.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Core/DeveloperError.js  [imported by engine/Source/Core/EllipseGeometry.js]
+  engine/Source/Core/DistanceDisplayCondition.js  [imported by engine/Source/DataSources/StaticGroundGeometryColorBatch.js]
+  engine/Source/Core/DistanceDisplayConditionGeometryInstanceAttribute.js  [imported by engine/Source/DataSources/StaticGroundGeometryColorBatch.js]
+  engine/Source/Core/EarthOrientationParameters.js  [imported by engine/Source/Core/Transforms.js]
+  engine/Source/Core/EarthOrientationParametersSample.js  [imported by engine/Source/Core/Transforms.js]
+  engine/Source/Core/EllipseGeometry.js  [seed]
+  engine/Source/Core/EllipseGeometryLibrary.js  [imported by engine/Source/Core/EllipseGeometry.js]
+  engine/Source/Core/Ellipsoid.js  [imported by engine/Source/Core/CircleGeometry.js]
+  engine/Source/Core/EllipsoidGeodesic.js  [imported by engine/Source/Core/GroundPolylineGeometry.js]
+  engine/Source/Core/EllipsoidRhumbLine.js  [imported by engine/Source/Core/GroundPolylineGeometry.js]
+  engine/Source/Core/EllipsoidTangentPlane.js  [imported by engine/Source/Core/PolygonGeometry.js]
+  engine/Source/Core/EncodedCartesian3.js  [imported by engine/Source/Core/GeometryPipeline.js]
+  engine/Source/Core/Event.js  [imported by engine/Source/DataSources/CallbackProperty.js]
+  engine/Source/Core/FeatureDetection.js  [imported by engine/Source/Core/Quaternion.js]
+  engine/Source/Core/Frozen.js  [imported by engine/Source/Core/CircleGeometry.js]
+  engine/Source/Core/Fullscreen.js  [imported by engine/Source/Core/FeatureDetection.js]
+  engine/Source/Core/GeographicProjection.js  [imported by engine/Source/Core/EllipseGeometry.js]
+  engine/Source/Core/GeographicTilingScheme.js  [imported by engine/Source/Core/ApproximateTerrainHeights.js]
+  engine/Source/Core/Geometry.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/GeometryAttribute.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/GeometryAttributes.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/GeometryInstance.js  [imported by engine/Source/Core/EllipseGeometry.js]
+  engine/Source/Core/GeometryInstanceAttribute.js  [imported by engine/Source/Scene/GroundPolylinePrimitive.js]
+  engine/Source/Core/GeometryOffsetAttribute.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/GeometryPipeline.js  [seed]
+  engine/Source/Core/GeometryType.js  [imported by engine/Source/Core/GeometryPipeline.js]
+  engine/Source/Core/getAbsoluteUri.js  [imported by engine/Source/Core/buildModuleUrl.js]
+  engine/Source/Core/getBaseUri.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/getExtensionFromUri.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/getImagePixels.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/GregorianDate.js  [imported by engine/Source/Core/JulianDate.js]
+  engine/Source/Core/GroundPolylineGeometry.js  [seed]
+  engine/Source/Core/HeadingPitchRoll.js  [imported by engine/Source/Core/Transforms.js]
+  engine/Source/Core/Heap.js  [imported by engine/Source/Core/RequestScheduler.js]
+  engine/Source/Core/Iau2006XysData.js  [imported by engine/Source/Core/Transforms.js]
+  engine/Source/Core/Iau2006XysSample.js  [imported by engine/Source/Core/Transforms.js]
+  engine/Source/Core/IndexDatatype.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/Intersect.js  [imported by engine/Source/Core/GeometryPipeline.js]
+  engine/Source/Core/IntersectionTests.js  [imported by engine/Source/Core/GeometryPipeline.js]
+  engine/Source/Core/Interval.js  [imported by engine/Source/Core/BoundingSphere.js]
+  engine/Source/Core/isBlobUri.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/isCrossOriginUrl.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/isDataUri.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/isLeapYear.js  [imported by engine/Source/Core/JulianDate.js]
+  engine/Source/Core/Iso8601.js  [imported by engine/Source/DataSources/GeometryUpdater.js]
+  engine/Source/Core/JulianDate.js  [imported by engine/Source/DataSources/CallbackProperty.js]
+  engine/Source/Core/KTX2Transcoder.js  [imported by engine/Source/Core/loadKTX2.js]
+  engine/Source/Core/LeapSecond.js  [imported by engine/Source/Core/JulianDate.js]
+  engine/Source/Core/loadAndExecuteScript.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/loadKTX2.js  [imported by engine/Source/Scene/Material.js]
+  engine/Source/Core/Math.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/Matrix2.js  [imported by engine/Source/Core/RectangleGeometry.js]
+  engine/Source/Core/Matrix3.js  [imported by engine/Source/Core/EllipseGeometry.js]
+  engine/Source/Core/Matrix4.js  [imported by engine/Source/Core/GeometryPipeline.js]
+  engine/Source/Core/objectToQuery.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/OffsetGeometryInstanceAttribute.js  [imported by engine/Source/Scene/PrimitivePipeline.js]
+  engine/Source/Core/oneTimeWarning.js  [imported by engine/Source/DataSources/GroundGeometryUpdater.js]
+  engine/Source/Core/OrientedBoundingBox.js  [imported by engine/Source/Scene/GroundPrimitive.js]
+  engine/Source/Core/parseResponseHeaders.js  [imported by engine/Source/Core/RequestErrorEvent.js]
+  engine/Source/Core/PixelFormat.js  [imported by engine/Source/Scene/InvertClassification.js]
+  engine/Source/Core/Plane.js  [imported by engine/Source/Core/GeometryPipeline.js]
+  engine/Source/Core/PolygonGeometry.js  [seed]
+  engine/Source/Core/PolygonGeometryLibrary.js  [imported by engine/Source/Core/PolygonGeometry.js]
+  engine/Source/Core/PolygonHierarchy.js  [imported by engine/Source/Core/PolygonGeometryLibrary.js]
+  engine/Source/Core/PolygonPipeline.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/PolylinePipeline.js  [imported by engine/Source/Core/CorridorGeometryLibrary.js]
+  engine/Source/Core/PolylineVolumeGeometryLibrary.js  [imported by engine/Source/Core/CorridorGeometryLibrary.js]
+  engine/Source/Core/PrimitiveType.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/QuadraticRealPolynomial.js  [imported by engine/Source/Core/IntersectionTests.js]
+  engine/Source/Core/QuarticRealPolynomial.js  [imported by engine/Source/Core/IntersectionTests.js]
+  engine/Source/Core/Quaternion.js  [imported by engine/Source/Core/EllipseGeometry.js]
+  engine/Source/Core/queryToObject.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/Queue.js  [imported by engine/Source/Core/PolygonGeometryLibrary.js]
+  engine/Source/Core/Ray.js  [imported by engine/Source/Core/IntersectionTests.js]
+  engine/Source/Core/Rectangle.js  [imported by engine/Source/Core/CorridorGeometry.js]
+  engine/Source/Core/RectangleCollisionChecker.js  [imported by engine/Source/DataSources/StaticGroundGeometryColorBatch.js]
+  engine/Source/Core/RectangleGeometry.js  [seed]
+  engine/Source/Core/RectangleGeometryLibrary.js  [imported by engine/Source/Core/RectangleGeometry.js]
+  engine/Source/Core/ReferenceFrame.js  [imported by engine/Source/DataSources/ConstantPositionProperty.js]
+  engine/Source/Core/Request.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/RequestErrorEvent.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/RequestScheduler.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/RequestState.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/RequestType.js  [imported by engine/Source/Core/Request.js]
+  engine/Source/Core/Resource.js  [imported by engine/Source/Core/ApproximateTerrainHeights.js]
+  engine/Source/Core/RuntimeError.js  [imported by engine/Source/Core/Matrix4.js]
+  engine/Source/Core/scaleToGeodeticSurface.js  [imported by engine/Source/Core/Ellipsoid.js]
+  engine/Source/Core/ShowGeometryInstanceAttribute.js  [imported by engine/Source/DataSources/StaticGroundGeometryColorBatch.js]
+  engine/Source/Core/Stereographic.js  [imported by engine/Source/Core/PolygonGeometry.js]
+  engine/Source/Core/subdivideArray.js  [imported by engine/Source/Scene/Primitive.js]
+  engine/Source/Core/TaskProcessor.js  [imported by engine/Source/Scene/Primitive.js]
+  engine/Source/Core/TimeConstants.js  [imported by engine/Source/Core/Transforms.js]
+  engine/Source/Core/TimeInterval.js  [imported by engine/Source/Core/Iso8601.js]
+  engine/Source/Core/TimeStandard.js  [imported by engine/Source/Core/JulianDate.js]
+  engine/Source/Core/Tipsify.js  [imported by engine/Source/Core/GeometryPipeline.js]
+  engine/Source/Core/TrackingReferenceFrame.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/Core/Transforms.js  [imported by engine/Source/Scene/ShadowVolumeAppearance.js]
+  engine/Source/Core/TranslationRotationScale.js  [imported by engine/Source/DataSources/NodeTransformationProperty.js]
+  engine/Source/Core/TrustedServers.js  [imported by engine/Source/Core/Resource.js]
+  engine/Source/Core/VertexFormat.js  [seed]
+  engine/Source/Core/VerticalExaggeration.js  [imported by engine/Source/Scene/GroundPrimitive.js]
+  engine/Source/Core/WebGLConstants.js  [imported by engine/Source/Core/ComponentDatatype.js]
+  engine/Source/Core/WebMercatorProjection.js  [imported by engine/Source/Core/GroundPolylineGeometry.js]
+  engine/Source/Core/WindingOrder.js  [imported by engine/Source/Core/PolygonGeometry.js]
+  engine/Source/DataSources/BillboardGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/BoundingSphereState.js  [imported by engine/Source/DataSources/StaticGroundGeometryColorBatch.js]
+  engine/Source/DataSources/BoxGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/CallbackProperty.js  [imported by engine/Source/DataSources/GroundGeometryUpdater.js]
+  engine/Source/DataSources/Cesium3DTilesetGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/ColorMaterialProperty.js  [imported by engine/Source/DataSources/StaticGroundGeometryPerMaterialBatch.js]
+  engine/Source/DataSources/ConstantPositionProperty.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/ConstantProperty.js  [imported by engine/Source/DataSources/GroundGeometryUpdater.js]
+  engine/Source/DataSources/CorridorGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/createMaterialPropertyDescriptor.js  [imported by engine/Source/DataSources/BoxGraphics.js]
+  engine/Source/DataSources/createPropertyDescriptor.js  [imported by engine/Source/DataSources/ColorMaterialProperty.js]
+  engine/Source/DataSources/createRawPropertyDescriptor.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/CylinderGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/EllipseGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/EllipsoidGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/Entity.js  [imported by engine/Source/DataSources/GeometryUpdater.js]
+  engine/Source/DataSources/GeometryUpdater.js  [imported by engine/Source/DataSources/GroundGeometryUpdater.js]
+  engine/Source/DataSources/GroundGeometryUpdater.js  [seed]
+  engine/Source/DataSources/ImageMaterialProperty.js  [imported by engine/Source/DataSources/createMaterialPropertyDescriptor.js]
+  engine/Source/DataSources/LabelGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/MaterialProperty.js  [imported by engine/Source/DataSources/StaticGroundGeometryPerMaterialBatch.js]
+  engine/Source/DataSources/ModelGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/NodeTransformationProperty.js  [imported by engine/Source/DataSources/ModelGraphics.js]
+  engine/Source/DataSources/PathGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/PlaneGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/PointGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/PolygonGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/PolylineGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/PolylineVolumeGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/PositionProperty.js  [imported by engine/Source/DataSources/ConstantPositionProperty.js]
+  engine/Source/DataSources/Property.js  [imported by engine/Source/DataSources/StaticGroundGeometryColorBatch.js]
+  engine/Source/DataSources/PropertyBag.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/RectangleGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/DataSources/StaticGroundGeometryColorBatch.js  [seed]
+  engine/Source/DataSources/StaticGroundGeometryPerMaterialBatch.js  [seed]
+  engine/Source/DataSources/StaticGroundPolylinePerMaterialBatch.js  [seed]
+  engine/Source/DataSources/TerrainOffsetProperty.js  [imported by engine/Source/DataSources/GroundGeometryUpdater.js]
+  engine/Source/DataSources/WallGraphics.js  [imported by engine/Source/DataSources/Entity.js]
+  engine/Source/Renderer/AutomaticUniforms.js  [imported by engine/Source/Renderer/ShaderProgram.js]
+  engine/Source/Renderer/Buffer.js  [imported by engine/Source/Renderer/VertexArray.js]
+  engine/Source/Renderer/BufferUsage.js  [imported by engine/Source/Scene/Primitive.js]
+  engine/Source/Renderer/ClearCommand.js  [imported by engine/Source/Scene/GlobeDepth.js]
+  engine/Source/Renderer/ContextLimits.js  [imported by engine/Source/Renderer/RenderState.js]
+  engine/Source/Renderer/createUniform.js  [imported by engine/Source/Renderer/ShaderProgram.js]
+  engine/Source/Renderer/createUniformArray.js  [imported by engine/Source/Renderer/ShaderProgram.js]
+  engine/Source/Renderer/CubeMap.js  [imported by engine/Source/Scene/Material.js]
+  engine/Source/Renderer/CubeMapFace.js  [imported by engine/Source/Renderer/CubeMap.js]
+  engine/Source/Renderer/demodernizeShader.js  [imported by engine/Source/Renderer/ShaderSource.js]
+  engine/Source/Renderer/DrawCommand.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Renderer/Framebuffer.js  [imported by engine/Source/Renderer/FramebufferManager.js]
+  engine/Source/Renderer/FramebufferManager.js  [imported by engine/Source/Scene/GlobeDepth.js]
+  engine/Source/Renderer/freezeRenderState.js  [imported by engine/Source/Renderer/RenderState.js]
+  engine/Source/Renderer/MipmapHint.js  [imported by engine/Source/Renderer/Texture.js]
+  engine/Source/Renderer/MultisampleFramebuffer.js  [imported by engine/Source/Renderer/FramebufferManager.js]
+  engine/Source/Renderer/Pass.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Renderer/PixelDatatype.js  [imported by engine/Source/Scene/GlobeDepth.js]
+  engine/Source/Renderer/Renderbuffer.js  [imported by engine/Source/Scene/InvertClassification.js]
+  engine/Source/Renderer/RenderbufferFormat.js  [imported by engine/Source/Scene/InvertClassification.js]
+  engine/Source/Renderer/RenderState.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Renderer/Sampler.js  [imported by engine/Source/Scene/TranslucentTileClassification.js]
+  engine/Source/Renderer/ShaderProgram.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Renderer/ShaderSource.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Renderer/Texture.js  [imported by engine/Source/Scene/InvertClassification.js]
+  engine/Source/Renderer/TextureMagnificationFilter.js  [imported by engine/Source/Renderer/Texture.js]
+  engine/Source/Renderer/TextureMinificationFilter.js  [imported by engine/Source/Renderer/Texture.js]
+  engine/Source/Renderer/TextureWrap.js  [imported by engine/Source/Renderer/Sampler.js]
+  engine/Source/Renderer/VertexArray.js  [imported by engine/Source/Scene/Primitive.js]
+  engine/Source/Scene/Appearance.js  [imported by engine/Source/Scene/PolylineColorAppearance.js]
+  engine/Source/Scene/AttributeType.js  [imported by engine/Source/Core/AttributeCompression.js]
+  engine/Source/Scene/BatchTable.js  [imported by engine/Source/Scene/Primitive.js]
+  engine/Source/Scene/BlendEquation.js  [imported by engine/Source/Scene/BlendingState.js]
+  engine/Source/Scene/BlendFunction.js  [imported by engine/Source/Scene/BlendingState.js]
+  engine/Source/Scene/BlendingState.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Scene/ClassificationPrimitive.js  [seed]
+  engine/Source/Scene/ClassificationType.js  [seed]
+  engine/Source/Scene/CullFace.js  [imported by engine/Source/Scene/GroundPolylinePrimitive.js]
+  engine/Source/Scene/DepthFunction.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Scene/GlobeDepth.js  [seed]
+  engine/Source/Scene/GroundPolylinePrimitive.js  [seed]
+  engine/Source/Scene/GroundPrimitive.js  [seed]
+  engine/Source/Scene/HeightReference.js  [imported by engine/Source/DataSources/GroundGeometryUpdater.js]
+  engine/Source/Scene/InvertClassification.js  [seed]
+  engine/Source/Scene/Material.js  [imported by engine/Source/DataSources/MaterialProperty.js]
+  engine/Source/Scene/OrderedGroundPrimitiveCollection.js  [seed]
+  engine/Source/Scene/PerInstanceColorAppearance.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Scene/PolylineColorAppearance.js  [imported by engine/Source/DataSources/StaticGroundPolylinePerMaterialBatch.js]
+  engine/Source/Scene/PolylineMaterialAppearance.js  [imported by engine/Source/DataSources/StaticGroundPolylinePerMaterialBatch.js]
+  engine/Source/Scene/Primitive.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Scene/PrimitiveCollection.js  [imported by engine/Source/Scene/OrderedGroundPrimitiveCollection.js]
+  engine/Source/Scene/PrimitivePipeline.js  [imported by engine/Source/Scene/Primitive.js]
+  engine/Source/Scene/PrimitiveState.js  [imported by engine/Source/Scene/Primitive.js]
+  engine/Source/Scene/SceneMode.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Scene/ShadowMode.js  [imported by engine/Source/DataSources/GeometryUpdater.js]
+  engine/Source/Scene/ShadowVolumeAppearance.js  [seed]
+  engine/Source/Scene/StencilConstants.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Scene/StencilFunction.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Scene/StencilOperation.js  [imported by engine/Source/Scene/ClassificationPrimitive.js]
+  engine/Source/Scene/TranslucentTileClassification.js  [seed]
+  engine/Source/Shaders/Builtin/Constants/degreesPerRadian.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/depthRange.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/epsilon1.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/epsilon2.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/epsilon3.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/epsilon4.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/epsilon5.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/epsilon6.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/epsilon7.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/infinity.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/oneOverPi.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/oneOverTwoPi.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passCesium3DTile.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passCesium3DTileClassification.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passCesium3DTileClassificationIgnoreShow.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passCesium3DTileEdges.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passCesium3DTileEdgesDirect.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passClassification.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passCompute.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passEnvironment.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passGaussianSplats.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passGlobe.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passOpaque.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passOverlay.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passTerrainClassification.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passTranslucent.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/passVoxels.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/pi.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/piOverFour.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/piOverSix.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/piOverThree.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/piOverTwo.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/radiansPerDegree.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/sceneMode2D.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/sceneMode3D.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/sceneModeColumbusView.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/sceneModeMorphing.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/solarRadius.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/threePiOver2.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/twoPi.glsl  [seed]
+  engine/Source/Shaders/Builtin/Constants/webMercatorMaxLatitude.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/acesTonemapping.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/alphaWeight.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/antialias.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/applyHSBShift.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/approximateSphericalCoordinates.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/approximateTanh.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/backFacing.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/branchFreeTernary.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/cascadeColor.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/cascadeDistance.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/cascadeMatrix.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/cascadeWeights.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/clipPolygons.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/columbusViewMorph.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/computeAtmosphereColor.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/computeGroundAtmosphereScattering.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/computePosition.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/computeScattering.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/computeTextureTransform.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/cosineAndSine.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/decodeRGB8.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/decompressTextureCoordinates.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/depthClamp.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/eastNorthUpToEyeCoordinates.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/ellipsoidContainsPoint.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/ellipsoidTextureCoordinates.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/equalsEpsilon.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/eyeOffset.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/eyeToWindowCoordinates.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/fastApproximateAtan.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/fog.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/gammaCorrect.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/geodeticSurfaceNormal.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/getDefaultMaterial.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/getDynamicAtmosphereLightDirection.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/getLambertDiffuse.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/getSpecular.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/getWaterNoise.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/HSBToRGB.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/HSLToRGB.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/hue.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/inverseGamma.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/isEmpty.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/isFull.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/latitudeToWebMercatorFraction.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/linearToSrgb.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/lineDistance.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/luminance.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/maximumComponent.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/metersPerPixel.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/modelToWindowCoordinates.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/multiplyWithColorBalance.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/nearFarScalar.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/octDecode.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/packDepth.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/pbrLighting.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/pbrNeutralTonemapping.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/phong.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/planeDistance.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/pointAlongRay.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/rayEllipsoidIntersectionInterval.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/raySphereIntersectionInterval.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/readDepth.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/readNonPerspective.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/reverseLogDepth.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/RGBToHSB.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/RGBToHSL.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/RGBToXYZ.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/round.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/saturation.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/shadowDepthCompare.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/shadowVisibility.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/signNotZero.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/sphericalHarmonics.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/srgbToLinear.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/tangentToEyeSpaceMatrix.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/textureCube.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/transformPlane.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/translateRelativeToEye.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/translucentPhong.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/transpose.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/unpackClippingExtents.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/unpackDepth.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/unpackFloat.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/unpackTexture.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/unpackUint.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/valueTransform.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/vertexLogDepth.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/windowToEyeCoordinates.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/writeDepthClamp.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/writeLogDepth.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/writeNonPerspective.glsl  [seed]
+  engine/Source/Shaders/Builtin/Functions/XYZToRGB.glsl  [seed]
+  engine/Source/Shaders/Builtin/Structs/depthRangeStruct.glsl  [seed]
+  engine/Source/Shaders/Builtin/Structs/material.glsl  [seed]
+  engine/Source/Shaders/Builtin/Structs/materialInput.glsl  [seed]
+  engine/Source/Shaders/Builtin/Structs/modelMaterial.glsl  [seed]
+  engine/Source/Shaders/Builtin/Structs/modelVertexOutput.glsl  [seed]
+  engine/Source/Shaders/Builtin/Structs/ray.glsl  [seed]
+  engine/Source/Shaders/Builtin/Structs/raySegment.glsl  [seed]
+  engine/Source/Shaders/Builtin/Structs/shadowParameters.glsl  [seed]
+  engine/Source/Shaders/PolylineShadowVolumeFS.glsl  [seed]
+  engine/Source/Shaders/PolylineShadowVolumeMorphFS.glsl  [seed]
+  engine/Source/Shaders/PolylineShadowVolumeMorphVS.glsl  [seed]
+  engine/Source/Shaders/PolylineShadowVolumeVS.glsl  [seed]
+  engine/Source/Shaders/PostProcessStages/CompositeTranslucentClassification.glsl  [seed]
+  engine/Source/Shaders/PostProcessStages/PassThrough.glsl  [seed]
+  engine/Source/Shaders/PostProcessStages/PassThroughDepth.glsl  [seed]
+  engine/Source/Shaders/ShadowVolumeAppearanceFS.glsl  [seed]
+  engine/Source/Shaders/ShadowVolumeAppearanceVS.glsl  [seed]
+  engine/Source/Shaders/ShadowVolumeFS.glsl  [seed]
+  engine/Source/Workers/createCircleGeometry.js  [seed]
+  engine/Source/Workers/createCorridorGeometry.js  [seed]
+  engine/Source/Workers/createEllipseGeometry.js  [seed]
+  engine/Source/Workers/createGroundPolylineGeometry.js  [seed]
+  engine/Source/Workers/createPolygonGeometry.js  [seed]
+  engine/Source/Workers/createRectangleGeometry.js  [seed]
