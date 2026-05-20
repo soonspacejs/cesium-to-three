@@ -18,13 +18,18 @@ import {
 	Matrix3,
 	Matrix4,
 	Mesh,
+	Vector2,
 	Vector3,
 	Vector4,
 	type Material,
 } from 'three';
 
-import { CESIUM_GLOBE_MINIMUM_ALTITUDE, SCENE_MODE_3D } from './constants';
-import { encodeCesiumVector3 } from './geometry';
+import {
+	CESIUM_GLOBE_MINIMUM_ALTITUDE,
+	MAX_POLYGON_STYLE_VERTICES,
+	SCENE_MODE_3D,
+} from './constants';
+import { encodeVec3RTE as encodeCesiumVector3 } from './math/rte-encoding';
 import { createColorMaterial, createStencilMaterial } from './materials';
 import type {
 	CesiumClassificationCommandVisibility,
@@ -133,6 +138,14 @@ export class CesiumClassificationPrimitive {
 			u_borderEnabled: { value: 0.0 },
 			u_borderWidthMeters: { value: 0.0 },
 			u_innerMetersRect: { value: extents.innerMetersRect },
+			u_polygonBorderMode: { value: 0.0 },
+			u_polygonPointCount: { value: 0.0 },
+			u_polygonPoints: {
+				value: Array.from(
+					{ length: MAX_POLYGON_STYLE_VERTICES },
+					() => new Vector2(),
+				),
+			},
 			czm_globeDepthTexture: { value: null },
 			czm_viewport: { value: new Vector4( 0.0, 0.0, 1.0, 1.0 ) },
 			czm_inverseProjection: { value: new Matrix4() },
@@ -226,6 +239,23 @@ export class CesiumClassificationPrimitive {
 		this.uniforms.u_borderEnabled.value = enabled && safeOpacity > 0.0 && safeWidthMeters > 0.0 ? 1.0 : 0.0;
 		this.uniforms.u_borderColor.value.set( color.r, color.g, color.b, safeOpacity );
 		this.uniforms.u_borderWidthMeters.value = safeWidthMeters;
+	}
+
+	/**
+	 * Supplies original polygon fill vertices in planar meter coordinates.
+	 *
+	 * @param points Fill polygon vertices relative to the same SW meter origin as shader uv.
+	 */
+	public setPolygonBorderPoints( points: readonly Vector2[] ): void {
+		const polygonPoints = this.uniforms.u_polygonPoints.value;
+		const pointCount = Math.min( points.length, MAX_POLYGON_STYLE_VERTICES );
+
+		for ( let i = 0; i < pointCount; i ++ ) {
+			polygonPoints[ i ].copy( points[ i ] );
+		}
+
+		this.uniforms.u_polygonPointCount.value = pointCount;
+		this.uniforms.u_polygonBorderMode.value = pointCount >= 3 ? 1.0 : 0.0;
 	}
 
 	/**

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files.zip\")",
+      "Bash(powershell -Command \"Expand-Archive -Path 'C:\\\\Users\\\\WIN11\\\\Downloads\\\\files.zip' -DestinationPath 'D:\\\\my\\\\code\\\\cesium-to-three\\\\refactor-plan' -Force\")",
+      "Bash(npx tsc *)",
+      "Bash(npx vite *)"
+    ]
+  }
+}

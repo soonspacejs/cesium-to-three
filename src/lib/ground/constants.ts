@@ -27,3 +27,6 @@ export const CESIUM_GLOBE_MINIMUM_ALTITUDE = 55000.0;
 
 // Geometry expansion equals the requested meter border width.
 export const BORDER_GEOMETRY_EXPANSION_SCALE = 1.0;
+
+// Maximum polygon vertices mirrored into shader uniforms for edge styling.
+export const MAX_POLYGON_STYLE_VERTICES = 128;

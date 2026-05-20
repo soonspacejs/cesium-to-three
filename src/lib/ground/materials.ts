@@ -36,7 +36,11 @@ import cesiumPackDepth from '../../../cesium-ground-source/engine/Source/Shaders
 import cesiumPlaneDistance from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/planeDistance.glsl?raw';
 import cesiumGammaCorrect from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/gammaCorrect.glsl?raw';
 
-import { CLASSIFICATION_MASK, SCENE_MODE_3D } from './constants';
+import {
+	CLASSIFICATION_MASK,
+	MAX_POLYGON_STYLE_VERTICES,
+	SCENE_MODE_3D,
+} from './constants';
 import type { SharedUniforms } from './types';
 
 /**
@@ -134,6 +138,9 @@ uniform vec4 u_borderColor;
 uniform float u_borderEnabled;
 uniform float u_borderWidthMeters;
 uniform vec4 u_innerMetersRect;
+uniform float u_polygonBorderMode;
+uniform float u_polygonPointCount;
+uniform vec2 u_polygonPoints[${ MAX_POLYGON_STYLE_VERTICES }];
 
 const float czm_pi = 3.141592653589793;
 const float czm_twoPi = 6.283185307179586;
@@ -156,6 +163,31 @@ vec2 czm_approximateSphericalCoordinates(vec3 normal) {
 
 float czm_lineDistance(vec2 point1, vec2 point2, vec2 point) {
 	return abs((point2.y - point1.y) * point.x - (point2.x - point1.x) * point.y + point2.x * point1.y - point2.y * point1.x) / distance(point2, point1);
+}
+
+bool c23_pointInsidePolygon(vec2 point) {
+	bool inside = false;
+	int count = int(u_polygonPointCount);
+
+	for (int i = 0; i < ${ MAX_POLYGON_STYLE_VERTICES }; i++) {
+		if (i >= count) {
+			break;
+		}
+
+		int previousIndex = i == 0 ? count - 1 : i - 1;
+		vec2 current = u_polygonPoints[i];
+		vec2 previous = u_polygonPoints[previousIndex];
+		bool crosses = (current.y > point.y) != (previous.y > point.y);
+		float denominator = previous.y - current.y;
+		float safeDenominator = abs(denominator) < 1e-6 ? (denominator < 0.0 ? -1e-6 : 1e-6) : denominator;
+		float intersectionX = (previous.x - current.x) * (point.y - current.y) / safeDenominator + current.x;
+
+		if (crosses && point.x < intersectionX) {
+			inside = !inside;
+		}
+	}
+
+	return inside;
 }
 
 ${ cesiumUnpackDepth }
@@ -220,15 +252,25 @@ function createColorFragmentBody(): string {
 #ifdef TEXTURE_COORDINATES
 #ifndef SPHERICAL
     vec2 planarMeters = uv / v_inversePlaneExtents;
-    vec2 outsideLower = u_innerMetersRect.xy - planarMeters;
-    vec2 outsideUpper = planarMeters - u_innerMetersRect.zw;
-    vec2 outsideMeters = max(outsideLower, outsideUpper);
-    float outsideDistanceMeters = max(outsideMeters.x, outsideMeters.y);
-    if (outsideDistanceMeters > 0.0) {
-        if (u_borderEnabled < 0.5 || u_borderColor.a <= 0.0 || outsideDistanceMeters > u_borderWidthMeters) {
-            discard;
+    if (u_polygonBorderMode > 0.5) {
+        bool insideFillPolygon = c23_pointInsidePolygon(planarMeters);
+        if (!insideFillPolygon) {
+            if (u_borderEnabled < 0.5 || u_borderColor.a <= 0.0) {
+                discard;
+            }
+            color = czm_gammaCorrect(u_borderColor);
         }
-        color = czm_gammaCorrect(u_borderColor);
+    } else {
+        vec2 outsideLower = u_innerMetersRect.xy - planarMeters;
+        vec2 outsideUpper = planarMeters - u_innerMetersRect.zw;
+        vec2 outsideMeters = max(outsideLower, outsideUpper);
+        float outsideDistanceMeters = max(outsideMeters.x, outsideMeters.y);
+        if (outsideDistanceMeters > 0.0) {
+            if (u_borderEnabled < 0.5 || u_borderColor.a <= 0.0 || outsideDistanceMeters > u_borderWidthMeters) {
+                discard;
+            }
+            color = czm_gammaCorrect(u_borderColor);
+        }
     }
 #endif
 #endif

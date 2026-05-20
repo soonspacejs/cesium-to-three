@@ -24,18 +24,20 @@ import {
 	CesiumGlobeDepth,
 	CesiumGroundPolygonPrimitive,
 	CesiumGroundRectanglePrimitive,
-	longitudeLatitudeFromCenterOffsetsMeters,
 	rectangleMeterSizeFromDegrees,
 	validateCesiumGroundRenderer,
 	wgs84NormalFromDegrees,
 	wgs84PositionFromDegrees,
 	type LonLatPoint,
-	type PolygonHierarchyDegrees,
 } from '../lib/ground';
 import { createInfoPanel, installPageStyle } from './dom';
 import { readNumberEnv, readStringEnv } from './env';
 import { type GroundDebugSettings, type GroundDebugStatus } from './debug-types';
-import { clampNumber, createLocalPolygonOffsets, plotOrderToRenderOrder } from './plot-utils';
+import {
+	clampNumber,
+	PlotOrderRegistry,
+	plotOrderToRenderOrder,
+} from './plot-utils';
 import {
 	configureLoadedTileScene,
 	createCesiumTilesRenderer,
@@ -48,9 +50,15 @@ const RECTANGLE_CENTER_LAT = readNumberEnv( 'VITE_PLOT_LAT', 27.9881 );
 const RECTANGLE_HALF_WIDTH_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_WIDTH_DEGREES', 0.05 );
 const RECTANGLE_HALF_HEIGHT_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_HEIGHT_DEGREES', 0.03 );
 const DEBUG_GROUND_SURFACE = readStringEnv( 'VITE_DEBUG_GROUND_SURFACE', 'false' ).toLowerCase() === 'true';
+type DemoPlotId = 'rectangle' | 'polygon';
 
 interface RectangleGuiModel {
 	points: string;
+}
+
+interface PolygonGuiModel {
+	points: string;
+	holes: string;
 }
 
 /**
@@ -141,6 +149,50 @@ export function runGroundDemo(): void {
 		[ initialRectangleDegrees.east, initialRectangleDegrees.north ],
 		[ initialRectangleDegrees.west, initialRectangleDegrees.north ],
 	];
+	const initialPolygonPoints: LonLatPoint[] = [
+		[
+			RECTANGLE_CENTER_LON,
+			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.65,
+		],
+		[
+			RECTANGLE_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.55,
+			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.2,
+		],
+		[
+			RECTANGLE_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.34,
+			RECTANGLE_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.56,
+		],
+		[
+			RECTANGLE_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.34,
+			RECTANGLE_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.56,
+		],
+		[
+			RECTANGLE_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.55,
+			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.2,
+		],
+	];
+	const initialPolygonHolePoints: LonLatPoint[] = [
+		[
+			RECTANGLE_CENTER_LON,
+			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.18,
+		],
+		[
+			RECTANGLE_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.18,
+			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.06,
+		],
+		[
+			RECTANGLE_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.11,
+			RECTANGLE_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.16,
+		],
+		[
+			RECTANGLE_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.11,
+			RECTANGLE_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.16,
+		],
+		[
+			RECTANGLE_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.18,
+			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.06,
+		],
+	];
 
 	const debugSettings: GroundDebugSettings = {
 		points: initialRectanglePoints,
@@ -165,21 +217,18 @@ export function runGroundDemo(): void {
 		showFrontStencil: true,
 		showBackStencil: true,
 		showColorPass: true,
-		showPolygon: true,
+		polygonVisible: true,
 		polygonPlotOrder: 1,
-		polygonColor: '#00aaff',
-		polygonAlpha: 0.68,
-		polygonCenterLon: RECTANGLE_CENTER_LON,
-		polygonCenterLat: RECTANGLE_CENTER_LAT,
-		polygonOffsetEastMeters: 0.0,
-		polygonOffsetNorthMeters: 0.0,
-		polygonWidthMeters: Math.max( initialRectangleMeterSize.widthMeters * 0.7, 1.0 ),
-		polygonHeightMeters: Math.max( initialRectangleMeterSize.heightMeters * 0.7, 1.0 ),
+		polygonStrokeColor: '#ffffff',
+		polygonStrokeOpacity: 92,
+		polygonStrokeWidth: 300.0,
+		polygonFillColor: '#00aaff',
+		polygonFillOpacity: 68,
+		polygonPoints: initialPolygonPoints,
+		polygonHoles: [ initialPolygonHolePoints ],
 		polygonRotationDegrees: 18.0,
-		polygonVertexCount: 5,
 		polygonDentRatio: 1.0,
 		polygonHole: false,
-		polygonHoleScale: 0.36,
 		showDebugSurface: DEBUG_GROUND_SURFACE,
 		debugSurfaceHeight: 5000.0,
 		debugSurfaceOpacity: 0.55,
@@ -197,6 +246,13 @@ export function runGroundDemo(): void {
 	const rectangleGuiModel: RectangleGuiModel = {
 		points: JSON.stringify( debugSettings.points ),
 	};
+	const polygonGuiModel: PolygonGuiModel = {
+		points: JSON.stringify( debugSettings.polygonPoints ),
+		holes: JSON.stringify( debugSettings.polygonHoles ),
+	};
+	const plotOrderRegistry = new PlotOrderRegistry<DemoPlotId>();
+	debugSettings.rectanglePlotOrder = plotOrderRegistry.register( 'rectangle', debugSettings.rectanglePlotOrder );
+	debugSettings.polygonPlotOrder = plotOrderRegistry.register( 'polygon', debugSettings.polygonPlotOrder );
 
 	/**
 	 * Returns the current fill rectangle derived from the public points field.
@@ -257,6 +313,132 @@ export function runGroundDemo(): void {
 	}
 
 	/**
+	 * Serializes polygon points into the compact GUI text field.
+	 *
+	 * @returns JSON string with [lon, lat] polygon vertices.
+	 */
+	function stringifyPolygonPoints(): string {
+		return JSON.stringify( debugSettings.polygonPoints );
+	}
+
+	/**
+	 * Serializes polygon hole rings into the compact GUI text field.
+	 *
+	 * @returns JSON string with one or more hole rings.
+	 */
+	function stringifyPolygonHoles(): string {
+		return JSON.stringify( debugSettings.polygonHoles );
+	}
+
+	/**
+	 * Creates a default editable hole by scaling the current polygon inward.
+	 *
+	 * @param points Outer polygon vertices in WGS84 lon/lat degrees.
+	 * @returns A smaller ring that starts inside the current polygon.
+	 */
+	function createDefaultPolygonHolePoints( points: readonly LonLatPoint[] ): LonLatPoint[] {
+		if ( points.length < 3 ) {
+			return [];
+		}
+
+		let longitudeSum = 0.0;
+		let latitudeSum = 0.0;
+		for ( const point of points ) {
+			longitudeSum += point[ 0 ];
+			latitudeSum += point[ 1 ];
+		}
+
+		const centerLongitude = longitudeSum / points.length;
+		const centerLatitude = latitudeSum / points.length;
+		const holeScale = 0.36;
+
+		return points.map( point => [
+			centerLongitude + ( point[ 0 ] - centerLongitude ) * holeScale,
+			centerLatitude + ( point[ 1 ] - centerLatitude ) * holeScale,
+		] );
+	}
+
+	/**
+	 * Parses the public polygon points GUI text.
+	 *
+	 * @param value JSON text typed in lil-gui.
+	 * @returns Validated lon/lat polygon points.
+	 */
+	function parsePolygonPointsText( value: string ): LonLatPoint[] {
+		const parsed = JSON.parse( value ) as unknown;
+
+		if ( ! Array.isArray( parsed ) || parsed.length < 3 ) {
+			throw new Error( 'Polygon points must be JSON with at least three [lon, lat] pairs.' );
+		}
+
+		return parsed.map( point => {
+			if ( ! Array.isArray( point ) || point.length !== 2 ) {
+				throw new Error( 'Each polygon point must be a [lon, lat] pair.' );
+			}
+
+			const longitude = Number( point[ 0 ] );
+			const latitude = Number( point[ 1 ] );
+			if ( ! Number.isFinite( longitude ) || ! Number.isFinite( latitude ) ) {
+				throw new Error( 'Polygon point coordinates must be finite numbers.' );
+			}
+
+			return [ longitude, latitude ] as LonLatPoint;
+		} );
+	}
+
+	/**
+	 * Parses one polygon ring from a GUI JSON value.
+	 *
+	 * @param parsed Unknown JSON value representing a ring.
+	 * @param label Human-readable label used in validation errors.
+	 * @returns Validated lon/lat ring.
+	 */
+	function parsePolygonRingValue( parsed: unknown, label: string ): LonLatPoint[] {
+		if ( ! Array.isArray( parsed ) || parsed.length < 3 ) {
+			throw new Error( `${ label } must contain at least three [lon, lat] pairs.` );
+		}
+
+		return parsed.map( point => {
+			if ( ! Array.isArray( point ) || point.length !== 2 ) {
+				throw new Error( `Each ${ label } point must be a [lon, lat] pair.` );
+			}
+
+			const longitude = Number( point[ 0 ] );
+			const latitude = Number( point[ 1 ] );
+			if ( ! Number.isFinite( longitude ) || ! Number.isFinite( latitude ) ) {
+				throw new Error( `${ label } coordinates must be finite numbers.` );
+			}
+
+			return [ longitude, latitude ] as LonLatPoint;
+		} );
+	}
+
+	/**
+	 * Parses the public polygon holes GUI text.
+	 *
+	 * @param value JSON text typed in lil-gui.
+	 * @returns Validated hole rings in WGS84 lon/lat degrees.
+	 */
+	function parsePolygonHolesText( value: string ): LonLatPoint[][] {
+		const parsed = JSON.parse( value ) as unknown;
+
+		if ( ! Array.isArray( parsed ) ) {
+			throw new Error( 'Polygon holes must be JSON with hole rings.' );
+		}
+		if ( parsed.length === 0 ) {
+			return [];
+		}
+
+		const first = parsed[ 0 ] as unknown;
+		const isSingleRing = Array.isArray( first ) && first.length === 2 && ! Array.isArray( first[ 0 ] );
+		if ( isSingleRing ) {
+			return [ parsePolygonRingValue( parsed, 'Polygon hole' ) ];
+		}
+
+		return parsed.map( ( ring, index ) => parsePolygonRingValue( ring, `Polygon hole ${ index + 1 }` ) );
+	}
+
+	/**
 	 * Stores public points and refreshes derived center/size state.
 	 *
 	 * @param points Four WGS84 lon/lat corner points.
@@ -265,6 +447,26 @@ export function runGroundDemo(): void {
 		debugSettings.points = points.map( point => [ point[ 0 ], point[ 1 ] ] );
 		rectangleGuiModel.points = stringifyRectanglePoints();
 		syncRectangleDerivedState();
+	}
+
+	/**
+	 * Stores public polygon points and keeps the GUI text synchronized.
+	 *
+	 * @param points Three or more WGS84 lon/lat polygon vertices.
+	 */
+	function applyPolygonPointsToDebugSettings( points: LonLatPoint[] ): void {
+		debugSettings.polygonPoints = points.map( point => [ point[ 0 ], point[ 1 ] ] );
+		polygonGuiModel.points = stringifyPolygonPoints();
+	}
+
+	/**
+	 * Stores public polygon hole rings and keeps the GUI text synchronized.
+	 *
+	 * @param holes Zero or more WGS84 lon/lat hole rings.
+	 */
+	function applyPolygonHolesToDebugSettings( holes: LonLatPoint[][] ): void {
+		debugSettings.polygonHoles = holes.map( ring => ring.map( point => [ point[ 0 ], point[ 1 ] ] ) );
+		polygonGuiModel.holes = stringifyPolygonHoles();
 	}
 
 	/**
@@ -285,36 +487,42 @@ export function runGroundDemo(): void {
 	}
 
 	/**
+	 * Registers one edited plot order and keeps the registry as the uniqueness owner.
+	 *
+	 * @param target Plot whose GUI value is being applied.
+	 */
+	function updateRegisteredPlotOrder( target: DemoPlotId ): void {
+		if ( target === 'rectangle' ) {
+			debugSettings.rectanglePlotOrder = plotOrderRegistry.update(
+				'rectangle',
+				debugSettings.rectanglePlotOrder,
+			);
+			return;
+		}
+
+		debugSettings.polygonPlotOrder = plotOrderRegistry.update(
+			'polygon',
+			debugSettings.polygonPlotOrder,
+		);
+	}
+
+	/**
 	 * Normalizes polygon GUI values before Cesium geometry is created.
 	 */
 	function normalizePolygonDebugSettings(): void {
-		debugSettings.polygonOffsetEastMeters = Number.isFinite( debugSettings.polygonOffsetEastMeters )
-			? debugSettings.polygonOffsetEastMeters
-			: 0.0;
-		debugSettings.polygonOffsetNorthMeters = Number.isFinite( debugSettings.polygonOffsetNorthMeters )
-			? debugSettings.polygonOffsetNorthMeters
-			: 0.0;
-		debugSettings.polygonWidthMeters = Number.isFinite( debugSettings.polygonWidthMeters )
-			? Math.max( debugSettings.polygonWidthMeters, 1.0 )
-			: 1.0;
-		debugSettings.polygonHeightMeters = Number.isFinite( debugSettings.polygonHeightMeters )
-			? Math.max( debugSettings.polygonHeightMeters, 1.0 )
-			: 1.0;
 		debugSettings.polygonRotationDegrees = Number.isFinite( debugSettings.polygonRotationDegrees )
 			? debugSettings.polygonRotationDegrees
 			: 0.0;
-		debugSettings.polygonVertexCount = Number.isFinite( debugSettings.polygonVertexCount )
-			? Math.round( clampNumber( debugSettings.polygonVertexCount, 3, 64 ) )
-			: 3;
 		debugSettings.polygonDentRatio = Number.isFinite( debugSettings.polygonDentRatio )
 			? clampNumber( debugSettings.polygonDentRatio, 0.05, 1.0 )
 			: 1.0;
-		debugSettings.polygonHoleScale = Number.isFinite( debugSettings.polygonHoleScale )
-			? clampNumber( debugSettings.polygonHoleScale, 0.01, 0.85 )
-			: 0.36;
-		if ( debugSettings.polygonHole ) {
-			const maxHoleScale = Math.max( debugSettings.polygonDentRatio * 0.85, 0.01 );
-			debugSettings.polygonHoleScale = Math.min( debugSettings.polygonHoleScale, maxHoleScale );
+
+		if ( debugSettings.polygonHole && debugSettings.polygonHoles.length === 0 ) {
+			const defaultHole = createDefaultPolygonHolePoints( debugSettings.polygonPoints );
+			if ( defaultHole.length >= 3 ) {
+				debugSettings.polygonHoles = [ defaultHole ];
+				polygonGuiModel.holes = stringifyPolygonHoles();
+			}
 		}
 	}
 
@@ -348,55 +556,18 @@ export function runGroundDemo(): void {
 	function createGroundPolygon(): CesiumGroundPolygonPrimitive {
 		normalizePolygonDebugSettings();
 
-		const polygonCenter = longitudeLatitudeFromCenterOffsetsMeters(
-			debugSettings.polygonCenterLon,
-			debugSettings.polygonCenterLat,
-			[
-				{
-					eastMeters: debugSettings.polygonOffsetEastMeters,
-					northMeters: debugSettings.polygonOffsetNorthMeters,
-				},
-			],
-		)[ 0 ];
-		const outerOffsets = createLocalPolygonOffsets(
-			debugSettings.polygonWidthMeters,
-			debugSettings.polygonHeightMeters,
-			debugSettings.polygonVertexCount,
-			debugSettings.polygonRotationDegrees,
-			debugSettings.polygonDentRatio,
-		);
-		const positions = longitudeLatitudeFromCenterOffsetsMeters(
-			polygonCenter.longitude,
-			polygonCenter.latitude,
-			outerOffsets,
-		);
-		const hierarchy: PolygonHierarchyDegrees = { positions };
-
-		if ( debugSettings.polygonHole ) {
-			const maxHoleScale = Math.max( debugSettings.polygonDentRatio * 0.85, 0.01 );
-			const holeScale = clampNumber( debugSettings.polygonHoleScale, 0.01, maxHoleScale );
-			const holeOffsets = createLocalPolygonOffsets(
-				debugSettings.polygonWidthMeters * holeScale,
-				debugSettings.polygonHeightMeters * holeScale,
-				Math.max( Math.round( debugSettings.polygonVertexCount ), 3 ),
-				debugSettings.polygonRotationDegrees,
-				1.0,
-			).reverse();
-			hierarchy.holes = [
-				{
-					positions: longitudeLatitudeFromCenterOffsetsMeters(
-						polygonCenter.longitude,
-						polygonCenter.latitude,
-						holeOffsets,
-					),
-				},
-			];
-		}
-
 		return new CesiumGroundPolygonPrimitive( {
-			polygonHierarchyDegrees: hierarchy,
-			color: debugSettings.polygonColor,
-			alpha: debugSettings.polygonAlpha,
+			points: debugSettings.polygonPoints,
+			strokeColor: debugSettings.polygonStrokeColor,
+			strokeWidth: debugSettings.polygonStrokeWidth,
+			strokeOpacity: debugSettings.polygonStrokeOpacity,
+			fillColor: debugSettings.polygonFillColor,
+			fillOpacity: debugSettings.polygonFillOpacity,
+			visible: debugSettings.polygonVisible,
+			rotationDegrees: debugSettings.polygonRotationDegrees,
+			dentRatio: debugSettings.polygonDentRatio,
+			hole: debugSettings.polygonHole,
+			holes: debugSettings.polygonHole ? debugSettings.polygonHoles : [],
 			renderOrder: plotOrderToRenderOrder( debugSettings.polygonPlotOrder ),
 			fragmentCull: debugSettings.fragmentCull,
 		} );
@@ -443,17 +614,39 @@ export function runGroundDemo(): void {
 		}
 
 		groundPolygon.classification.setColor(
-			new Color( debugSettings.polygonColor ),
-			debugSettings.polygonAlpha,
+			new Color( debugSettings.polygonFillColor ),
+			debugSettings.polygonFillOpacity / 100.0,
 		);
 		groundPolygon.classification.setFragmentCulling( debugSettings.fragmentCull );
 		groundPolygon.setRenderOrder( plotOrderToRenderOrder( debugSettings.polygonPlotOrder ) );
-		groundPolygon.classification.group.visible = debugSettings.showPolygon;
+		groundPolygon.classification.group.visible = debugSettings.polygonVisible;
 		groundPolygon.classification.setCommandVisibility( {
 			frontStencil: debugSettings.showFrontStencil,
 			backStencil: debugSettings.showBackStencil,
 			color: debugSettings.showColorPass,
 		} );
+		groundPolygon.classification.setBorderStyle(
+			debugSettings.polygonStrokeWidth > 0.0,
+			new Color( debugSettings.polygonStrokeColor ),
+			debugSettings.polygonStrokeOpacity / 100.0,
+			debugSettings.polygonStrokeWidth,
+		);
+	}
+
+	/**
+	 * Applies a rectangle plot-order edit while preserving every other plot order.
+	 */
+	function applyRectanglePlotOrder(): void {
+		updateRegisteredPlotOrder( 'rectangle' );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Applies a polygon plot-order edit while preserving every other plot order.
+	 */
+	function applyPolygonPlotOrder(): void {
+		updateRegisteredPlotOrder( 'polygon' );
+		applyGroundDebugSettings();
 	}
 
 	/**
@@ -465,6 +658,32 @@ export function runGroundDemo(): void {
 			rebuildGroundRectangle();
 		} catch ( error ) {
 			rectangleGuiModel.points = stringifyRectanglePoints();
+			console.error( error );
+		}
+	}
+
+	/**
+	 * Rebuilds polygon geometry after the public points field changes.
+	 */
+	function rebuildPolygonFromPointsText(): void {
+		try {
+			applyPolygonPointsToDebugSettings( parsePolygonPointsText( polygonGuiModel.points ) );
+			rebuildGroundPolygon();
+		} catch ( error ) {
+			polygonGuiModel.points = stringifyPolygonPoints();
+			console.error( error );
+		}
+	}
+
+	/**
+	 * Rebuilds polygon geometry after the public hole points field changes.
+	 */
+	function rebuildPolygonFromHolesText(): void {
+		try {
+			applyPolygonHolesToDebugSettings( parsePolygonHolesText( polygonGuiModel.holes ) );
+			rebuildGroundPolygon();
+		} catch ( error ) {
+			polygonGuiModel.holes = stringifyPolygonHoles();
 			console.error( error );
 		}
 	}
@@ -515,24 +734,21 @@ export function runGroundDemo(): void {
 		rectangleFolder.addColor( debugSettings, 'fillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		rectangleFolder.add( debugSettings, 'fillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
 		rectangleFolder.add( debugSettings, 'visible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
-		rectangleFolder.add( debugSettings, 'rectanglePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyGroundDebugSettings ).listen();
+		rectangleFolder.add( debugSettings, 'rectanglePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyRectanglePlotOrder ).listen();
 
 		const polygonFolder = gui.addFolder( 'Polygon' );
-		polygonFolder.add( debugSettings, 'showPolygon' ).name( 'show polygon' ).onChange( applyGroundDebugSettings );
-		polygonFolder.add( debugSettings, 'polygonPlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyGroundDebugSettings ).listen();
-		polygonFolder.addColor( debugSettings, 'polygonColor' ).name( 'polygon color' ).onChange( applyGroundDebugSettings );
-		polygonFolder.add( debugSettings, 'polygonAlpha', 0.0, 1.0, 0.01 ).name( 'polygon alpha' ).onChange( applyGroundDebugSettings );
-		polygonFolder.add( debugSettings, 'polygonCenterLon', - 180.0, 180.0, 0.0001 ).name( 'center lon' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
-		polygonFolder.add( debugSettings, 'polygonCenterLat', - 85.0, 85.0, 0.0001 ).name( 'center lat' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
-		polygonFolder.add( debugSettings, 'polygonOffsetEastMeters', - 500000.0, 500000.0, 1.0 ).name( 'offset east m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
-		polygonFolder.add( debugSettings, 'polygonOffsetNorthMeters', - 500000.0, 500000.0, 1.0 ).name( 'offset north m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
-		polygonFolder.add( debugSettings, 'polygonWidthMeters', 1.0, 2000000.0, 1.0 ).name( 'width m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
-		polygonFolder.add( debugSettings, 'polygonHeightMeters', 1.0, 2000000.0, 1.0 ).name( 'height m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
+		polygonFolder.add( polygonGuiModel, 'points' ).name( 'points' ).onFinishChange( rebuildPolygonFromPointsText ).listen();
+		polygonFolder.add( polygonGuiModel, 'holes' ).name( 'holes' ).onFinishChange( rebuildPolygonFromHolesText ).listen();
+		polygonFolder.add( debugSettings, 'polygonVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		polygonFolder.add( debugSettings, 'polygonPlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyPolygonPlotOrder ).listen();
+		polygonFolder.addColor( debugSettings, 'polygonStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		polygonFolder.add( debugSettings, 'polygonStrokeWidth', 0.0, 100000.0, 100.0 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundPolygon );
+		polygonFolder.add( debugSettings, 'polygonStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		polygonFolder.addColor( debugSettings, 'polygonFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
+		polygonFolder.add( debugSettings, 'polygonFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
 		polygonFolder.add( debugSettings, 'polygonRotationDegrees', - 180.0, 180.0, 1.0 ).name( 'rotation deg' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
-		polygonFolder.add( debugSettings, 'polygonVertexCount', 3, 16, 1 ).name( 'vertices' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonDentRatio', 0.05, 1.0, 0.01 ).name( 'dent ratio' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonHole' ).name( 'hole' ).onChange( rebuildGroundPolygonFromGui );
-		polygonFolder.add( debugSettings, 'polygonHoleScale', 0.01, 0.85, 0.01 ).name( 'hole scale' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 
 		const passesFolder = gui.addFolder( 'Passes' );
 		passesFolder.add( debugSettings, 'showFrontStencil' ).name( 'front stencil' ).onChange( applyGroundDebugSettings );
@@ -635,11 +851,11 @@ export function runGroundDemo(): void {
 			`Geometry: RectangleGeometry.createShadowVolume\\n` +
 			`Rectangle: ${ debugSettings.visible ? 'on' : 'off' } / order ${ debugSettings.rectanglePlotOrder } / ${ debugSettings.widthDegrees.toFixed( 4 ) } deg x ${ debugSettings.heightDegrees.toFixed( 4 ) } deg\\n` +
 			`Rectangle meters: ${ debugSettings.widthMeters.toFixed( 1 ) } m x ${ debugSettings.heightMeters.toFixed( 1 ) } m\\n` +
-			`Polygon: ${ debugSettings.showPolygon ? 'on' : 'off' } / order ${ debugSettings.polygonPlotOrder } / PolygonGeometry.createShadowVolume\\n` +
-			`Polygon shape: ${ debugSettings.polygonWidthMeters.toFixed( 1 ) } m x ${ debugSettings.polygonHeightMeters.toFixed( 1 ) } m / vertices ${ debugSettings.polygonVertexCount } / hole ${ debugSettings.polygonHole ? 'on' : 'off' }\\n` +
-			`Polygon center: ${ debugSettings.polygonCenterLon.toFixed( 5 ) }, ${ debugSettings.polygonCenterLat.toFixed( 5 ) } / offset east ${ debugSettings.polygonOffsetEastMeters.toFixed( 1 ) } m, north ${ debugSettings.polygonOffsetNorthMeters.toFixed( 1 ) } m / rotation ${ debugSettings.polygonRotationDegrees.toFixed( 1 ) } deg\\n` +
+			`Polygon: ${ debugSettings.polygonVisible ? 'on' : 'off' } / order ${ debugSettings.polygonPlotOrder } / PolygonGeometry.createShadowVolume\\n` +
+			`Polygon points: ${ debugSettings.polygonPoints.length } / holes ${ debugSettings.polygonHoles.length } / rotation ${ debugSettings.polygonRotationDegrees.toFixed( 1 ) } deg / dent ${ debugSettings.polygonDentRatio.toFixed( 2 ) } / hole ${ debugSettings.polygonHole ? 'on' : 'off' }\\n` +
 			`Debug surface: ${ debugSettings.showDebugSurface ? 'on' : 'off' }\\n` +
 			`Rectangle stroke: ${ debugSettings.strokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.strokeOpacity.toFixed( 0 ) }%\\n` +
+			`Polygon stroke: ${ debugSettings.polygonStrokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.polygonStrokeOpacity.toFixed( 0 ) }%\\n` +
 			`CULL_FRAGMENTS: ${ debugSettings.fragmentCull ? 'on' : 'off' }\\n` +
 			`Shader: ShadowVolumeAppearanceVS/FS + ShadowVolumeFS\\n` +
 			`Stencil mask: 0x0f, zfail front=DECR_WRAP back=INCR_WRAP\\n` +

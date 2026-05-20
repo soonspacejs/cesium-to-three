@@ -14,6 +14,7 @@ export type {
 	CesiumGeometryResult,
 	CesiumGroundFrameState,
 	CesiumGroundPolygonOptions,
+	CesiumGroundPolygonPrimitiveOptions,
 	CesiumGroundRectangleOptions,
 	CesiumGroundRectanglePrimitiveOptions,
 	EastNorthOffsetMeters,

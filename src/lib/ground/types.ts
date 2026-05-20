@@ -8,10 +8,10 @@
 // ============================================================
 
 import type {
-	Color,
 	Matrix3,
 	Matrix4,
 	PerspectiveCamera,
+	Vector2,
 	Vector3,
 	Vector4,
 	WebGLRenderTarget,
@@ -96,9 +96,20 @@ export interface CesiumGroundRectanglePrimitiveOptions extends CesiumGroundRecta
 }
 
 export interface CesiumGroundPolygonOptions {
-	polygonHierarchyDegrees: PolygonHierarchyDegrees;
-	color?: Color | string | number;
-	alpha?: number;
+	points: LonLatPoint[];
+	strokeColor: string;
+	strokeWidth: number;
+	strokeOpacity: number;
+	fillColor: string;
+	fillOpacity: number;
+	visible: boolean;
+	rotationDegrees: number;
+	dentRatio: number;
+	hole: boolean;
+	holes?: LonLatPoint[][];
+}
+
+export interface CesiumGroundPolygonPrimitiveOptions extends CesiumGroundPolygonOptions {
 	granularityRadians?: number;
 	minimumHeight?: number;
 	maximumHeight?: number;
@@ -157,6 +168,9 @@ export interface SharedUniforms {
 	u_borderEnabled: { value: number };
 	u_borderWidthMeters: { value: number };
 	u_innerMetersRect: { value: Vector4 };
+	u_polygonBorderMode: { value: number };
+	u_polygonPointCount: { value: number };
+	u_polygonPoints: { value: Vector2[] };
 	czm_globeDepthTexture: { value: WebGLRenderTarget['texture'] | null };
 	czm_viewport: { value: Vector4 };
 	czm_inverseProjection: { value: Matrix4 };
