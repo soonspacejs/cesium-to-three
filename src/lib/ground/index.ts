@@ -7,6 +7,7 @@
 // ============================================================
 
 export * from './cesium-ground-adapter';
+export type { PolygonHierarchy } from './polygon/polygon-hierarchy';
 export type {
 	CartesianLike,
 	CesiumClassificationCommandVisibility,

@@ -4,7 +4,11 @@
       "Bash(ls \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files.zip\")",
       "Bash(powershell -Command \"Expand-Archive -Path 'C:\\\\Users\\\\WIN11\\\\Downloads\\\\files.zip' -DestinationPath 'D:\\\\my\\\\code\\\\cesium-to-three\\\\refactor-plan' -Force\")",
       "Bash(npx tsc *)",
-      "Bash(npx vite *)"
+      "Bash(npx vite *)",
+      "Bash(powershell -Command \"Expand-Archive -Path 'C:\\\\Users\\\\WIN11\\\\Downloads\\\\files.zip' -DestinationPath 'C:\\\\Users\\\\WIN11\\\\Downloads\\\\files-extracted' -Force\")",
+      "Bash(mkdir -p \"D:\\\\my\\\\code\\\\cesium-to-three\\\\refactor-plan\\\\polygon\" && cp \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files-extracted\\\\\"*.md \"D:\\\\my\\\\code\\\\cesium-to-three\\\\refactor-plan\\\\polygon\\\\\" && ls \"D:\\\\my\\\\code\\\\cesium-to-three\\\\refactor-plan\\\\polygon\")",
+      "PowerShell(New-Item -ItemType Directory -Path \"D:\\\\my\\\\code\\\\cesium-to-three\\\\src\\\\lib\\\\ground\\\\polygon\" -Force)",
+      "mcp__Claude_Preview__preview_start"
     ]
   }
 }

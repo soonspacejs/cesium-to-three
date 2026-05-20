@@ -1,12 +1,12 @@
 // ============================================================
 // primitives.ts
-// Layer: Ground primitive construction (rectangle is now Cesium-free).
-// Role: build rectangle and polygon shadow volumes;矩形路径使用本地 math/ +
-//       rectangle/ 模块,polygon 路径仍使用 Cesium。两者共享 classification 运行时。
-// Dependencies: Three.js debug meshes, 本地 ground rectangle/math 模块,
-//       polygon 路径保留 Cesium Core(PolygonGeometry / Ellipsoid /
-//       VertexFormat / GeometryPipeline)。
-// Consumed by: public ground adapter and demos.
+// Layer: Ground primitive construction(rectangle 与 polygon 路径均已 Cesium-free)。
+// Role: build rectangle and polygon shadow volumes。
+//       两条路径都基于本地 math/ + rectangle/ + polygon/ 模块,完全不再 import
+//       cesium-ground-source 中的任何对象。共享 classification 运行时(`classification.ts`
+//       不动)。
+// Dependencies: Three.js debug meshes,本地 ground rectangle/polygon/math 模块。
+// Consumed by: public ground adapter and demos。
 // ============================================================
 
 import {
@@ -17,38 +17,25 @@ import {
 	type Material,
 } from 'three';
 
-// 矩形路径不再 import Cesium Rectangle / RectangleGeometry,
-// 但 polygon 路径仍需 Cesium Core 几何生成 API,因此下面 4 个 import 保留。
-
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import PolygonGeometry from '../../../cesium-ground-source/engine/Source/Core/PolygonGeometry.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import VertexFormat from '../../../cesium-ground-source/engine/Source/Core/VertexFormat.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import Ellipsoid from '../../../cesium-ground-source/engine/Source/Core/Ellipsoid.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import GeometryPipeline from '../../../cesium-ground-source/engine/Source/Core/GeometryPipeline.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import Cartographic from '../../../cesium-ground-source/engine/Source/Core/Cartographic.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import Cartesian3 from '../../../cesium-ground-source/engine/Source/Core/Cartesian3.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import Matrix4Cesium from '../../../cesium-ground-source/engine/Source/Core/Matrix4.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import Transforms from '../../../cesium-ground-source/engine/Source/Core/Transforms.js';
-
 import { CesiumClassificationPrimitive } from './classification';
 import {
-	BORDER_GEOMETRY_EXPANSION_SCALE,
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
-	MAX_POLYGON_STYLE_VERTICES,
 } from './constants';
 import {
-	cesiumGeometryToThree,
-	computePolygonPlanarStylePoints,
-	computePolygonPlanarExtents,
-	polygonHierarchyDegreesToCesium,
-} from './geometry';
+	expandPolygonPointsThroughMeters,
+} from './polygon/polygon-helpers';
+import {
+	normalizePolygonPoints,
+	polygonHierarchyFromLonLatPoints,
+	type PolygonHierarchy,
+} from './polygon/polygon-hierarchy';
+import { POLYGON_DEFAULT_GRANULARITY } from './polygon/polygon-options';
+import { computePolygonPlanarExtents } from './polygon/polygon-extents';
+import {
+	buildPolygonShadowVolumeGeometry,
+	type PolygonGeometryUserData,
+} from './polygon/polygon-shadow-volume';
+import { computePolygonPlanarStylePoints } from './polygon/polygon-style-points';
 import { createDebugRectangleSurfaceGeometry } from './rectangle/rectangle-debug';
 import { computeRectanglePlanarExtents } from './rectangle/rectangle-extents';
 import {
@@ -60,13 +47,9 @@ import {
 } from './rectangle/rectangle-radians';
 import { buildRectangleShadowVolumeGeometry } from './rectangle/rectangle-shadow-volume';
 import type {
-	CartesianLike,
-	CesiumGeometryResult,
 	CesiumGroundFrameState,
 	CesiumGroundPolygonPrimitiveOptions,
 	CesiumGroundRectanglePrimitiveOptions,
-	LonLatPoint,
-	PolygonHierarchyDegrees,
 	RectangleRadians,
 } from './types';
 
@@ -79,155 +62,6 @@ import type {
 function normalizePercentOpacity( opacity: number ): number {
 	const safeOpacity = Number.isFinite( opacity ) ? opacity : 100.0;
 	return Math.min( Math.max( safeOpacity, 0.0 ), 100.0 ) / 100.0;
-}
-
-/**
- * Validates and clones public polygon lon/lat points.
- *
- * @param points Public polygon points as [lon, lat] degree pairs.
- * @returns Cloned points in their original winding order.
- */
-function normalizePolygonPoints( points: readonly LonLatPoint[] ): LonLatPoint[] {
-	if ( points.length < 3 ) {
-		throw new Error( 'Cesium ground polygon requires at least three lon/lat points.' );
-	}
-	if ( points.length > MAX_POLYGON_STYLE_VERTICES ) {
-		throw new Error( `Cesium ground polygon supports at most ${ MAX_POLYGON_STYLE_VERTICES } points.` );
-	}
-
-	return points.map( ( point ) => {
-		const longitude = point[ 0 ];
-		const latitude = point[ 1 ];
-
-		if ( ! Number.isFinite( longitude ) || ! Number.isFinite( latitude ) ) {
-			throw new Error( 'Cesium ground polygon points must contain finite lon/lat numbers.' );
-		}
-		if (
-			longitude < -180.0 ||
-			longitude > 180.0 ||
-			latitude < -90.0 ||
-			latitude > 90.0
-		) {
-			throw new Error( 'Cesium ground polygon points must be valid WGS84 lon/lat degrees.' );
-		}
-
-		return [ longitude, latitude ];
-	} );
-}
-
-/**
- * Converts public lon/lat point arrays to the internal hierarchy shape.
- *
- * @param points Outer ring [lon, lat] degree points.
- * @param holes Optional hole rings in [lon, lat] degrees.
- * @returns Polygon hierarchy in object lon/lat degrees.
- */
-function polygonHierarchyDegreesFromLonLatPoints(
-	points: readonly LonLatPoint[],
-	holes: readonly ( readonly LonLatPoint[] )[] = [],
-): PolygonHierarchyDegrees {
-	const normalizedPoints = normalizePolygonPoints( points );
-	const normalizedHoles = holes.map( normalizePolygonPoints );
-
-	return {
-		positions: normalizedPoints.map( point => ( {
-			longitude: point[ 0 ],
-			latitude: point[ 1 ],
-		} ) ),
-		holes: normalizedHoles.length > 0
-			? normalizedHoles.map( hole => ( {
-				positions: hole.map( point => ( {
-					longitude: point[ 0 ],
-					latitude: point[ 1 ],
-				} ) ),
-			} ) )
-			: undefined,
-	};
-}
-
-/**
- * Computes a simple degree-space centroid for local polygon expansion.
- *
- * @param points Valid WGS84 lon/lat points.
- * @returns Centroid in degree coordinates.
- */
-function computePolygonCentroidDegrees( points: readonly LonLatPoint[] ): LonLatPoint {
-	let longitudeSum = 0.0;
-	let latitudeSum = 0.0;
-
-	for ( const point of points ) {
-		longitudeSum += point[ 0 ];
-		latitudeSum += point[ 1 ];
-	}
-
-	return [
-		longitudeSum / points.length,
-		latitudeSum / points.length,
-	];
-}
-
-/**
- * Expands a lon/lat polygon away from its centroid by a meter distance.
- *
- * The expansion is intentionally done in the local tangent plane because the
- * requested stroke width is a meter-space styling value, while Cesium still
- * owns the final ellipsoid shadow-volume tessellation.
- *
- * @param points Original fill polygon [lon, lat] points.
- * @param borderWidthMeters Stroke width in meters.
- * @returns Render polygon points expanded to cover the stroke band.
- */
-function expandPolygonPointsThroughMeters(
-	points: readonly LonLatPoint[],
-	borderWidthMeters: number,
-): LonLatPoint[] {
-	const safeWidthMeters = Math.max( borderWidthMeters, 0.0 ) * BORDER_GEOMETRY_EXPANSION_SCALE;
-	if ( safeWidthMeters === 0.0 ) {
-		return points.map( point => [ point[ 0 ], point[ 1 ] ] );
-	}
-
-	const centroid = computePolygonCentroidDegrees( points );
-	const centerCartographic = new Cartographic(
-		centroid[ 0 ] * Math.PI / 180.0,
-		centroid[ 1 ] * Math.PI / 180.0,
-		0.0,
-	);
-	const centerCartesian = Ellipsoid.WGS84.cartographicToCartesian(
-		centerCartographic,
-		new Cartesian3(),
-	);
-	const enuMatrix = Transforms.eastNorthUpToFixedFrame(
-		centerCartesian,
-		Ellipsoid.WGS84,
-		new Matrix4Cesium(),
-	);
-	const inverseEnu = Matrix4Cesium.inverse( enuMatrix, new Matrix4Cesium() );
-	const pointCartographic = new Cartographic();
-	const pointCartesian = new Cartesian3();
-	const pointEnu = new Cartesian3();
-
-	return points.map( ( point ) => {
-		pointCartographic.longitude = point[ 0 ] * Math.PI / 180.0;
-		pointCartographic.latitude = point[ 1 ] * Math.PI / 180.0;
-		pointCartographic.height = 0.0;
-		Ellipsoid.WGS84.cartographicToCartesian( pointCartographic, pointCartesian );
-		Matrix4Cesium.multiplyByPoint( inverseEnu, pointCartesian, pointEnu );
-
-		const length = Math.hypot( pointEnu.x, pointEnu.y );
-		if ( length > 1e-6 ) {
-			const expansion = safeWidthMeters / length;
-			pointEnu.x += pointEnu.x * expansion;
-			pointEnu.y += pointEnu.y * expansion;
-		}
-
-		Matrix4Cesium.multiplyByPoint( enuMatrix, pointEnu, pointCartesian );
-		Ellipsoid.WGS84.cartesianToCartographic( pointCartesian, pointCartographic );
-
-		return [
-			pointCartographic.longitude * 180.0 / Math.PI,
-			pointCartographic.latitude * 180.0 / Math.PI,
-		];
-	} );
 }
 
 /**
@@ -374,19 +208,35 @@ export class CesiumGroundRectanglePrimitive {
 }
 
 /**
- * Ground polygon implemented with Cesium PolygonGeometry.createShadowVolume.
+ * Ground polygon implemented with the native polygon shadow-volume pipeline.
  *
- * Polygon 路径在本期保持不变,继续使用 Cesium 几何流水线。
+ * 本类的公共 API(类名、构造选项、`update / setRenderOrder / dispose` 方法、
+ * `classification / polygonHierarchy / rotationDegrees / dentRatio / hole`
+ * 字段)与重构前完全一致;内部 6 步 Cesium 几何调用
+ * (polygonHierarchyDegreesToCesium → new PolygonGeometry → createShadowVolume →
+ * createGeometry → GeometryPipeline.encodeAttribute → cesiumGeometryToThree)
+ * 被替换为 1 步 `buildPolygonShadowVolumeGeometry`,plot-spec 校验、stroke 米外扩、
+ * opacity 归一化、setBorderStyle / setPolygonBorderPoints / visible 控制全部保留不动。
+ *
+ * `polygonHierarchy` 字段类型从 `{ positions: CartesianLike[]; holes: unknown[] }`
+ * 改为 `PolygonHierarchy`(Vector3 ECEF + Vector3 hole),Vector3 与 Cesium Cartesian3
+ * 在 `CartesianLike`(`.x .y .z`)契约上结构兼容,但 `instanceof Cesium.Cartesian3`
+ * 与 Cesium 特有 API 调用不可用(R7 文档化决策)。
  */
 export class CesiumGroundPolygonPrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
-	public readonly polygonHierarchy: { positions: CartesianLike[]; holes: unknown[] };
+	public readonly polygonHierarchy: PolygonHierarchy;
 	public readonly rotationDegrees: number;
 	public readonly dentRatio: number;
 	public readonly hole: boolean;
 
 	public constructor( options: CesiumGroundPolygonPrimitiveOptions ) {
+		// ── plot-spec 校验 + 浅拷贝 ──
+		// normalizePolygonPoints 在 polygon-hierarchy.ts 中迁移版本上还增加了
+		// 跨 IDL / 极地保护(R6),非合法输入会抛 Error。
 		const fillPoints = normalizePolygonPoints( options.points );
+
+		// ── 旋转 / 凹陷比 / hole 开关 ──
 		this.rotationDegrees = Number.isFinite( options.rotationDegrees )
 			? options.rotationDegrees
 			: 0.0;
@@ -394,61 +244,59 @@ export class CesiumGroundPolygonPrimitive {
 			? Math.min( Math.max( options.dentRatio, 0.05 ), 1.0 )
 			: 1.0;
 		this.hole = options.hole === true;
+
+		// ── 描边宽度(米)归一化 ──
 		const strokeWidthMeters = Math.max(
 			Number.isFinite( options.strokeWidth ) ? options.strokeWidth : 0.0,
 			0.0,
 		);
+
+		// ── fill → render 米外扩(plot-spec 描边覆盖区)──
 		const renderPoints = expandPolygonPointsThroughMeters(
 			fillPoints,
 			strokeWidthMeters,
 		);
-		const fillHierarchyDegrees = polygonHierarchyDegreesFromLonLatPoints(
-			fillPoints,
-			this.hole ? options.holes ?? [] : [],
-		);
-		const renderHierarchyDegrees = polygonHierarchyDegreesFromLonLatPoints(
-			renderPoints,
-			this.hole ? options.holes ?? [] : [],
-		);
-		const renderPolygonHierarchy = polygonHierarchyDegreesToCesium( renderHierarchyDegrees );
-		const fillPolygonHierarchy = polygonHierarchyDegreesToCesium( fillHierarchyDegrees );
-		this.polygonHierarchy = fillPolygonHierarchy;
 
-		const granularity = options.granularityRadians ?? ( Math.PI / 180.0 / 32.0 );
+		// ── 构建两份 PolygonHierarchy(Vector3 ECEF;一步到位,不经 Cesium 中间格式)──
+		const holesInput = this.hole ? options.holes ?? [] : [];
+		const fillHierarchy = polygonHierarchyFromLonLatPoints( fillPoints, holesInput );
+		const renderHierarchy = polygonHierarchyFromLonLatPoints( renderPoints, holesInput );
+		this.polygonHierarchy = fillHierarchy;
+
+		// ── 默认值 ──
+		const granularity = options.granularityRadians ?? POLYGON_DEFAULT_GRANULARITY;
 		const minimumHeight = options.minimumHeight ?? - CESIUM_GLOBE_MINIMUM_ALTITUDE;
 		const maximumHeight = options.maximumHeight ?? CESIUM_GLOBE_MINIMUM_ALTITUDE;
-		const polygonGeometry = new PolygonGeometry( {
-			polygonHierarchy: renderPolygonHierarchy,
-			ellipsoid: Ellipsoid.WGS84,
+
+		// ── 几何构造(1 步取代原 6 步 Cesium 调用)──
+		const threeGeometry = buildPolygonShadowVolumeGeometry( {
+			hierarchy: renderHierarchy,
 			granularity,
-			vertexFormat: VertexFormat.POSITION_ONLY,
-			perPositionHeight: false,
+			minimumHeight,
+			maximumHeight,
 		} );
-		const shadowVolumeGeometry = PolygonGeometry.createShadowVolume(
-			polygonGeometry,
-			() => minimumHeight,
-			() => maximumHeight,
-		);
-		const cesiumGeometry = PolygonGeometry.createGeometry( shadowVolumeGeometry ) as CesiumGeometryResult;
 
-		GeometryPipeline.encodeAttribute( cesiumGeometry, 'position', 'position3DHigh', 'position3DLow' );
+		// ── 从 BufferGeometry.userData 取 polygonRectangle(由 buildPolygonShadowVolumeGeometry 挂载)──
+		const userData = threeGeometry.userData as PolygonGeometryUserData;
+		const polygonRectangle = userData.polygonRectangle;
 
-		const threeGeometry = cesiumGeometryToThree( cesiumGeometry );
+		// ── PlanarExtents uniforms + style points(用 render hierarchy + fill 顶点)──
 		const extents = computePolygonPlanarExtents(
-			polygonGeometry.rectangle,
-			renderPolygonHierarchy,
-			Ellipsoid.WGS84,
+			polygonRectangle,
+			renderHierarchy,
 			maximumHeight,
 		);
 		const stylePoints = computePolygonPlanarStylePoints(
-			polygonGeometry.rectangle,
-			renderPolygonHierarchy,
+			polygonRectangle,
+			renderHierarchy,
 			fillPoints,
-			Ellipsoid.WGS84,
 			maximumHeight,
 		);
+
+		// ── 颜色 / opacity 归一化(0-100 → 0-1,保留行为)──
 		const color = new Color( options.fillColor );
 		const alpha = normalizePercentOpacity( options.fillOpacity );
+
 		this.classification = new CesiumClassificationPrimitive(
 			threeGeometry,
 			extents,
