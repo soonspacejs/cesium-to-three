@@ -2,11 +2,14 @@
 // debug-types.ts
 // Layer: demo UI state model.
 // Role: define the mutable lil-gui state objects used by the ground demo.
-// Dependencies: none.
+// Dependencies: ground adapter shared GIS types.
 // Consumed by: ground-demo.ts.
 // ============================================================
 
+import type { LonLatPoint } from '../lib/ground';
+
 export interface GroundDebugSettings {
+	points: LonLatPoint[];
 	centerLon: number;
 	centerLat: number;
 	widthDegrees: number;
@@ -15,14 +18,13 @@ export interface GroundDebugSettings {
 	heightMeters: number;
 	halfWidth: number;
 	halfHeight: number;
-	color: string;
-	alpha: number;
-	showRectangle: boolean;
+	fillColor: string;
+	fillOpacity: number;
+	visible: boolean;
 	rectanglePlotOrder: number;
-	showDebugBorder: boolean;
-	borderColor: string;
-	borderOpacity: number;
-	borderWidthMeters: number;
+	strokeColor: string;
+	strokeOpacity: number;
+	strokeWidth: number;
 	fragmentCull: boolean;
 	useTilesDepth: boolean;
 	showTiles: boolean;
@@ -33,6 +35,8 @@ export interface GroundDebugSettings {
 	polygonPlotOrder: number;
 	polygonColor: string;
 	polygonAlpha: number;
+	polygonCenterLon: number;
+	polygonCenterLat: number;
 	polygonOffsetEastMeters: number;
 	polygonOffsetNorthMeters: number;
 	polygonWidthMeters: number;

@@ -14,6 +14,7 @@ export { CesiumGroundRectanglePrimitive, CesiumGroundPolygonPrimitive } from './
 export {
 	longitudeLatitudeFromCenterOffsetsMeters,
 	rectangleDegreesFromCenterSizeMeters,
+	rectangleDegreesFromLonLatPoints,
 	rectangleMeterSizeFromDegrees,
 	wgs84NormalFromDegrees,
 	wgs84PositionFromDegrees,

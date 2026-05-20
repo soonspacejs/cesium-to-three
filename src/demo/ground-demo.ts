@@ -25,11 +25,11 @@ import {
 	CesiumGroundPolygonPrimitive,
 	CesiumGroundRectanglePrimitive,
 	longitudeLatitudeFromCenterOffsetsMeters,
-	rectangleDegreesFromCenterSizeMeters,
 	rectangleMeterSizeFromDegrees,
 	validateCesiumGroundRenderer,
 	wgs84NormalFromDegrees,
 	wgs84PositionFromDegrees,
+	type LonLatPoint,
 	type PolygonHierarchyDegrees,
 } from '../lib/ground';
 import { createInfoPanel, installPageStyle } from './dom';
@@ -48,6 +48,10 @@ const RECTANGLE_CENTER_LAT = readNumberEnv( 'VITE_PLOT_LAT', 27.9881 );
 const RECTANGLE_HALF_WIDTH_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_WIDTH_DEGREES', 0.05 );
 const RECTANGLE_HALF_HEIGHT_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_HEIGHT_DEGREES', 0.03 );
 const DEBUG_GROUND_SURFACE = readStringEnv( 'VITE_DEBUG_GROUND_SURFACE', 'false' ).toLowerCase() === 'true';
+
+interface RectangleGuiModel {
+	points: string;
+}
 
 /**
  * Boots the Three scene and executes the Cesium ground pipeline every frame.
@@ -131,8 +135,15 @@ export function runGroundDemo(): void {
 		north: RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES,
 	};
 	const initialRectangleMeterSize = rectangleMeterSizeFromDegrees( initialRectangleDegrees );
+	const initialRectanglePoints: LonLatPoint[] = [
+		[ initialRectangleDegrees.west, initialRectangleDegrees.south ],
+		[ initialRectangleDegrees.east, initialRectangleDegrees.south ],
+		[ initialRectangleDegrees.east, initialRectangleDegrees.north ],
+		[ initialRectangleDegrees.west, initialRectangleDegrees.north ],
+	];
 
 	const debugSettings: GroundDebugSettings = {
+		points: initialRectanglePoints,
 		centerLon: RECTANGLE_CENTER_LON,
 		centerLat: RECTANGLE_CENTER_LAT,
 		widthDegrees: RECTANGLE_HALF_WIDTH_DEGREES * 2.0,
@@ -141,14 +152,13 @@ export function runGroundDemo(): void {
 		heightMeters: initialRectangleMeterSize.heightMeters,
 		halfWidth: RECTANGLE_HALF_WIDTH_DEGREES,
 		halfHeight: RECTANGLE_HALF_HEIGHT_DEGREES,
-		color: '#ff0000',
-		alpha: 0.72,
-		showRectangle: true,
+		fillColor: '#ff0000',
+		fillOpacity: 72,
+		visible: true,
 		rectanglePlotOrder: 0,
-		showDebugBorder: true,
-		borderColor: '#ffffff',
-		borderOpacity: 0.95,
-		borderWidthMeters: 300.0,
+		strokeColor: '#ffffff',
+		strokeOpacity: 95,
+		strokeWidth: 300.0,
 		fragmentCull: true,
 		useTilesDepth: true,
 		showTiles: true,
@@ -159,6 +169,8 @@ export function runGroundDemo(): void {
 		polygonPlotOrder: 1,
 		polygonColor: '#00aaff',
 		polygonAlpha: 0.68,
+		polygonCenterLon: RECTANGLE_CENTER_LON,
+		polygonCenterLat: RECTANGLE_CENTER_LAT,
 		polygonOffsetEastMeters: 0.0,
 		polygonOffsetNorthMeters: 0.0,
 		polygonWidthMeters: Math.max( initialRectangleMeterSize.widthMeters * 0.7, 1.0 ),
@@ -182,40 +194,92 @@ export function runGroundDemo(): void {
 		queue: '0 / 0 / 0 / 0',
 		error: '',
 	};
+	const rectangleGuiModel: RectangleGuiModel = {
+		points: JSON.stringify( debugSettings.points ),
+	};
 
 	/**
-	 * Returns the current fill rectangle described by the GUI center and degree extents.
+	 * Returns the current fill rectangle derived from the public points field.
 	 *
 	 * @returns Rectangle in WGS84 degrees.
 	 */
 	function getCurrentRectangleDegrees(): { west: number; south: number; east: number; north: number } {
-		return {
-			west: debugSettings.centerLon - debugSettings.halfWidth,
-			south: debugSettings.centerLat - debugSettings.halfHeight,
-			east: debugSettings.centerLon + debugSettings.halfWidth,
-			north: debugSettings.centerLat + debugSettings.halfHeight,
-		};
+		let west = Number.POSITIVE_INFINITY;
+		let south = Number.POSITIVE_INFINITY;
+		let east = Number.NEGATIVE_INFINITY;
+		let north = Number.NEGATIVE_INFINITY;
+
+		for ( const point of debugSettings.points ) {
+			west = Math.min( west, point[ 0 ] );
+			south = Math.min( south, point[ 1 ] );
+			east = Math.max( east, point[ 0 ] );
+			north = Math.max( north, point[ 1 ] );
+		}
+
+		return { west, south, east, north };
 	}
 
 	/**
-	 * Stores a WGS84 degree rectangle back into the GUI size fields.
+	 * Serializes rectangle points into the compact GUI text field.
 	 *
-	 * @param rectangle Rectangle in WGS84 degrees.
+	 * @returns JSON string with four [lon, lat] corner points.
 	 */
-	function applyRectangleDegreesToDebugSettings( rectangle: { west: number; south: number; east: number; north: number } ): void {
+	function stringifyRectanglePoints(): string {
+		return JSON.stringify( debugSettings.points );
+	}
+
+	/**
+	 * Parses the public points GUI text into four WGS84 lon/lat points.
+	 *
+	 * @param value JSON text typed in lil-gui.
+	 * @returns Validated lon/lat points.
+	 */
+	function parseRectanglePointsText( value: string ): LonLatPoint[] {
+		const parsed = JSON.parse( value ) as unknown;
+
+		if ( ! Array.isArray( parsed ) || parsed.length !== 4 ) {
+			throw new Error( 'Rectangle points must be JSON with exactly four [lon, lat] pairs.' );
+		}
+
+		return parsed.map( point => {
+			if ( ! Array.isArray( point ) || point.length !== 2 ) {
+				throw new Error( 'Each rectangle point must be a [lon, lat] pair.' );
+			}
+
+			const longitude = Number( point[ 0 ] );
+			const latitude = Number( point[ 1 ] );
+			if ( ! Number.isFinite( longitude ) || ! Number.isFinite( latitude ) ) {
+				throw new Error( 'Rectangle point coordinates must be finite numbers.' );
+			}
+
+			return [ longitude, latitude ] as LonLatPoint;
+		} );
+	}
+
+	/**
+	 * Stores public points and refreshes derived center/size state.
+	 *
+	 * @param points Four WGS84 lon/lat corner points.
+	 */
+	function applyRectanglePointsToDebugSettings( points: LonLatPoint[] ): void {
+		debugSettings.points = points.map( point => [ point[ 0 ], point[ 1 ] ] );
+		rectangleGuiModel.points = stringifyRectanglePoints();
+		syncRectangleDerivedState();
+	}
+
+	/**
+	 * Refreshes derived rectangle state used by diagnostics.
+	 */
+	function syncRectangleDerivedState(): void {
+		const rectangle = getCurrentRectangleDegrees();
 		debugSettings.centerLon = ( rectangle.west + rectangle.east ) * 0.5;
 		debugSettings.centerLat = ( rectangle.south + rectangle.north ) * 0.5;
 		debugSettings.halfWidth = Math.max( ( rectangle.east - rectangle.west ) * 0.5, 0.0005 );
 		debugSettings.halfHeight = Math.max( ( rectangle.north - rectangle.south ) * 0.5, 0.0005 );
 		debugSettings.widthDegrees = debugSettings.halfWidth * 2.0;
 		debugSettings.heightDegrees = debugSettings.halfHeight * 2.0;
-	}
 
-	/**
-	 * Refreshes the meter-size GUI fields from the current geographic rectangle.
-	 */
-	function syncMeterSizeFromCurrentRectangle(): void {
-		const meterSize = rectangleMeterSizeFromDegrees( getCurrentRectangleDegrees() );
+		const meterSize = rectangleMeterSizeFromDegrees( rectangle );
 		debugSettings.widthMeters = meterSize.widthMeters;
 		debugSettings.heightMeters = meterSize.heightMeters;
 	}
@@ -261,18 +325,18 @@ export function runGroundDemo(): void {
 	 */
 	function createGroundRectangle(): CesiumGroundRectanglePrimitive {
 		return new CesiumGroundRectanglePrimitive( {
-			rectangleDegrees: getCurrentRectangleDegrees(),
-			color: debugSettings.color,
-			alpha: debugSettings.alpha,
+			points: debugSettings.points,
+			strokeColor: debugSettings.strokeColor,
+			strokeWidth: debugSettings.strokeWidth,
+			strokeOpacity: debugSettings.strokeOpacity,
+			fillColor: debugSettings.fillColor,
+			fillOpacity: debugSettings.fillOpacity,
+			visible: debugSettings.visible,
 			renderOrder: plotOrderToRenderOrder( debugSettings.rectanglePlotOrder ),
 			fragmentCull: debugSettings.fragmentCull,
 			debugSurface: true,
 			debugSurfaceHeight: debugSettings.debugSurfaceHeight,
 			debugSurfaceOpacity: debugSettings.debugSurfaceOpacity,
-			border: debugSettings.showDebugBorder,
-			borderColor: debugSettings.borderColor,
-			borderOpacity: debugSettings.borderOpacity,
-			borderWidthMeters: debugSettings.borderWidthMeters,
 		} );
 	}
 
@@ -285,8 +349,8 @@ export function runGroundDemo(): void {
 		normalizePolygonDebugSettings();
 
 		const polygonCenter = longitudeLatitudeFromCenterOffsetsMeters(
-			debugSettings.centerLon,
-			debugSettings.centerLat,
+			debugSettings.polygonCenterLon,
+			debugSettings.polygonCenterLat,
 			[
 				{
 					eastMeters: debugSettings.polygonOffsetEastMeters,
@@ -347,21 +411,21 @@ export function runGroundDemo(): void {
 	 * Applies GUI state to the existing primitive without rebuilding geometry.
 	 */
 	function applyGroundDebugSettings(): void {
-		const color = new Color( debugSettings.color );
-		groundRectangle.classification.setColor( color, debugSettings.alpha );
+		const color = new Color( debugSettings.fillColor );
+		groundRectangle.classification.setColor( color, debugSettings.fillOpacity / 100.0 );
 		groundRectangle.classification.setFragmentCulling( debugSettings.fragmentCull );
 		groundRectangle.setRenderOrder( plotOrderToRenderOrder( debugSettings.rectanglePlotOrder ) );
-		groundRectangle.classification.group.visible = debugSettings.showRectangle;
+		groundRectangle.classification.group.visible = debugSettings.visible;
 		groundRectangle.classification.setCommandVisibility( {
 			frontStencil: debugSettings.showFrontStencil,
 			backStencil: debugSettings.showBackStencil,
 			color: debugSettings.showColorPass,
 		} );
 		groundRectangle.classification.setBorderStyle(
-			debugSettings.showDebugBorder,
-			new Color( debugSettings.borderColor ),
-			debugSettings.borderOpacity,
-			debugSettings.borderWidthMeters,
+			debugSettings.strokeWidth > 0.0,
+			new Color( debugSettings.strokeColor ),
+			debugSettings.strokeOpacity / 100.0,
+			debugSettings.strokeWidth,
 		);
 
 		if ( groundRectangle.debugSurface ) {
@@ -393,15 +457,16 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Rebuilds geometry after the GUI full-size fields change.
+	 * Rebuilds geometry after the public points field changes.
 	 */
-	function rebuildFromSizeDegrees(): void {
-		debugSettings.halfWidth = Math.max( debugSettings.widthDegrees * 0.5, 0.0005 );
-		debugSettings.halfHeight = Math.max( debugSettings.heightDegrees * 0.5, 0.0005 );
-		debugSettings.widthDegrees = debugSettings.halfWidth * 2.0;
-		debugSettings.heightDegrees = debugSettings.halfHeight * 2.0;
-		syncMeterSizeFromCurrentRectangle();
-		rebuildGroundRectangle();
+	function rebuildRectangleFromPointsText(): void {
+		try {
+			applyRectanglePointsToDebugSettings( parseRectanglePointsText( rectangleGuiModel.points ) );
+			rebuildGroundRectangle();
+		} catch ( error ) {
+			rectangleGuiModel.points = stringifyRectanglePoints();
+			console.error( error );
+		}
 	}
 
 	/**
@@ -413,51 +478,13 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Rebuilds geometry after meter-size fields change.
-	 */
-	function rebuildFromSizeMeters(): void {
-		const rectangle = rectangleDegreesFromCenterSizeMeters(
-			debugSettings.centerLon,
-			debugSettings.centerLat,
-			Math.max( debugSettings.widthMeters, 1.0 ),
-			Math.max( debugSettings.heightMeters, 1.0 ),
-		);
-		applyRectangleDegreesToDebugSettings( rectangle );
-		syncMeterSizeFromCurrentRectangle();
-		rebuildGroundRectangle();
-	}
-
-	/**
-	 * Rebuilds geometry after center fields change while keeping meter size stable.
-	 */
-	function rebuildFromCenterMeters(): void {
-		rebuildFromSizeMeters();
-	}
-
-	/**
-	 * Rebuilds geometry after the GUI half-extent fields change.
-	 */
-	function rebuildFromHalfExtents(): void {
-		debugSettings.halfWidth = Math.max( debugSettings.halfWidth, 0.0005 );
-		debugSettings.halfHeight = Math.max( debugSettings.halfHeight, 0.0005 );
-		debugSettings.widthDegrees = debugSettings.halfWidth * 2.0;
-		debugSettings.heightDegrees = debugSettings.halfHeight * 2.0;
-		syncMeterSizeFromCurrentRectangle();
-		rebuildGroundRectangle();
-	}
-
-	/**
 	 * Rebuilds geometry when rectangle extents or debug-surface height change.
 	 */
 	function rebuildGroundRectangle(): void {
 		scene.remove( groundRectangle.classification.group );
-		scene.remove( groundPolygon.classification.group );
 		groundRectangle.dispose();
-		groundPolygon.dispose();
 		groundRectangle = createGroundRectangle();
-		groundPolygon = createGroundPolygon();
 		scene.add( groundRectangle.classification.group );
-		scene.add( groundPolygon.classification.group );
 		applyGroundDebugSettings();
 	}
 
@@ -481,29 +508,22 @@ export function runGroundDemo(): void {
 		gui.domElement.style.top = '16px';
 
 		const rectangleFolder = gui.addFolder( 'Rectangle' );
-		rectangleFolder.add( debugSettings, 'showRectangle' ).name( 'show rectangle' ).onChange( applyGroundDebugSettings );
+		rectangleFolder.add( rectangleGuiModel, 'points' ).name( 'points' ).onFinishChange( rebuildRectangleFromPointsText ).listen();
+		rectangleFolder.addColor( debugSettings, 'strokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		rectangleFolder.add( debugSettings, 'strokeWidth', 0.0, 100000.0, 100.0 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundRectangle );
+		rectangleFolder.add( debugSettings, 'strokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		rectangleFolder.addColor( debugSettings, 'fillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
+		rectangleFolder.add( debugSettings, 'fillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
+		rectangleFolder.add( debugSettings, 'visible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
 		rectangleFolder.add( debugSettings, 'rectanglePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyGroundDebugSettings ).listen();
-		rectangleFolder.add( debugSettings, 'centerLon', - 180.0, 180.0, 0.0001 ).name( 'center lon' ).onFinishChange( rebuildFromCenterMeters ).listen();
-		rectangleFolder.add( debugSettings, 'centerLat', - 85.0, 85.0, 0.0001 ).name( 'center lat' ).onFinishChange( rebuildFromCenterMeters ).listen();
-		rectangleFolder.add( debugSettings, 'widthMeters', 1.0, 5000000.0, 1.0 ).name( 'width m' ).onFinishChange( rebuildFromSizeMeters ).listen();
-		rectangleFolder.add( debugSettings, 'heightMeters', 1.0, 5000000.0, 1.0 ).name( 'height m' ).onFinishChange( rebuildFromSizeMeters ).listen();
-		rectangleFolder.add( debugSettings, 'widthDegrees', 0.002, 20.0, 0.001 ).name( 'width deg' ).onFinishChange( rebuildFromSizeDegrees ).listen();
-		rectangleFolder.add( debugSettings, 'heightDegrees', 0.002, 20.0, 0.001 ).name( 'height deg' ).onFinishChange( rebuildFromSizeDegrees ).listen();
-		rectangleFolder.add( debugSettings, 'halfWidth', 0.001, 10.0, 0.001 ).name( 'half width deg' ).onFinishChange( rebuildFromHalfExtents ).listen();
-		rectangleFolder.add( debugSettings, 'halfHeight', 0.001, 10.0, 0.001 ).name( 'half height deg' ).onFinishChange( rebuildFromHalfExtents ).listen();
-		rectangleFolder.addColor( debugSettings, 'color' ).name( 'color' ).onChange( applyGroundDebugSettings );
-		rectangleFolder.add( debugSettings, 'alpha', 0.0, 1.0, 0.01 ).name( 'alpha' ).onChange( applyGroundDebugSettings );
-		rectangleFolder.add( debugSettings, 'showDebugBorder' ).name( 'border overlay' ).onChange( applyGroundDebugSettings );
-		rectangleFolder.addColor( debugSettings, 'borderColor' ).name( 'border color' ).onChange( applyGroundDebugSettings );
-		rectangleFolder.add( debugSettings, 'borderOpacity', 0.0, 1.0, 0.01 ).name( 'border opacity' ).onChange( applyGroundDebugSettings );
-		rectangleFolder.add( debugSettings, 'borderWidthMeters', 1.0, 100000.0, 100.0 ).name( 'border width m' ).onFinishChange( rebuildGroundRectangle );
-		rectangleFolder.add( debugSettings, 'rebuild' ).name( 'rebuild primitive' );
 
 		const polygonFolder = gui.addFolder( 'Polygon' );
 		polygonFolder.add( debugSettings, 'showPolygon' ).name( 'show polygon' ).onChange( applyGroundDebugSettings );
 		polygonFolder.add( debugSettings, 'polygonPlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyGroundDebugSettings ).listen();
 		polygonFolder.addColor( debugSettings, 'polygonColor' ).name( 'polygon color' ).onChange( applyGroundDebugSettings );
 		polygonFolder.add( debugSettings, 'polygonAlpha', 0.0, 1.0, 0.01 ).name( 'polygon alpha' ).onChange( applyGroundDebugSettings );
+		polygonFolder.add( debugSettings, 'polygonCenterLon', - 180.0, 180.0, 0.0001 ).name( 'center lon' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
+		polygonFolder.add( debugSettings, 'polygonCenterLat', - 85.0, 85.0, 0.0001 ).name( 'center lat' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonOffsetEastMeters', - 500000.0, 500000.0, 1.0 ).name( 'offset east m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonOffsetNorthMeters', - 500000.0, 500000.0, 1.0 ).name( 'offset north m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonWidthMeters', 1.0, 2000000.0, 1.0 ).name( 'width m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
@@ -613,13 +633,13 @@ export function runGroundDemo(): void {
 			`Tiles: 3d-tiles-renderer + Cesium Ion asset ${ readStringEnv( 'VITE_CESIUM_ION_ASSET_ID', '96188' ) === '1' ? '96188' : readStringEnv( 'VITE_CESIUM_ION_ASSET_ID', '96188' ) }\\n` +
 			`Terrain plugin: QuantizedMeshPlugin for TERRAIN assets\\n` +
 			`Geometry: RectangleGeometry.createShadowVolume\\n` +
-			`Rectangle: ${ debugSettings.showRectangle ? 'on' : 'off' } / order ${ debugSettings.rectanglePlotOrder } / ${ debugSettings.widthDegrees.toFixed( 4 ) } deg x ${ debugSettings.heightDegrees.toFixed( 4 ) } deg\\n` +
+			`Rectangle: ${ debugSettings.visible ? 'on' : 'off' } / order ${ debugSettings.rectanglePlotOrder } / ${ debugSettings.widthDegrees.toFixed( 4 ) } deg x ${ debugSettings.heightDegrees.toFixed( 4 ) } deg\\n` +
 			`Rectangle meters: ${ debugSettings.widthMeters.toFixed( 1 ) } m x ${ debugSettings.heightMeters.toFixed( 1 ) } m\\n` +
 			`Polygon: ${ debugSettings.showPolygon ? 'on' : 'off' } / order ${ debugSettings.polygonPlotOrder } / PolygonGeometry.createShadowVolume\\n` +
 			`Polygon shape: ${ debugSettings.polygonWidthMeters.toFixed( 1 ) } m x ${ debugSettings.polygonHeightMeters.toFixed( 1 ) } m / vertices ${ debugSettings.polygonVertexCount } / hole ${ debugSettings.polygonHole ? 'on' : 'off' }\\n` +
-			`Polygon offset: east ${ debugSettings.polygonOffsetEastMeters.toFixed( 1 ) } m, north ${ debugSettings.polygonOffsetNorthMeters.toFixed( 1 ) } m / rotation ${ debugSettings.polygonRotationDegrees.toFixed( 1 ) } deg\\n` +
+			`Polygon center: ${ debugSettings.polygonCenterLon.toFixed( 5 ) }, ${ debugSettings.polygonCenterLat.toFixed( 5 ) } / offset east ${ debugSettings.polygonOffsetEastMeters.toFixed( 1 ) } m, north ${ debugSettings.polygonOffsetNorthMeters.toFixed( 1 ) } m / rotation ${ debugSettings.polygonRotationDegrees.toFixed( 1 ) } deg\\n` +
 			`Debug surface: ${ debugSettings.showDebugSurface ? 'on' : 'off' }\\n` +
-			`Debug border: ${ debugSettings.showDebugBorder ? 'on' : 'off' } / ${ debugSettings.borderWidthMeters.toFixed( 0 ) } m\\n` +
+			`Rectangle stroke: ${ debugSettings.strokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.strokeOpacity.toFixed( 0 ) }%\\n` +
 			`CULL_FRAGMENTS: ${ debugSettings.fragmentCull ? 'on' : 'off' }\\n` +
 			`Shader: ShadowVolumeAppearanceVS/FS + ShadowVolumeFS\\n` +
 			`Stencil mask: 0x0f, zfail front=DECR_WRAP back=INCR_WRAP\\n` +

@@ -38,15 +38,27 @@ import {
 	createDebugRectangleSurfaceGeometry,
 	expandRectangleDegreesThroughMeters,
 	polygonHierarchyDegreesToCesium,
+	rectangleDegreesFromLonLatPoints,
 } from './geometry';
 import type {
 	CartesianLike,
 	CesiumGeometryResult,
 	CesiumGroundFrameState,
 	CesiumGroundPolygonOptions,
-	CesiumGroundRectangleOptions,
+	CesiumGroundRectanglePrimitiveOptions,
 	RectangleRadians,
 } from './types';
+
+/**
+ * Converts SoonSpace-style integer opacity into the normalized shader range.
+ *
+ * @param opacity Percent opacity in the 0-100 store format.
+ * @returns Clamped opacity in the 0-1 range used by Three uniforms.
+ */
+function normalizePercentOpacity( opacity: number ): number {
+	const safeOpacity = Number.isFinite( opacity ) ? opacity : 100.0;
+	return Math.min( Math.max( safeOpacity, 0.0 ), 100.0 ) / 100.0;
+}
 
 /**
  * Ground rectangle implemented with Cesium RectangleGeometry.createShadowVolume.
@@ -56,17 +68,18 @@ export class CesiumGroundRectanglePrimitive {
 	public readonly debugSurface: Mesh | null;
 	public readonly rectangle: unknown;
 
-	public constructor( options: CesiumGroundRectangleOptions ) {
+	public constructor( options: CesiumGroundRectanglePrimitiveOptions ) {
+		const rectangleDegrees = rectangleDegreesFromLonLatPoints( options.points );
 		const fillRectangle = Rectangle.fromDegrees(
-			options.rectangleDegrees.west,
-			options.rectangleDegrees.south,
-			options.rectangleDegrees.east,
-			options.rectangleDegrees.north,
+			rectangleDegrees.west,
+			rectangleDegrees.south,
+			rectangleDegrees.east,
+			rectangleDegrees.north,
 		);
-		const borderWidthMeters = options.borderWidthMeters ?? 0.0;
+		const strokeWidthMeters = Math.max( Number.isFinite( options.strokeWidth ) ? options.strokeWidth : 0.0, 0.0 );
 		const renderRectangleDegrees = expandRectangleDegreesThroughMeters(
-			options.rectangleDegrees,
-			borderWidthMeters,
+			rectangleDegrees,
+			strokeWidthMeters,
 		);
 		const renderRectangle = Rectangle.fromDegrees(
 			renderRectangleDegrees.west,
@@ -96,8 +109,8 @@ export class CesiumGroundRectanglePrimitive {
 
 		const threeGeometry = cesiumGeometryToThree( cesiumGeometry );
 		const extents = computePlanarExtents( renderRectangle, Ellipsoid.WGS84, maximumHeight, fillRectangle );
-		const color = new Color( options.color ?? 0xff2f2f );
-		const alpha = options.alpha ?? 0.65;
+		const color = new Color( options.fillColor );
+		const alpha = normalizePercentOpacity( options.fillOpacity );
 		this.classification = new CesiumClassificationPrimitive(
 			threeGeometry,
 			extents,
@@ -106,11 +119,12 @@ export class CesiumGroundRectanglePrimitive {
 			options.renderOrder ?? 10,
 			options.fragmentCull ?? true,
 		);
+		this.classification.group.visible = options.visible;
 		this.classification.setBorderStyle(
-			options.border ?? false,
-			new Color( options.borderColor ?? 0xffffff ),
-			options.borderOpacity ?? 0.95,
-			borderWidthMeters,
+			strokeWidthMeters > 0.0,
+			new Color( options.strokeColor ),
+			normalizePercentOpacity( options.strokeOpacity ),
+			strokeWidthMeters,
 		);
 
 		this.debugSurface = null;

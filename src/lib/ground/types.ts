@@ -50,6 +50,8 @@ export interface RectangleMeterSize {
 	heightMeters: number;
 }
 
+export type LonLatPoint = [ number, number ];
+
 export interface LongitudeLatitude {
 	longitude: number;
 	latitude: number;
@@ -73,9 +75,16 @@ export interface RectangleRadians {
 }
 
 export interface CesiumGroundRectangleOptions {
-	rectangleDegrees: RectangleDegrees;
-	color?: Color | string | number;
-	alpha?: number;
+	points: LonLatPoint[];
+	strokeColor: string;
+	strokeWidth: number;
+	strokeOpacity: number;
+	fillColor: string;
+	fillOpacity: number;
+	visible: boolean;
+}
+
+export interface CesiumGroundRectanglePrimitiveOptions extends CesiumGroundRectangleOptions {
 	granularityRadians?: number;
 	minimumHeight?: number;
 	maximumHeight?: number;
@@ -83,10 +92,6 @@ export interface CesiumGroundRectangleOptions {
 	debugSurface?: boolean;
 	debugSurfaceHeight?: number;
 	debugSurfaceOpacity?: number;
-	border?: boolean;
-	borderColor?: Color | string | number;
-	borderOpacity?: number;
-	borderWidthMeters?: number;
 	fragmentCull?: boolean;
 }
 

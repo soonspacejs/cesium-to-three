@@ -36,6 +36,7 @@ import type {
 	CesiumGeometryResult,
 	EastNorthOffsetMeters,
 	EncodedScalar,
+	LonLatPoint,
 	LongitudeLatitude,
 	PlanarBounds,
 	PlanarExtents,
@@ -346,6 +347,51 @@ export function rectangleDegreesFromCenterSizeMeters(
 		- halfHeightMeters,
 		halfHeightMeters,
 	);
+}
+
+/**
+ * Builds an axis-aligned Cesium rectangle from four lon/lat corner points.
+ *
+ * The public plot API stores rectangles as four WGS84 corner points to match
+ * SoonSpace plot snapshots. Cesium RectangleGeometry still consumes west,
+ * south, east, and north degree bounds, so this helper validates the four
+ * corners and derives those bounds without changing the caller's point order.
+ *
+ * @param points Four rectangle corner points as [longitude, latitude] degrees.
+ * @returns WGS84 degree bounds suitable for Cesium RectangleGeometry.
+ */
+export function rectangleDegreesFromLonLatPoints( points: LonLatPoint[] ): RectangleDegrees {
+	if ( points.length !== 4 ) {
+		throw new Error( 'Cesium ground rectangle requires exactly four lon/lat points.' );
+	}
+
+	let west = Number.POSITIVE_INFINITY;
+	let south = Number.POSITIVE_INFINITY;
+	let east = Number.NEGATIVE_INFINITY;
+	let north = Number.NEGATIVE_INFINITY;
+
+	for ( const point of points ) {
+		const longitude = point[ 0 ];
+		const latitude = point[ 1 ];
+
+		if ( ! Number.isFinite( longitude ) || ! Number.isFinite( latitude ) ) {
+			throw new Error( 'Cesium ground rectangle points must contain finite lon/lat numbers.' );
+		}
+		if ( longitude < - 180.0 || longitude > 180.0 || latitude < - 90.0 || latitude > 90.0 ) {
+			throw new Error( 'Cesium ground rectangle points must be valid WGS84 lon/lat degrees.' );
+		}
+
+		west = Math.min( west, longitude );
+		south = Math.min( south, latitude );
+		east = Math.max( east, longitude );
+		north = Math.max( north, latitude );
+	}
+
+	if ( east <= west || north <= south ) {
+		throw new Error( 'Cesium ground rectangle points must describe a non-degenerate rectangle.' );
+	}
+
+	return { west, south, east, north };
 }
 
 /**
