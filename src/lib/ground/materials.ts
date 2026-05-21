@@ -141,6 +141,12 @@ uniform vec4 u_innerMetersRect;
 uniform float u_polygonBorderMode;
 uniform float u_polygonPointCount;
 uniform vec2 u_polygonPoints[${ MAX_POLYGON_STYLE_VERTICES }];
+uniform float u_circleBorderMode;
+uniform vec2 u_circleCenterMeters;
+uniform float u_circleFillRadiusMeters;
+uniform float u_circleRenderRadiusMeters;
+uniform float u_circleRingCount;
+uniform float u_circleRingGapRatio;
 
 const float czm_pi = 3.141592653589793;
 const float czm_twoPi = 6.283185307179586;
@@ -252,7 +258,47 @@ function createColorFragmentBody(): string {
 #ifdef TEXTURE_COORDINATES
 #ifndef SPHERICAL
     vec2 planarMeters = uv / v_inversePlaneExtents;
-    if (u_polygonBorderMode > 0.5) {
+    if (u_circleBorderMode > 0.5) {
+        float circleDistanceMeters = distance(planarMeters, u_circleCenterMeters);
+        if (circleDistanceMeters > u_circleRenderRadiusMeters) {
+            discard;
+        }
+
+        float safeRingCount = max(floor(u_circleRingCount + 0.5), 1.0);
+        float safeGapRatio = max(u_circleRingGapRatio, 0.0);
+        float bandCount = safeRingCount + max(safeRingCount - 1.0, 0.0) * safeGapRatio;
+        float ringWidthMeters = u_circleFillRadiusMeters / max(bandCount, 1e-6);
+        float gapWidthMeters = ringWidthMeters * safeGapRatio;
+        float cellWidthMeters = max(ringWidthMeters + gapWidthMeters, 1e-6);
+        float cellDistanceMeters = mod(circleDistanceMeters, cellWidthMeters);
+        float outerRingStartMeters = max(u_circleFillRadiusMeters - ringWidthMeters, 0.0);
+        bool insideFillRadius = circleDistanceMeters <= u_circleFillRadiusMeters;
+        bool insideOuterBorder = circleDistanceMeters > u_circleFillRadiusMeters;
+        bool insideRingBand = safeRingCount <= 1.0 || cellDistanceMeters <= ringWidthMeters || circleDistanceMeters >= outerRingStartMeters;
+
+        if (insideOuterBorder) {
+            if (u_borderEnabled < 0.5 || u_borderColor.a <= 0.0) {
+                color = vec4(color.rgb, 0.0);
+            } else {
+                color = czm_gammaCorrect(u_borderColor);
+            }
+        } else if (!insideFillRadius || !insideRingBand) {
+            color = vec4(color.rgb, 0.0);
+        } else if (u_borderEnabled > 0.5 && u_borderColor.a > 0.0) {
+            float distanceToRingEdge = min(cellDistanceMeters, ringWidthMeters - cellDistanceMeters);
+            bool ringEdge = safeRingCount > 1.0 && circleDistanceMeters > ringWidthMeters && distanceToRingEdge <= u_borderWidthMeters;
+            bool centerRingOuterEdge = safeRingCount > 1.0 && abs(circleDistanceMeters - ringWidthMeters) <= u_borderWidthMeters;
+            if (ringEdge || centerRingOuterEdge) {
+                color = czm_gammaCorrect(u_borderColor);
+            }
+        }
+
+        if (color.a <= 0.0) {
+            out_FragColor = color;
+            out_FragColor.rgb *= out_FragColor.a;
+            return;
+        }
+    } else if (u_polygonBorderMode > 0.5) {
         bool insideFillPolygon = c23_pointInsidePolygon(planarMeters);
         if (!insideFillPolygon) {
             if (u_borderEnabled < 0.5 || u_borderColor.a <= 0.0) {

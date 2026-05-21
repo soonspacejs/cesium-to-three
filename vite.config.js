@@ -13,7 +13,7 @@ export default defineConfig(function (_a) {
     var env = loadEnv(mode, process.cwd(), '');
     return {
         server: {
-            port: 5173,
+            port: 5170,
             open: true,
             host: '0.0.0.0',
         },

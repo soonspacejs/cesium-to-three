@@ -117,6 +117,30 @@ export interface CesiumGroundPolygonPrimitiveOptions extends CesiumGroundPolygon
 	fragmentCull?: boolean;
 }
 
+export interface CesiumGroundCircleOptions {
+	center: LonLatPoint;
+	radius: number;
+	strokeColor: string;
+	strokeWidth: number;
+	strokeOpacity: number;
+	fillColor: string;
+	fillOpacity: number;
+	visible: boolean;
+}
+
+export interface CesiumGroundCirclePrimitiveOptions extends CesiumGroundCircleOptions {
+	height?: number;
+	extrudedHeight?: number;
+	granularityRadians?: number;
+	stRotationRadians?: number;
+	ringCount?: number;
+	ringGapRatio?: number;
+	minimumHeight?: number;
+	maximumHeight?: number;
+	renderOrder?: number;
+	fragmentCull?: boolean;
+}
+
 export interface CesiumClassificationCommandVisibility {
 	frontStencil?: boolean;
 	backStencil?: boolean;
@@ -171,6 +195,12 @@ export interface SharedUniforms {
 	u_polygonBorderMode: { value: number };
 	u_polygonPointCount: { value: number };
 	u_polygonPoints: { value: Vector2[] };
+	u_circleBorderMode: { value: number };
+	u_circleCenterMeters: { value: Vector2 };
+	u_circleFillRadiusMeters: { value: number };
+	u_circleRenderRadiusMeters: { value: number };
+	u_circleRingCount: { value: number };
+	u_circleRingGapRatio: { value: number };
 	czm_globeDepthTexture: { value: WebGLRenderTarget['texture'] | null };
 	czm_viewport: { value: Vector4 };
 	czm_inverseProjection: { value: Matrix4 };

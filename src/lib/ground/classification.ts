@@ -146,6 +146,12 @@ export class CesiumClassificationPrimitive {
 					() => new Vector2(),
 				),
 			},
+			u_circleBorderMode: { value: 0.0 },
+			u_circleCenterMeters: { value: new Vector2() },
+			u_circleFillRadiusMeters: { value: 0.0 },
+			u_circleRenderRadiusMeters: { value: 0.0 },
+			u_circleRingCount: { value: 1.0 },
+			u_circleRingGapRatio: { value: 0.0 },
 			czm_globeDepthTexture: { value: null },
 			czm_viewport: { value: new Vector4( 0.0, 0.0, 1.0, 1.0 ) },
 			czm_inverseProjection: { value: new Matrix4() },
@@ -256,6 +262,40 @@ export class CesiumClassificationPrimitive {
 
 		this.uniforms.u_polygonPointCount.value = pointCount;
 		this.uniforms.u_polygonBorderMode.value = pointCount >= 3 ? 1.0 : 0.0;
+		this.uniforms.u_circleBorderMode.value = 0.0;
+	}
+
+	/**
+	 * Supplies circle styling values in planar meter coordinates.
+	 *
+	 * @param centerMeters Circle center relative to the shader's SW meter origin.
+	 * @param fillRadiusMeters Public fill radius in meters.
+	 * @param renderRadiusMeters Radius of the rendered shadow volume in meters.
+	 * @param ringCount Number of filled concentric bands.
+	 * @param ringGapRatio Ratio between each transparent gap and filled band.
+	 */
+	public setCircleBorderStyle(
+		centerMeters: Vector2,
+		fillRadiusMeters: number,
+		renderRadiusMeters: number,
+		ringCount = 1.0,
+		ringGapRatio = 0.0,
+	): void {
+		const safeRingCount = Number.isFinite( ringCount )
+			? Math.max( Math.floor( ringCount ), 1.0 )
+			: 1.0;
+		const safeRingGapRatio = Number.isFinite( ringGapRatio )
+			? Math.max( ringGapRatio, 0.0 )
+			: 0.0;
+
+		this.uniforms.u_circleCenterMeters.value.copy( centerMeters );
+		this.uniforms.u_circleFillRadiusMeters.value = Math.max( fillRadiusMeters, 0.0 );
+		this.uniforms.u_circleRenderRadiusMeters.value = Math.max( renderRadiusMeters, 0.0 );
+		this.uniforms.u_circleRingCount.value = safeRingCount;
+		this.uniforms.u_circleRingGapRatio.value = safeRingGapRatio;
+		this.uniforms.u_circleBorderMode.value = fillRadiusMeters > 0.0 && renderRadiusMeters > 0.0 ? 1.0 : 0.0;
+		this.uniforms.u_polygonBorderMode.value = 0.0;
+		this.uniforms.u_polygonPointCount.value = 0.0;
 	}
 
 	/**

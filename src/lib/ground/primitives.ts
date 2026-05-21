@@ -10,6 +10,8 @@
 // ============================================================
 
 import {
+	BufferAttribute,
+	BufferGeometry,
 	Color,
 	DoubleSide,
 	Mesh,
@@ -17,10 +19,25 @@ import {
 	type Material,
 } from 'three';
 
+// Circle is intentionally kept coupled to Cesium Core for the validation stage.
+// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
+import CircleGeometry from '../../../cesium-ground-source/engine/Source/Core/CircleGeometry.js';
+// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
+import Cartesian3 from '../../../cesium-ground-source/engine/Source/Core/Cartesian3.js';
+// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
+import Ellipsoid from '../../../cesium-ground-source/engine/Source/Core/Ellipsoid.js';
+// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
+import GeometryPipeline from '../../../cesium-ground-source/engine/Source/Core/GeometryPipeline.js';
+// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
+import VertexFormat from '../../../cesium-ground-source/engine/Source/Core/VertexFormat.js';
+
 import { CesiumClassificationPrimitive } from './classification';
 import {
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
+	MAX_CIRCLE_GRANULARITY_RADIANS,
+	MIN_CIRCLE_GRANULARITY_RADIANS,
 } from './constants';
+import { computeCirclePlanarExtents } from './circle/circle-extents';
 import {
 	expandPolygonPointsThroughMeters,
 } from './polygon/polygon-helpers';
@@ -47,6 +64,8 @@ import {
 } from './rectangle/rectangle-radians';
 import { buildRectangleShadowVolumeGeometry } from './rectangle/rectangle-shadow-volume';
 import type {
+	CesiumGeometryResult,
+	CesiumGroundCirclePrimitiveOptions,
 	CesiumGroundFrameState,
 	CesiumGroundPolygonPrimitiveOptions,
 	CesiumGroundRectanglePrimitiveOptions,
@@ -62,6 +81,54 @@ import type {
 function normalizePercentOpacity( opacity: number ): number {
 	const safeOpacity = Number.isFinite( opacity ) ? opacity : 100.0;
 	return Math.min( Math.max( safeOpacity, 0.0 ), 100.0 ) / 100.0;
+}
+
+/**
+ * Converts Cesium Geometry attributes to a Three BufferGeometry.
+ *
+ * This adapter is used only by Cesium-coupled primitives such as CircleGeometry.
+ * Rectangle and polygon already use local Cesium-free builders.
+ *
+ * @param cesiumGeometry Geometry returned by Cesium createGeometry.
+ * @returns Three BufferGeometry with matching attribute names.
+ */
+function cesiumGeometryToThree( cesiumGeometry: CesiumGeometryResult ): BufferGeometry {
+	if (
+		! cesiumGeometry ||
+		! cesiumGeometry.attributes ||
+		Object.keys( cesiumGeometry.attributes ).length === 0
+	) {
+		throw new Error( 'Cesium geometry conversion failed: geometry has no vertex attributes.' );
+	}
+
+	const geometry = new BufferGeometry();
+
+	for ( const [ name, attribute ] of Object.entries( cesiumGeometry.attributes ) ) {
+		const sourceValues = attribute.values;
+		const values = sourceValues instanceof Float32Array
+			? sourceValues
+			: new Float32Array( Array.from( sourceValues ) );
+
+		geometry.setAttribute(
+			name,
+			new BufferAttribute( values, attribute.componentsPerAttribute ),
+		);
+	}
+
+	const firstAttribute = Object.values( cesiumGeometry.attributes )[ 0 ];
+	const vertexCount = firstAttribute.values.length / firstAttribute.componentsPerAttribute;
+	geometry.setAttribute( 'batchId', new BufferAttribute( new Float32Array( vertexCount ), 1 ) );
+
+	if ( cesiumGeometry.indices ) {
+		const indices = cesiumGeometry.indices;
+		const indexArray = indices instanceof Uint16Array || indices instanceof Uint32Array
+			? indices
+			: new Uint32Array( Array.from( indices ) );
+		geometry.setIndex( new BufferAttribute( indexArray, 1 ) );
+	}
+
+	geometry.computeBoundingSphere();
+	return geometry;
 }
 
 /**
@@ -326,6 +393,149 @@ export class CesiumGroundPolygonPrimitive {
 
 	/**
 	 * Updates this polygon's command-block render order.
+	 *
+	 * @param renderOrder Base order assigned to the front-stencil command.
+	 */
+	public setRenderOrder( renderOrder: number ): void {
+		this.classification.setRenderOrder( renderOrder );
+	}
+
+	/**
+	 * Releases resources.
+	 */
+	public dispose(): void {
+		this.classification.dispose();
+	}
+}
+
+/**
+ * Ground circle implemented with Cesium CircleGeometry for validation.
+ *
+ * This class intentionally imports CircleGeometry from cesium-ground-source so
+ * the first circle implementation can be compared against Cesium behavior
+ * before any local decoupled implementation is attempted.
+ */
+export class CesiumGroundCirclePrimitive {
+	public readonly classification: CesiumClassificationPrimitive;
+	public readonly center: [ number, number ];
+	public readonly radius: number;
+
+	public constructor( options: CesiumGroundCirclePrimitiveOptions ) {
+		const centerLongitude = options.center[ 0 ];
+		const centerLatitude = options.center[ 1 ];
+		if (
+			! Number.isFinite( centerLongitude ) ||
+			! Number.isFinite( centerLatitude ) ||
+			centerLongitude < -180.0 ||
+			centerLongitude > 180.0 ||
+			centerLatitude < -90.0 ||
+			centerLatitude > 90.0
+		) {
+			throw new Error( 'Cesium ground circle center must be a valid WGS84 [lon, lat] point.' );
+		}
+
+		const fillRadiusMeters = Number.isFinite( options.radius )
+			? Math.max( options.radius, 1.0 )
+			: 1.0;
+		const strokeWidthMeters = Math.max(
+			Number.isFinite( options.strokeWidth ) ? options.strokeWidth : 0.0,
+			0.0,
+		);
+		const renderRadiusMeters = fillRadiusMeters + strokeWidthMeters;
+		const requestedRingCount = options.ringCount ?? 1.0;
+		const requestedRingGapRatio = options.ringGapRatio ?? 0.0;
+		const ringCount = Number.isFinite( requestedRingCount )
+			? Math.max( Math.floor( requestedRingCount ), 1.0 )
+			: 1.0;
+		const ringGapRatio = Number.isFinite( requestedRingGapRatio )
+			? Math.max( requestedRingGapRatio, 0.0 )
+			: 0.0;
+		this.center = [ centerLongitude, centerLatitude ];
+		this.radius = fillRadiusMeters;
+
+		const requestedGranularity = options.granularityRadians ?? ( Math.PI / 180.0 );
+		const granularity = Number.isFinite( requestedGranularity )
+			? Math.min(
+				Math.max( requestedGranularity, MIN_CIRCLE_GRANULARITY_RADIANS ),
+				MAX_CIRCLE_GRANULARITY_RADIANS,
+			)
+			: Math.PI / 180.0;
+		const minimumHeight = options.minimumHeight ?? - CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		const maximumHeight = options.maximumHeight ?? CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		const centerCartesian = Cartesian3.fromDegrees(
+			centerLongitude,
+			centerLatitude,
+			0.0,
+			Ellipsoid.WGS84,
+			new Cartesian3(),
+		);
+		const circleGeometry = new CircleGeometry( {
+			center: centerCartesian,
+			radius: renderRadiusMeters,
+			ellipsoid: Ellipsoid.WGS84,
+			height: options.height ?? 0.0,
+			extrudedHeight: options.extrudedHeight,
+			granularity,
+			vertexFormat: VertexFormat.POSITION_ONLY,
+			stRotation: options.stRotationRadians ?? 0.0,
+		} );
+		const shadowVolumeGeometry = CircleGeometry.createShadowVolume(
+			circleGeometry,
+			() => minimumHeight,
+			() => maximumHeight,
+		);
+		const cesiumGeometry = CircleGeometry.createGeometry( shadowVolumeGeometry ) as CesiumGeometryResult | undefined;
+		if ( cesiumGeometry === undefined ) {
+			throw new Error( 'Cesium CircleGeometry.createGeometry returned undefined.' );
+		}
+
+		GeometryPipeline.encodeAttribute( cesiumGeometry, 'position', 'position3DHigh', 'position3DLow' );
+		const threeGeometry = cesiumGeometryToThree( cesiumGeometry );
+		const circlePlanar = computeCirclePlanarExtents(
+			centerLongitude,
+			centerLatitude,
+			fillRadiusMeters,
+			renderRadiusMeters,
+			maximumHeight,
+		);
+		const color = new Color( options.fillColor );
+		const alpha = normalizePercentOpacity( options.fillOpacity );
+
+		this.classification = new CesiumClassificationPrimitive(
+			threeGeometry,
+			circlePlanar.extents,
+			color,
+			alpha,
+			options.renderOrder ?? 50,
+			options.fragmentCull ?? true,
+		);
+		this.classification.group.visible = options.visible;
+		this.classification.setBorderStyle(
+			strokeWidthMeters > 0.0,
+			new Color( options.strokeColor ),
+			normalizePercentOpacity( options.strokeOpacity ),
+			strokeWidthMeters,
+		);
+		this.classification.setCircleBorderStyle(
+			circlePlanar.centerMeters,
+			circlePlanar.fillRadiusMeters,
+			circlePlanar.renderRadiusMeters,
+			ringCount,
+			ringGapRatio,
+		);
+	}
+
+	/**
+	 * Updates per-frame uniforms.
+	 *
+	 * @param frameState Current Three-side frame state.
+	 */
+	public update( frameState: CesiumGroundFrameState ): void {
+		this.classification.update( frameState );
+	}
+
+	/**
+	 * Updates this circle's command-block render order.
 	 *
 	 * @param renderOrder Base order assigned to the front-stencil command.
 	 */

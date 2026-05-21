@@ -25,6 +25,12 @@ export const SCENE_MODE_3D = 3.0;
 // Cesium globe minimum altitude used by the shadow-volume vertex shader.
 export const CESIUM_GLOBE_MINIMUM_ALTITUDE = 55000.0;
 
+// Lower bound for Cesium CircleGeometry tessellation in interactive demos.
+export const MIN_CIRCLE_GRANULARITY_RADIANS = 0.0025;
+
+// Upper bound for Cesium CircleGeometry tessellation in interactive demos.
+export const MAX_CIRCLE_GRANULARITY_RADIANS = 0.2;
+
 // Geometry expansion equals the requested meter border width.
 export const BORDER_GEOMETRY_EXPANSION_SCALE = 1.0;
 

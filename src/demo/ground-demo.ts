@@ -22,8 +22,12 @@ import GUI from 'lil-gui';
 
 import {
 	CesiumGlobeDepth,
+	CesiumGroundCirclePrimitive,
 	CesiumGroundPolygonPrimitive,
 	CesiumGroundRectanglePrimitive,
+	CESIUM_GLOBE_MINIMUM_ALTITUDE,
+	MAX_CIRCLE_GRANULARITY_RADIANS,
+	MIN_CIRCLE_GRANULARITY_RADIANS,
 	rectangleMeterSizeFromDegrees,
 	validateCesiumGroundRenderer,
 	wgs84NormalFromDegrees,
@@ -50,7 +54,7 @@ const RECTANGLE_CENTER_LAT = readNumberEnv( 'VITE_PLOT_LAT', 27.9881 );
 const RECTANGLE_HALF_WIDTH_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_WIDTH_DEGREES', 0.05 );
 const RECTANGLE_HALF_HEIGHT_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_HEIGHT_DEGREES', 0.03 );
 const DEBUG_GROUND_SURFACE = readStringEnv( 'VITE_DEBUG_GROUND_SURFACE', 'false' ).toLowerCase() === 'true';
-type DemoPlotId = 'rectangle' | 'polygon';
+type DemoPlotId = 'rectangle' | 'polygon' | 'circle';
 
 interface RectangleGuiModel {
 	points: string;
@@ -229,6 +233,24 @@ export function runGroundDemo(): void {
 		polygonRotationDegrees: 18.0,
 		polygonDentRatio: 1.0,
 		polygonHole: false,
+		circleVisible: true,
+		circlePlotOrder: 2,
+		circleCenterLon: RECTANGLE_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 1.35,
+		circleCenterLat: RECTANGLE_CENTER_LAT,
+		circleRadius: Math.max( Math.min( initialRectangleMeterSize.widthMeters, initialRectangleMeterSize.heightMeters ) * 0.28, 200.0 ),
+		circleHeight: 0.0,
+		circleExtrudedHeight: 0.0,
+		circleMinimumHeight: - CESIUM_GLOBE_MINIMUM_ALTITUDE,
+		circleMaximumHeight: CESIUM_GLOBE_MINIMUM_ALTITUDE,
+		circleGranularityRadians: Math.PI / 180.0,
+		circleStRotationRadians: 0.0,
+		circleRingCount: 3,
+		circleRingGapRatio: 0.55,
+		circleStrokeColor: '#ffffff',
+		circleStrokeOpacity: 92,
+		circleStrokeWidth: 300.0,
+		circleFillColor: '#00ff88',
+		circleFillOpacity: 64,
 		showDebugSurface: DEBUG_GROUND_SURFACE,
 		debugSurfaceHeight: 5000.0,
 		debugSurfaceOpacity: 0.55,
@@ -253,6 +275,7 @@ export function runGroundDemo(): void {
 	const plotOrderRegistry = new PlotOrderRegistry<DemoPlotId>();
 	debugSettings.rectanglePlotOrder = plotOrderRegistry.register( 'rectangle', debugSettings.rectanglePlotOrder );
 	debugSettings.polygonPlotOrder = plotOrderRegistry.register( 'polygon', debugSettings.polygonPlotOrder );
+	debugSettings.circlePlotOrder = plotOrderRegistry.register( 'circle', debugSettings.circlePlotOrder );
 
 	/**
 	 * Returns the current fill rectangle derived from the public points field.
@@ -500,6 +523,14 @@ export function runGroundDemo(): void {
 			return;
 		}
 
+		if ( target === 'circle' ) {
+			debugSettings.circlePlotOrder = plotOrderRegistry.update(
+				'circle',
+				debugSettings.circlePlotOrder,
+			);
+			return;
+		}
+
 		debugSettings.polygonPlotOrder = plotOrderRegistry.update(
 			'polygon',
 			debugSettings.polygonPlotOrder,
@@ -524,6 +555,52 @@ export function runGroundDemo(): void {
 				polygonGuiModel.holes = stringifyPolygonHoles();
 			}
 		}
+	}
+
+	/**
+	 * Normalizes Cesium CircleGeometry GUI values before geometry rebuilds.
+	 */
+	function normalizeCircleDebugSettings(): void {
+		debugSettings.circleCenterLon = Number.isFinite( debugSettings.circleCenterLon )
+			? clampNumber( debugSettings.circleCenterLon, -180.0, 180.0 )
+			: RECTANGLE_CENTER_LON;
+		debugSettings.circleCenterLat = Number.isFinite( debugSettings.circleCenterLat )
+			? clampNumber( debugSettings.circleCenterLat, -90.0, 90.0 )
+			: RECTANGLE_CENTER_LAT;
+		debugSettings.circleRadius = Number.isFinite( debugSettings.circleRadius )
+			? Math.max( debugSettings.circleRadius, 1.0 )
+			: 1.0;
+		debugSettings.circleHeight = Number.isFinite( debugSettings.circleHeight )
+			? debugSettings.circleHeight
+			: 0.0;
+		debugSettings.circleExtrudedHeight = Number.isFinite( debugSettings.circleExtrudedHeight )
+			? debugSettings.circleExtrudedHeight
+			: debugSettings.circleHeight;
+		debugSettings.circleMinimumHeight = Number.isFinite( debugSettings.circleMinimumHeight )
+			? debugSettings.circleMinimumHeight
+			: - CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		debugSettings.circleMaximumHeight = Number.isFinite( debugSettings.circleMaximumHeight )
+			? debugSettings.circleMaximumHeight
+			: CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		if ( debugSettings.circleMaximumHeight <= debugSettings.circleMinimumHeight ) {
+			debugSettings.circleMaximumHeight = debugSettings.circleMinimumHeight + 1.0;
+		}
+		debugSettings.circleGranularityRadians = Number.isFinite( debugSettings.circleGranularityRadians )
+			? clampNumber(
+				debugSettings.circleGranularityRadians,
+				MIN_CIRCLE_GRANULARITY_RADIANS,
+				MAX_CIRCLE_GRANULARITY_RADIANS,
+			)
+			: Math.PI / 180.0;
+		debugSettings.circleStRotationRadians = Number.isFinite( debugSettings.circleStRotationRadians )
+			? debugSettings.circleStRotationRadians
+			: 0.0;
+		debugSettings.circleRingCount = Number.isFinite( debugSettings.circleRingCount )
+			? clampNumber( Math.floor( debugSettings.circleRingCount ), 1.0, 12.0 )
+			: 1.0;
+		debugSettings.circleRingGapRatio = Number.isFinite( debugSettings.circleRingGapRatio )
+			? clampNumber( debugSettings.circleRingGapRatio, 0.0, 4.0 )
+			: 0.0;
 	}
 
 	/**
@@ -573,10 +650,42 @@ export function runGroundDemo(): void {
 		} );
 	}
 
+	/**
+	 * Creates a Cesium-coupled CircleGeometry shadow-volume primitive.
+	 *
+	 * @returns Ground circle primitive using cesium-ground-source CircleGeometry.
+	 */
+	function createGroundCircle(): CesiumGroundCirclePrimitive {
+		normalizeCircleDebugSettings();
+
+		return new CesiumGroundCirclePrimitive( {
+			center: [ debugSettings.circleCenterLon, debugSettings.circleCenterLat ],
+			radius: debugSettings.circleRadius,
+			strokeColor: debugSettings.circleStrokeColor,
+			strokeWidth: debugSettings.circleStrokeWidth,
+			strokeOpacity: debugSettings.circleStrokeOpacity,
+			fillColor: debugSettings.circleFillColor,
+			fillOpacity: debugSettings.circleFillOpacity,
+			visible: debugSettings.circleVisible,
+			height: debugSettings.circleHeight,
+			extrudedHeight: debugSettings.circleExtrudedHeight,
+			granularityRadians: debugSettings.circleGranularityRadians,
+			stRotationRadians: debugSettings.circleStRotationRadians,
+			ringCount: debugSettings.circleRingCount,
+			ringGapRatio: debugSettings.circleRingGapRatio,
+			minimumHeight: debugSettings.circleMinimumHeight,
+			maximumHeight: debugSettings.circleMaximumHeight,
+			renderOrder: plotOrderToRenderOrder( debugSettings.circlePlotOrder ),
+			fragmentCull: debugSettings.fragmentCull,
+		} );
+	}
+
 	let groundRectangle = createGroundRectangle();
 	let groundPolygon = createGroundPolygon();
+	let groundCircle = createGroundCircle();
 	scene.add( groundRectangle.classification.group );
 	scene.add( groundPolygon.classification.group );
+	scene.add( groundCircle.classification.group );
 
 	/**
 	 * Applies GUI state to the existing primitive without rebuilding geometry.
@@ -631,6 +740,25 @@ export function runGroundDemo(): void {
 			debugSettings.polygonStrokeOpacity / 100.0,
 			debugSettings.polygonStrokeWidth,
 		);
+
+		groundCircle.classification.setColor(
+			new Color( debugSettings.circleFillColor ),
+			debugSettings.circleFillOpacity / 100.0,
+		);
+		groundCircle.classification.setFragmentCulling( debugSettings.fragmentCull );
+		groundCircle.setRenderOrder( plotOrderToRenderOrder( debugSettings.circlePlotOrder ) );
+		groundCircle.classification.group.visible = debugSettings.circleVisible;
+		groundCircle.classification.setCommandVisibility( {
+			frontStencil: debugSettings.showFrontStencil,
+			backStencil: debugSettings.showBackStencil,
+			color: debugSettings.showColorPass,
+		} );
+		groundCircle.classification.setBorderStyle(
+			debugSettings.circleStrokeWidth > 0.0,
+			new Color( debugSettings.circleStrokeColor ),
+			debugSettings.circleStrokeOpacity / 100.0,
+			debugSettings.circleStrokeWidth,
+		);
 	}
 
 	/**
@@ -646,6 +774,14 @@ export function runGroundDemo(): void {
 	 */
 	function applyPolygonPlotOrder(): void {
 		updateRegisteredPlotOrder( 'polygon' );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Applies a circle plot-order edit while preserving every other plot order.
+	 */
+	function applyCirclePlotOrder(): void {
+		updateRegisteredPlotOrder( 'circle' );
 		applyGroundDebugSettings();
 	}
 
@@ -697,6 +833,14 @@ export function runGroundDemo(): void {
 	}
 
 	/**
+	 * Rebuilds only geometry-dependent circle state after Cesium circle GUI edits.
+	 */
+	function rebuildGroundCircleFromGui(): void {
+		normalizeCircleDebugSettings();
+		rebuildGroundCircle();
+	}
+
+	/**
 	 * Rebuilds geometry when rectangle extents or debug-surface height change.
 	 */
 	function rebuildGroundRectangle(): void {
@@ -715,6 +859,17 @@ export function runGroundDemo(): void {
 		groundPolygon.dispose();
 		groundPolygon = createGroundPolygon();
 		scene.add( groundPolygon.classification.group );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Rebuilds only the circle primitive when Cesium CircleGeometry values change.
+	 */
+	function rebuildGroundCircle(): void {
+		scene.remove( groundCircle.classification.group );
+		groundCircle.dispose();
+		groundCircle = createGroundCircle();
+		scene.add( groundCircle.classification.group );
 		applyGroundDebugSettings();
 	}
 
@@ -749,6 +904,32 @@ export function runGroundDemo(): void {
 		polygonFolder.add( debugSettings, 'polygonRotationDegrees', - 180.0, 180.0, 1.0 ).name( 'rotation deg' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonDentRatio', 0.05, 1.0, 0.01 ).name( 'dent ratio' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonHole' ).name( 'hole' ).onChange( rebuildGroundPolygonFromGui );
+
+		const circleFolder = gui.addFolder( 'Circle / Cesium' );
+		circleFolder.add( debugSettings, 'circleVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		circleFolder.add( debugSettings, 'circlePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyCirclePlotOrder ).listen();
+		circleFolder.add( debugSettings, 'circleCenterLon', - 180.0, 180.0, 0.0001 ).name( 'center lon' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleCenterLat', - 90.0, 90.0, 0.0001 ).name( 'center lat' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleRadius', 1.0, 1000000.0, 1.0 ).name( 'radius m' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleHeight', - 10000.0, 10000.0, 1.0 ).name( 'height m' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleExtrudedHeight', - 10000.0, 10000.0, 1.0 ).name( 'extrudedHeight m' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleMinimumHeight', - 200000.0, 200000.0, 100.0 ).name( 'minHeight fn' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleMaximumHeight', - 200000.0, 200000.0, 100.0 ).name( 'maxHeight fn' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add(
+			debugSettings,
+			'circleGranularityRadians',
+			MIN_CIRCLE_GRANULARITY_RADIANS,
+			MAX_CIRCLE_GRANULARITY_RADIANS,
+			0.001,
+		).name( 'granularity rad' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleStRotationRadians', - Math.PI, Math.PI, 0.001 ).name( 'stRotation rad' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleRingCount', 1, 12, 1 ).name( 'ring count' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleRingGapRatio', 0.0, 4.0, 0.01 ).name( 'ring gap ratio' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.addColor( debugSettings, 'circleStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		circleFolder.add( debugSettings, 'circleStrokeWidth', 0.0, 100000.0, 100.0 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundCircle );
+		circleFolder.add( debugSettings, 'circleStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		circleFolder.addColor( debugSettings, 'circleFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
+		circleFolder.add( debugSettings, 'circleFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
 
 		const passesFolder = gui.addFolder( 'Passes' );
 		passesFolder.add( debugSettings, 'showFrontStencil' ).name( 'front stencil' ).onChange( applyGroundDebugSettings );
@@ -832,6 +1013,12 @@ export function runGroundDemo(): void {
 			height: renderer.domElement.height,
 			camera,
 		} );
+		groundCircle.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
 
 		renderer.render( scene, camera );
 
@@ -853,9 +1040,13 @@ export function runGroundDemo(): void {
 			`Rectangle meters: ${ debugSettings.widthMeters.toFixed( 1 ) } m x ${ debugSettings.heightMeters.toFixed( 1 ) } m\\n` +
 			`Polygon: ${ debugSettings.polygonVisible ? 'on' : 'off' } / order ${ debugSettings.polygonPlotOrder } / PolygonGeometry.createShadowVolume\\n` +
 			`Polygon points: ${ debugSettings.polygonPoints.length } / holes ${ debugSettings.polygonHoles.length } / rotation ${ debugSettings.polygonRotationDegrees.toFixed( 1 ) } deg / dent ${ debugSettings.polygonDentRatio.toFixed( 2 ) } / hole ${ debugSettings.polygonHole ? 'on' : 'off' }\\n` +
+			`Circle: ${ debugSettings.circleVisible ? 'on' : 'off' } / order ${ debugSettings.circlePlotOrder } / CircleGeometry.createShadowVolume\\n` +
+			`Circle center: ${ debugSettings.circleCenterLon.toFixed( 5 ) }, ${ debugSettings.circleCenterLat.toFixed( 5 ) } / radius ${ debugSettings.circleRadius.toFixed( 1 ) } m / rings ${ debugSettings.circleRingCount } / gap ${ debugSettings.circleRingGapRatio.toFixed( 2 ) } / granularity ${ debugSettings.circleGranularityRadians.toFixed( 5 ) } rad\\n` +
+			`Circle shadow heights: ${ debugSettings.circleMinimumHeight.toFixed( 1 ) } m -> ${ debugSettings.circleMaximumHeight.toFixed( 1 ) } m\\n` +
 			`Debug surface: ${ debugSettings.showDebugSurface ? 'on' : 'off' }\\n` +
 			`Rectangle stroke: ${ debugSettings.strokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.strokeOpacity.toFixed( 0 ) }%\\n` +
 			`Polygon stroke: ${ debugSettings.polygonStrokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.polygonStrokeOpacity.toFixed( 0 ) }%\\n` +
+			`Circle stroke: ${ debugSettings.circleStrokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.circleStrokeOpacity.toFixed( 0 ) }%\\n` +
 			`CULL_FRAGMENTS: ${ debugSettings.fragmentCull ? 'on' : 'off' }\\n` +
 			`Shader: ShadowVolumeAppearanceVS/FS + ShadowVolumeFS\\n` +
 			`Stencil mask: 0x0f, zfail front=DECR_WRAP back=INCR_WRAP\\n` +
@@ -884,6 +1075,9 @@ export function runGroundDemo(): void {
 		},
 		get groundPolygon() {
 			return groundPolygon;
+		},
+		get groundCircle() {
+			return groundCircle;
 		},
 	};
 
