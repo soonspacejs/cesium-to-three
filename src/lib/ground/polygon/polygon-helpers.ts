@@ -60,6 +60,85 @@ const _expandInverseEnu = new Matrix4();
 const _expandPointCartographic = createCartographic( 0.0, 0.0, 0.0 );
 const _expandPointCartesian = new Vector3();
 const _expandPointEnu = new Vector3();
+const _shapeCenterCartographic = createCartographic( 0.0, 0.0, 0.0 );
+const _shapeCenterCartesian = new Vector3();
+const _shapeEnuMatrix = new Matrix4();
+const _shapeInverseEnu = new Matrix4();
+const _shapePointCartographic = createCartographic( 0.0, 0.0, 0.0 );
+const _shapePointCartesian = new Vector3();
+const _shapePointEnu = new Vector3();
+const _shapeResultEnu = new Vector3();
+
+function cloneLonLatPoints( points: readonly LonLatPoint[] ): LonLatPoint[] {
+	const cloned: LonLatPoint[] = new Array( points.length );
+	for ( let i = 0; i < points.length; i++ ) {
+		cloned[ i ] = [ points[ i ][ 0 ], points[ i ][ 1 ] ];
+	}
+	return cloned;
+}
+
+/**
+ * Applies local ENU rotation to polygon points.
+ *
+ * @param points Normalized polygon lon/lat points.
+ * @param rotationDegrees Counter-clockwise rotation in degrees.
+ * @returns Transformed polygon lon/lat points.
+ */
+export function transformPolygonPoints(
+	points: readonly LonLatPoint[],
+	rotationDegrees: number,
+	centerDegrees = computePolygonCentroidDegrees( points ),
+): LonLatPoint[] {
+	const safeRotationDegrees = Number.isFinite( rotationDegrees ) ? rotationDegrees : 0.0;
+
+	if ( safeRotationDegrees === 0.0 ) {
+		return cloneLonLatPoints( points );
+	}
+
+	_shapeCenterCartographic.longitude = centerDegrees[ 0 ] * Math.PI / 180.0;
+	_shapeCenterCartographic.latitude = centerDegrees[ 1 ] * Math.PI / 180.0;
+	_shapeCenterCartographic.height = 0.0;
+	cartographicToCartesian( _shapeCenterCartographic, _shapeCenterCartesian );
+	eastNorthUpToFixedFrame( _shapeCenterCartesian, _shapeEnuMatrix );
+	_shapeInverseEnu.copy( _shapeEnuMatrix ).invert();
+
+	const rotationRadians = safeRotationDegrees * Math.PI / 180.0;
+	const cosRotation = Math.cos( rotationRadians );
+	const sinRotation = Math.sin( rotationRadians );
+	const result: LonLatPoint[] = new Array( points.length );
+
+	for ( let i = 0; i < points.length; i++ ) {
+		const point = points[ i ];
+		_shapePointCartographic.longitude = point[ 0 ] * Math.PI / 180.0;
+		_shapePointCartographic.latitude = point[ 1 ] * Math.PI / 180.0;
+		_shapePointCartographic.height = 0.0;
+		cartographicToCartesian( _shapePointCartographic, _shapePointCartesian );
+		matrix4MultiplyByPoint( _shapeInverseEnu, _shapePointCartesian, _shapePointEnu );
+
+		const localEast = _shapePointEnu.x;
+		const localNorth = _shapePointEnu.y;
+		_shapeResultEnu.set(
+			localEast * cosRotation - localNorth * sinRotation,
+			localEast * sinRotation + localNorth * cosRotation,
+			0.0,
+		);
+
+		matrix4MultiplyByPoint( _shapeEnuMatrix, _shapeResultEnu, _shapePointCartesian );
+		const carto = cartesianToCartographic( _shapePointCartesian, _shapePointCartographic );
+		if ( carto === undefined ) {
+			throw new Error(
+				`transformPolygonPoints: vertex #${ i } transformed to ellipsoid center, cannot reverse-project.`,
+			);
+		}
+
+		result[ i ] = [
+			carto.longitude * 180.0 / Math.PI,
+			carto.latitude * 180.0 / Math.PI,
+		];
+	}
+
+	return result;
+}
 
 /**
  * 把 polygon lon/lat 顶点沿"远离 centroid 的方向"外扩 strokeWidth 米。

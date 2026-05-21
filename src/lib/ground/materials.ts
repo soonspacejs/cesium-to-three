@@ -146,7 +146,7 @@ uniform vec2 u_circleCenterMeters;
 uniform float u_circleFillRadiusMeters;
 uniform float u_circleRenderRadiusMeters;
 uniform float u_circleRingCount;
-uniform float u_circleRingGapRatio;
+uniform float u_circleRingGapMeters;
 uniform float u_circleSectorStartRadians;
 uniform float u_circleSectorAngleRadians;
 
@@ -281,10 +281,11 @@ function createColorFragmentBody(): string {
         bool insideSectorAngle = fullCircleSector || sectorLocalAngle <= safeSectorAngle;
 
         float safeRingCount = max(floor(u_circleRingCount + 0.5), 1.0);
-        float safeGapRatio = max(u_circleRingGapRatio, 0.0);
-        float bandCount = safeRingCount + max(safeRingCount - 1.0, 0.0) * safeGapRatio;
-        float ringWidthMeters = u_circleFillRadiusMeters / max(bandCount, 1e-6);
-        float gapWidthMeters = ringWidthMeters * safeGapRatio;
+        float gapCount = max(safeRingCount - 1.0, 0.0);
+        float safeGapMeters = max(u_circleRingGapMeters, 0.0);
+        float totalGapMeters = min(safeGapMeters * gapCount, max(u_circleFillRadiusMeters - 1e-3, 0.0));
+        float ringWidthMeters = (u_circleFillRadiusMeters - totalGapMeters) / max(safeRingCount, 1e-6);
+        float gapWidthMeters = gapCount > 0.0 ? totalGapMeters / gapCount : 0.0;
         float cellWidthMeters = max(ringWidthMeters + gapWidthMeters, 1e-6);
         float cellDistanceMeters = mod(circleDistanceMeters, cellWidthMeters);
         float outerRingStartMeters = max(u_circleFillRadiusMeters - ringWidthMeters, 0.0);

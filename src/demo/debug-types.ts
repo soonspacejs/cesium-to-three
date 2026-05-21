@@ -42,7 +42,6 @@ export interface GroundDebugSettings {
 	polygonPoints: LonLatPoint[];
 	polygonHoles: LonLatPoint[][];
 	polygonRotationDegrees: number;
-	polygonDentRatio: number;
 	polygonHole: boolean;
 	circleVisible: boolean;
 	circlePlotOrder: number;
@@ -56,7 +55,7 @@ export interface GroundDebugSettings {
 	circleGranularityRadians: number;
 	circleStRotationRadians: number;
 	circleRingCount: number;
-	circleRingGapRatio: number;
+	circleRingGapMeters: number;
 	circleSectorStartDegrees: number;
 	circleSectorAngleDegrees: number;
 	circleStrokeColor: string;

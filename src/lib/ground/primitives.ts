@@ -10,26 +10,12 @@
 // ============================================================
 
 import {
-	BufferAttribute,
-	BufferGeometry,
 	Color,
 	DoubleSide,
 	Mesh,
 	MeshBasicMaterial,
 	type Material,
 } from 'three';
-
-// Circle is intentionally kept coupled to Cesium Core for the validation stage.
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import CircleGeometry from '../../../cesium-ground-source/engine/Source/Core/CircleGeometry.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import Cartesian3 from '../../../cesium-ground-source/engine/Source/Core/Cartesian3.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import Ellipsoid from '../../../cesium-ground-source/engine/Source/Core/Ellipsoid.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import GeometryPipeline from '../../../cesium-ground-source/engine/Source/Core/GeometryPipeline.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import VertexFormat from '../../../cesium-ground-source/engine/Source/Core/VertexFormat.js';
 
 import { CesiumClassificationPrimitive } from './classification';
 import {
@@ -38,8 +24,11 @@ import {
 	MIN_CIRCLE_GRANULARITY_RADIANS,
 } from './constants';
 import { computeCirclePlanarExtents } from './circle/circle-extents';
+import { buildCircleShadowVolumeGeometry } from './circle/circle-shadow-volume';
 import {
+	computePolygonCentroidDegrees,
 	expandPolygonPointsThroughMeters,
+	transformPolygonPoints,
 } from './polygon/polygon-helpers';
 import {
 	normalizePolygonPoints,
@@ -65,7 +54,6 @@ import {
 } from './rectangle/rectangle-radians';
 import { buildRectangleShadowVolumeGeometry } from './rectangle/rectangle-shadow-volume';
 import type {
-	CesiumGeometryResult,
 	CesiumGroundCirclePrimitiveOptions,
 	CesiumGroundFrameState,
 	CesiumGroundPointPrimitiveOptions,
@@ -83,54 +71,6 @@ import type {
 function normalizePercentOpacity( opacity: number ): number {
 	const safeOpacity = Number.isFinite( opacity ) ? opacity : 100.0;
 	return Math.min( Math.max( safeOpacity, 0.0 ), 100.0 ) / 100.0;
-}
-
-/**
- * Converts Cesium Geometry attributes to a Three BufferGeometry.
- *
- * This adapter is used only by Cesium-coupled primitives such as CircleGeometry.
- * Rectangle and polygon already use local Cesium-free builders.
- *
- * @param cesiumGeometry Geometry returned by Cesium createGeometry.
- * @returns Three BufferGeometry with matching attribute names.
- */
-function cesiumGeometryToThree( cesiumGeometry: CesiumGeometryResult ): BufferGeometry {
-	if (
-		! cesiumGeometry ||
-		! cesiumGeometry.attributes ||
-		Object.keys( cesiumGeometry.attributes ).length === 0
-	) {
-		throw new Error( 'Cesium geometry conversion failed: geometry has no vertex attributes.' );
-	}
-
-	const geometry = new BufferGeometry();
-
-	for ( const [ name, attribute ] of Object.entries( cesiumGeometry.attributes ) ) {
-		const sourceValues = attribute.values;
-		const values = sourceValues instanceof Float32Array
-			? sourceValues
-			: new Float32Array( Array.from( sourceValues ) );
-
-		geometry.setAttribute(
-			name,
-			new BufferAttribute( values, attribute.componentsPerAttribute ),
-		);
-	}
-
-	const firstAttribute = Object.values( cesiumGeometry.attributes )[ 0 ];
-	const vertexCount = firstAttribute.values.length / firstAttribute.componentsPerAttribute;
-	geometry.setAttribute( 'batchId', new BufferAttribute( new Float32Array( vertexCount ), 1 ) );
-
-	if ( cesiumGeometry.indices ) {
-		const indices = cesiumGeometry.indices;
-		const indexArray = indices instanceof Uint16Array || indices instanceof Uint32Array
-			? indices
-			: new Uint32Array( Array.from( indices ) );
-		geometry.setIndex( new BufferAttribute( indexArray, 1 ) );
-	}
-
-	geometry.computeBoundingSphere();
-	return geometry;
 }
 
 /**
@@ -280,7 +220,7 @@ export class CesiumGroundRectanglePrimitive {
  * Ground polygon implemented with the native polygon shadow-volume pipeline.
  *
  * 本类的公共 API(类名、构造选项、`update / setRenderOrder / dispose` 方法、
- * `classification / polygonHierarchy / rotationDegrees / dentRatio / hole`
+ * `classification / polygonHierarchy / rotationDegrees / hole`
  * 字段)与重构前完全一致;内部 6 步 Cesium 几何调用
  * (polygonHierarchyDegreesToCesium → new PolygonGeometry → createShadowVolume →
  * createGeometry → GeometryPipeline.encodeAttribute → cesiumGeometryToThree)
@@ -296,23 +236,33 @@ export class CesiumGroundPolygonPrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
 	public readonly polygonHierarchy: PolygonHierarchy;
 	public readonly rotationDegrees: number;
-	public readonly dentRatio: number;
 	public readonly hole: boolean;
 
 	public constructor( options: CesiumGroundPolygonPrimitiveOptions ) {
 		// ── plot-spec 校验 + 浅拷贝 ──
 		// normalizePolygonPoints 在 polygon-hierarchy.ts 中迁移版本上还增加了
 		// 跨 IDL / 极地保护(R6),非合法输入会抛 Error。
-		const fillPoints = normalizePolygonPoints( options.points );
+		const normalizedPoints = normalizePolygonPoints( options.points );
 
 		// ── 旋转 / 凹陷比 / hole 开关 ──
 		this.rotationDegrees = Number.isFinite( options.rotationDegrees )
 			? options.rotationDegrees
 			: 0.0;
-		this.dentRatio = Number.isFinite( options.dentRatio )
-			? Math.min( Math.max( options.dentRatio, 0.05 ), 1.0 )
-			: 1.0;
 		this.hole = options.hole === true;
+		const holesInput = this.hole
+			? ( options.holes ?? [] ).map( hole => normalizePolygonPoints( hole ) )
+			: [];
+		const shapeCenter = computePolygonCentroidDegrees( normalizedPoints );
+		const fillPoints = transformPolygonPoints(
+			normalizedPoints,
+			this.rotationDegrees,
+			shapeCenter,
+		);
+		const transformedHolesInput = holesInput.map( hole => transformPolygonPoints(
+			hole,
+			this.rotationDegrees,
+			shapeCenter,
+		) );
 
 		// ── 描边宽度(米)归一化 ──
 		const strokeWidthMeters = Math.max(
@@ -327,9 +277,8 @@ export class CesiumGroundPolygonPrimitive {
 		);
 
 		// ── 构建两份 PolygonHierarchy(Vector3 ECEF;一步到位,不经 Cesium 中间格式)──
-		const holesInput = this.hole ? options.holes ?? [] : [];
-		const fillHierarchy = polygonHierarchyFromLonLatPoints( fillPoints, holesInput );
-		const renderHierarchy = polygonHierarchyFromLonLatPoints( renderPoints, holesInput );
+		const fillHierarchy = polygonHierarchyFromLonLatPoints( fillPoints, transformedHolesInput );
+		const renderHierarchy = polygonHierarchyFromLonLatPoints( renderPoints, transformedHolesInput );
 		this.polygonHierarchy = fillHierarchy;
 
 		// ── 默认值 ──
@@ -411,11 +360,19 @@ export class CesiumGroundPolygonPrimitive {
 }
 
 /**
- * Ground circle implemented with Cesium CircleGeometry for validation.
+ * Ground circle implemented with the native circle shadow-volume pipeline.
  *
- * This class intentionally imports CircleGeometry from cesium-ground-source so
- * the first circle implementation can be compared against Cesium behavior
- * before any local decoupled implementation is attempted.
+ * 本类的公共 API(类名、构造选项、`update / setRenderOrder / dispose` 方法、
+ * `classification / center / radius` 字段)与重构前完全一致;内部 6 步
+ * Cesium 几何调用(Cartesian3.fromDegrees → new CircleGeometry →
+ * CircleGeometry.createShadowVolume → CircleGeometry.createGeometry →
+ * GeometryPipeline.encodeAttribute → cesiumGeometryToThree)被替换为 1 步
+ * `buildCircleShadowVolumeGeometry`,plot-spec 校验、stroke 米外扩、
+ * granularity clamp、ringCount / sectorAngle 派生、opacity 归一化、
+ * setBorderStyle / setCircleBorderStyle / visible 控制全部保留不动。
+ *
+ * 本期完成后整个 `src/lib/ground/` 子系统对 cesium-ground-source 的依赖归零
+ *(V1 全局达成)。
  */
 export class CesiumGroundCirclePrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
@@ -445,12 +402,12 @@ export class CesiumGroundCirclePrimitive {
 		);
 		const renderRadiusMeters = fillRadiusMeters + strokeWidthMeters;
 		const requestedRingCount = options.ringCount ?? 1.0;
-		const requestedRingGapRatio = options.ringGapRatio ?? 0.0;
+		const requestedRingGapMeters = options.ringGapMeters ?? 0.0;
 		const ringCount = Number.isFinite( requestedRingCount )
 			? Math.max( Math.floor( requestedRingCount ), 1.0 )
 			: 1.0;
-		const ringGapRatio = Number.isFinite( requestedRingGapRatio )
-			? Math.max( requestedRingGapRatio, 0.0 )
+		const ringGapMeters = Number.isFinite( requestedRingGapMeters )
+			? Math.max( requestedRingGapMeters, 0.0 )
 			: 0.0;
 		const requestedSectorStartDegrees = options.sectorStartDegrees ?? 0.0;
 		const requestedSectorAngleDegrees = options.sectorAngleDegrees ?? 360.0;
@@ -472,35 +429,21 @@ export class CesiumGroundCirclePrimitive {
 			: Math.PI / 180.0;
 		const minimumHeight = options.minimumHeight ?? - CESIUM_GLOBE_MINIMUM_ALTITUDE;
 		const maximumHeight = options.maximumHeight ?? CESIUM_GLOBE_MINIMUM_ALTITUDE;
-		const centerCartesian = Cartesian3.fromDegrees(
-			centerLongitude,
-			centerLatitude,
-			0.0,
-			Ellipsoid.WGS84,
-			new Cartesian3(),
-		);
-		const circleGeometry = new CircleGeometry( {
-			center: centerCartesian,
-			radius: renderRadiusMeters,
-			ellipsoid: Ellipsoid.WGS84,
-			height: options.height ?? 0.0,
-			extrudedHeight: options.extrudedHeight,
-			granularity,
-			vertexFormat: VertexFormat.POSITION_ONLY,
-			stRotation: options.stRotationRadians ?? 0.0,
-		} );
-		const shadowVolumeGeometry = CircleGeometry.createShadowVolume(
-			circleGeometry,
-			() => minimumHeight,
-			() => maximumHeight,
-		);
-		const cesiumGeometry = CircleGeometry.createGeometry( shadowVolumeGeometry ) as CesiumGeometryResult | undefined;
-		if ( cesiumGeometry === undefined ) {
-			throw new Error( 'Cesium CircleGeometry.createGeometry returned undefined.' );
-		}
 
-		GeometryPipeline.encodeAttribute( cesiumGeometry, 'position', 'position3DHigh', 'position3DLow' );
-		const threeGeometry = cesiumGeometryToThree( cesiumGeometry );
+		// ── 几何构造(1 步取代原 6 步 Cesium 调用)──
+		// plot-spec `height` / `extrudedHeight` 字段保留在类型契约里(V8 验收要求),
+		// 但本期实现只走 shadow volume 路径:min/maxHeight 控制墙的上下平面,
+		// Cesium 的 height/extrudedHeight 在 shadowVolume 包装时也被同样的
+		// min/maxHeight 替换,行为字节级一致。
+		const threeGeometry = buildCircleShadowVolumeGeometry( {
+			centerLongitudeDegrees: centerLongitude,
+			centerLatitudeDegrees: centerLatitude,
+			radiusMeters: renderRadiusMeters,
+			granularityRadians: granularity,
+			stRotationRadians: options.stRotationRadians ?? 0.0,
+			minimumHeight,
+			maximumHeight,
+		} );
 		const circlePlanar = computeCirclePlanarExtents(
 			centerLongitude,
 			centerLatitude,
@@ -531,7 +474,7 @@ export class CesiumGroundCirclePrimitive {
 			circlePlanar.fillRadiusMeters,
 			circlePlanar.renderRadiusMeters,
 			ringCount,
-			ringGapRatio,
+			ringGapMeters,
 			sectorStartRadians,
 			sectorAngleRadians,
 		);
@@ -615,7 +558,7 @@ export class CesiumGroundPointPrimitive {
 				sectorStartDegrees: 0.0,
 				sectorAngleDegrees: 360.0,
 				ringCount: 1.0,
-				ringGapRatio: 0.0,
+				ringGapMeters: 0.0,
 				minimumHeight: options.minimumHeight,
 				maximumHeight: options.maximumHeight,
 				renderOrder: options.renderOrder,

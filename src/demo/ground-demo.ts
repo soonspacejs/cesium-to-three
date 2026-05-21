@@ -148,6 +148,10 @@ export function runGroundDemo(): void {
 		north: RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES,
 	};
 	const initialRectangleMeterSize = rectangleMeterSizeFromDegrees( initialRectangleDegrees );
+	const initialCircleRadiusMeters = Math.max(
+		Math.min( initialRectangleMeterSize.widthMeters, initialRectangleMeterSize.heightMeters ) * 0.28,
+		200.0,
+	);
 	const initialRectanglePoints: LonLatPoint[] = [
 		[ initialRectangleDegrees.west, initialRectangleDegrees.south ],
 		[ initialRectangleDegrees.east, initialRectangleDegrees.south ],
@@ -232,13 +236,12 @@ export function runGroundDemo(): void {
 		polygonPoints: initialPolygonPoints,
 		polygonHoles: [ initialPolygonHolePoints ],
 		polygonRotationDegrees: 18.0,
-		polygonDentRatio: 1.0,
 		polygonHole: false,
 		circleVisible: true,
 		circlePlotOrder: 2,
 		circleCenterLon: RECTANGLE_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 1.35,
 		circleCenterLat: RECTANGLE_CENTER_LAT,
-		circleRadius: Math.max( Math.min( initialRectangleMeterSize.widthMeters, initialRectangleMeterSize.heightMeters ) * 0.28, 200.0 ),
+		circleRadius: initialCircleRadiusMeters,
 		circleHeight: 0.0,
 		circleExtrudedHeight: 0.0,
 		circleMinimumHeight: - CESIUM_GLOBE_MINIMUM_ALTITUDE,
@@ -246,7 +249,7 @@ export function runGroundDemo(): void {
 		circleGranularityRadians: Math.PI / 180.0,
 		circleStRotationRadians: 0.0,
 		circleRingCount: 3,
-		circleRingGapRatio: 0.55,
+		circleRingGapMeters: initialCircleRadiusMeters * 0.55 / 4.1,
 		circleSectorStartDegrees: 0.0,
 		circleSectorAngleDegrees: 90.0,
 		circleStrokeColor: '#ffffff',
@@ -567,9 +570,6 @@ export function runGroundDemo(): void {
 		debugSettings.polygonRotationDegrees = Number.isFinite( debugSettings.polygonRotationDegrees )
 			? debugSettings.polygonRotationDegrees
 			: 0.0;
-		debugSettings.polygonDentRatio = Number.isFinite( debugSettings.polygonDentRatio )
-			? clampNumber( debugSettings.polygonDentRatio, 0.05, 1.0 )
-			: 1.0;
 
 		if ( debugSettings.polygonHole && debugSettings.polygonHoles.length === 0 ) {
 			const defaultHole = createDefaultPolygonHolePoints( debugSettings.polygonPoints );
@@ -621,8 +621,8 @@ export function runGroundDemo(): void {
 		debugSettings.circleRingCount = Number.isFinite( debugSettings.circleRingCount )
 			? clampNumber( Math.floor( debugSettings.circleRingCount ), 1.0, 12.0 )
 			: 1.0;
-		debugSettings.circleRingGapRatio = Number.isFinite( debugSettings.circleRingGapRatio )
-			? clampNumber( debugSettings.circleRingGapRatio, 0.0, 4.0 )
+		debugSettings.circleRingGapMeters = Number.isFinite( debugSettings.circleRingGapMeters )
+			? clampNumber( debugSettings.circleRingGapMeters, 0.0, debugSettings.circleRadius )
 			: 0.0;
 		debugSettings.circleSectorStartDegrees = Number.isFinite( debugSettings.circleSectorStartDegrees )
 			? clampNumber( debugSettings.circleSectorStartDegrees, -360.0, 360.0 )
@@ -696,7 +696,6 @@ export function runGroundDemo(): void {
 			fillOpacity: debugSettings.polygonFillOpacity,
 			visible: debugSettings.polygonVisible,
 			rotationDegrees: debugSettings.polygonRotationDegrees,
-			dentRatio: debugSettings.polygonDentRatio,
 			hole: debugSettings.polygonHole,
 			holes: debugSettings.polygonHole ? debugSettings.polygonHoles : [],
 			renderOrder: plotOrderToRenderOrder( debugSettings.polygonPlotOrder ),
@@ -726,7 +725,7 @@ export function runGroundDemo(): void {
 			granularityRadians: debugSettings.circleGranularityRadians,
 			stRotationRadians: debugSettings.circleStRotationRadians,
 			ringCount: debugSettings.circleRingCount,
-			ringGapRatio: debugSettings.circleRingGapRatio,
+			ringGapMeters: debugSettings.circleRingGapMeters,
 			sectorStartDegrees: debugSettings.circleSectorStartDegrees,
 			sectorAngleDegrees: debugSettings.circleSectorAngleDegrees,
 			minimumHeight: debugSettings.circleMinimumHeight,
@@ -1025,7 +1024,6 @@ export function runGroundDemo(): void {
 		polygonFolder.addColor( debugSettings, 'polygonFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		polygonFolder.add( debugSettings, 'polygonFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
 		polygonFolder.add( debugSettings, 'polygonRotationDegrees', - 180.0, 180.0, 1.0 ).name( 'rotation deg' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
-		polygonFolder.add( debugSettings, 'polygonDentRatio', 0.05, 1.0, 0.01 ).name( 'dent ratio' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonHole' ).name( 'hole' ).onChange( rebuildGroundPolygonFromGui );
 
 		const circleFolder = gui.addFolder( 'Circle / Cesium' );
@@ -1047,7 +1045,7 @@ export function runGroundDemo(): void {
 		).name( 'granularity rad' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleStRotationRadians', - Math.PI, Math.PI, 0.001 ).name( 'stRotation rad' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleRingCount', 1, 12, 1 ).name( 'ring count' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
-		circleFolder.add( debugSettings, 'circleRingGapRatio', 0.0, 4.0, 0.01 ).name( 'ring gap ratio' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleRingGapMeters', 0.0, 1000000.0, 1.0 ).name( 'ring gap m' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleSectorStartDegrees', - 360.0, 360.0, 1.0 ).name( 'sector start deg' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleSectorAngleDegrees', - 360.0, 360.0, 1.0 ).name( 'sector angle deg' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.addColor( debugSettings, 'circleStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
@@ -1183,9 +1181,9 @@ export function runGroundDemo(): void {
 			`Rectangle: ${ debugSettings.visible ? 'on' : 'off' } / order ${ debugSettings.rectanglePlotOrder } / ${ debugSettings.widthDegrees.toFixed( 4 ) } deg x ${ debugSettings.heightDegrees.toFixed( 4 ) } deg\\n` +
 			`Rectangle meters: ${ debugSettings.widthMeters.toFixed( 1 ) } m x ${ debugSettings.heightMeters.toFixed( 1 ) } m\\n` +
 			`Polygon: ${ debugSettings.polygonVisible ? 'on' : 'off' } / order ${ debugSettings.polygonPlotOrder } / PolygonGeometry.createShadowVolume\\n` +
-			`Polygon points: ${ debugSettings.polygonPoints.length } / holes ${ debugSettings.polygonHoles.length } / rotation ${ debugSettings.polygonRotationDegrees.toFixed( 1 ) } deg / dent ${ debugSettings.polygonDentRatio.toFixed( 2 ) } / hole ${ debugSettings.polygonHole ? 'on' : 'off' }\\n` +
+			`Polygon points: ${ debugSettings.polygonPoints.length } / holes ${ debugSettings.polygonHoles.length } / rotation ${ debugSettings.polygonRotationDegrees.toFixed( 1 ) } deg / hole ${ debugSettings.polygonHole ? 'on' : 'off' }\\n` +
 			`Circle: ${ debugSettings.circleVisible ? 'on' : 'off' } / order ${ debugSettings.circlePlotOrder } / CircleGeometry.createShadowVolume\\n` +
-			`Circle center: ${ debugSettings.circleCenterLon.toFixed( 5 ) }, ${ debugSettings.circleCenterLat.toFixed( 5 ) } / radius ${ debugSettings.circleRadius.toFixed( 1 ) } m / rings ${ debugSettings.circleRingCount } / gap ${ debugSettings.circleRingGapRatio.toFixed( 2 ) } / sector ${ debugSettings.circleSectorStartDegrees.toFixed( 0 ) } deg + ${ debugSettings.circleSectorAngleDegrees.toFixed( 0 ) } deg / granularity ${ debugSettings.circleGranularityRadians.toFixed( 5 ) } rad\\n` +
+			`Circle center: ${ debugSettings.circleCenterLon.toFixed( 5 ) }, ${ debugSettings.circleCenterLat.toFixed( 5 ) } / radius ${ debugSettings.circleRadius.toFixed( 1 ) } m / rings ${ debugSettings.circleRingCount } / gap ${ debugSettings.circleRingGapMeters.toFixed( 1 ) } m / sector ${ debugSettings.circleSectorStartDegrees.toFixed( 0 ) } deg + ${ debugSettings.circleSectorAngleDegrees.toFixed( 0 ) } deg / granularity ${ debugSettings.circleGranularityRadians.toFixed( 5 ) } rad\\n` +
 			`Circle shadow heights: ${ debugSettings.circleMinimumHeight.toFixed( 1 ) } m -> ${ debugSettings.circleMaximumHeight.toFixed( 1 ) } m\\n` +
 			`Point: ${ debugSettings.pointVisible ? 'on' : 'off' } / order ${ debugSettings.pointPlotOrder } / ${ debugSettings.pointShape } / size ${ debugSettings.pointSize.toFixed( 1 ) } m\\n` +
 			`Debug surface: ${ debugSettings.showDebugSurface ? 'on' : 'off' }\\n` +

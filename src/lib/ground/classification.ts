@@ -151,7 +151,7 @@ export class CesiumClassificationPrimitive {
 			u_circleFillRadiusMeters: { value: 0.0 },
 			u_circleRenderRadiusMeters: { value: 0.0 },
 			u_circleRingCount: { value: 1.0 },
-			u_circleRingGapRatio: { value: 0.0 },
+			u_circleRingGapMeters: { value: 0.0 },
 			u_circleSectorStartRadians: { value: 0.0 },
 			u_circleSectorAngleRadians: { value: Math.PI * 2.0 },
 			czm_globeDepthTexture: { value: null },
@@ -274,7 +274,7 @@ export class CesiumClassificationPrimitive {
 	 * @param fillRadiusMeters Public fill radius in meters.
 	 * @param renderRadiusMeters Radius of the rendered shadow volume in meters.
 	 * @param ringCount Number of filled concentric bands.
-	 * @param ringGapRatio Ratio between each transparent gap and filled band.
+	 * @param ringGapMeters Transparent gap width between filled bands in meters.
 	 * @param sectorStartRadians Start angle in the circle's local ENU plane.
 	 * @param sectorAngleRadians Positive angular sweep. Two pi means full circle.
 	 */
@@ -283,15 +283,15 @@ export class CesiumClassificationPrimitive {
 		fillRadiusMeters: number,
 		renderRadiusMeters: number,
 		ringCount = 1.0,
-		ringGapRatio = 0.0,
+		ringGapMeters = 0.0,
 		sectorStartRadians = 0.0,
 		sectorAngleRadians = Math.PI * 2.0,
 	): void {
 		const safeRingCount = Number.isFinite( ringCount )
 			? Math.max( Math.floor( ringCount ), 1.0 )
 			: 1.0;
-		const safeRingGapRatio = Number.isFinite( ringGapRatio )
-			? Math.max( ringGapRatio, 0.0 )
+		const safeRingGapMeters = Number.isFinite( ringGapMeters )
+			? Math.max( ringGapMeters, 0.0 )
 			: 0.0;
 		const safeSectorStartRadians = Number.isFinite( sectorStartRadians )
 			? sectorStartRadians
@@ -304,7 +304,7 @@ export class CesiumClassificationPrimitive {
 		this.uniforms.u_circleFillRadiusMeters.value = Math.max( fillRadiusMeters, 0.0 );
 		this.uniforms.u_circleRenderRadiusMeters.value = Math.max( renderRadiusMeters, 0.0 );
 		this.uniforms.u_circleRingCount.value = safeRingCount;
-		this.uniforms.u_circleRingGapRatio.value = safeRingGapRatio;
+		this.uniforms.u_circleRingGapMeters.value = safeRingGapMeters;
 		this.uniforms.u_circleSectorStartRadians.value = safeSectorStartRadians;
 		this.uniforms.u_circleSectorAngleRadians.value = safeSectorAngleRadians;
 		this.uniforms.u_circleBorderMode.value = fillRadiusMeters > 0.0 && renderRadiusMeters > 0.0 ? 1.0 : 0.0;

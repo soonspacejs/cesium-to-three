@@ -104,7 +104,6 @@ export interface CesiumGroundPolygonOptions {
 	fillOpacity: number;
 	visible: boolean;
 	rotationDegrees: number;
-	dentRatio: number;
 	hole: boolean;
 	holes?: LonLatPoint[][];
 }
@@ -134,7 +133,7 @@ export interface CesiumGroundCirclePrimitiveOptions extends CesiumGroundCircleOp
 	granularityRadians?: number;
 	stRotationRadians?: number;
 	ringCount?: number;
-	ringGapRatio?: number;
+	ringGapMeters?: number;
 	sectorStartDegrees?: number;
 	sectorAngleDegrees?: number;
 	minimumHeight?: number;
@@ -224,7 +223,7 @@ export interface SharedUniforms {
 	u_circleFillRadiusMeters: { value: number };
 	u_circleRenderRadiusMeters: { value: number };
 	u_circleRingCount: { value: number };
-	u_circleRingGapRatio: { value: number };
+	u_circleRingGapMeters: { value: number };
 	u_circleSectorStartRadians: { value: number };
 	u_circleSectorAngleRadians: { value: number };
 	czm_globeDepthTexture: { value: WebGLRenderTarget['texture'] | null };

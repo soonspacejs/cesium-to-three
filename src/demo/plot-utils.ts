@@ -173,7 +173,6 @@ function degreesToRadians( degrees: number ): number {
  * @param heightMeters Height in local north-south meters.
  * @param vertexCount Number of polygon vertices.
  * @param rotationDegrees Counter-clockwise visual rotation in local ENU.
- * @param dentRatio Radius scale for every alternate vertex.
  * @returns Local east/north offsets in counter-clockwise order.
  */
 export function createLocalPolygonOffsets(
@@ -181,12 +180,10 @@ export function createLocalPolygonOffsets(
 	heightMeters: number,
 	vertexCount: number,
 	rotationDegrees: number,
-	dentRatio: number,
 ): EastNorthOffsetMeters[] {
 	const safeVertexCount = Math.round( clampNumber( vertexCount, 3, 64 ) );
 	const halfWidthMeters = Math.max( widthMeters, 1.0 ) * 0.5;
 	const halfHeightMeters = Math.max( heightMeters, 1.0 ) * 0.5;
-	const safeDentRatio = clampNumber( dentRatio, 0.05, 1.0 );
 	const rotationRadians = degreesToRadians( rotationDegrees );
 	const cosRotation = Math.cos( rotationRadians );
 	const sinRotation = Math.sin( rotationRadians );
@@ -194,9 +191,8 @@ export function createLocalPolygonOffsets(
 
 	for ( let i = 0; i < safeVertexCount; i ++ ) {
 		const angle = Math.PI * 0.5 + i * Math.PI * 2.0 / safeVertexCount;
-		const radiusScale = i % 2 === 0 ? 1.0 : safeDentRatio;
-		const localEast = Math.cos( angle ) * halfWidthMeters * radiusScale;
-		const localNorth = Math.sin( angle ) * halfHeightMeters * radiusScale;
+		const localEast = Math.cos( angle ) * halfWidthMeters;
+		const localNorth = Math.sin( angle ) * halfHeightMeters;
 		offsets.push( {
 			eastMeters: localEast * cosRotation - localNorth * sinRotation,
 			northMeters: localEast * sinRotation + localNorth * cosRotation,
