@@ -17,10 +17,11 @@ import {
 	Scene,
 	SphereGeometry,
 	UnsignedByteType,
+	Vector3,
 	WebGLRenderTarget,
 	WebGLRenderer,
 	GLSL3,
-	type Camera,
+	type PerspectiveCamera,
 } from 'three';
 
 import {
@@ -28,7 +29,7 @@ import {
 	WGS84_Y_RADIUS,
 	WGS84_Z_RADIUS,
 } from './constants';
-import { createPackDepthMaterial } from './materials';
+import { createPackDepthMaterial, ENABLE_LOG_DEPTH } from './materials';
 
 /**
  * Renders a Cesium-style packed globe depth texture.
@@ -76,16 +77,19 @@ export class CesiumGlobeDepth {
 	 * Renders packed depth into this target.
 	 *
 	 * @param renderer Active Three renderer.
-	 * @param camera Current camera.
+	 * @param camera Current camera. Required so the pack-depth material can
+	 *               write Cesium-compatible LOG_DEPTH values per frame.
 	 * @param sourceScene Optional external scene, used for 3d-tiles-renderer content.
 	 * @param depthRoot Optional root object to isolate while rendering sourceScene.
 	 */
 	public render(
 		renderer: WebGLRenderer,
-		camera: Camera,
+		camera: PerspectiveCamera,
 		sourceScene: Scene = this.scene,
 		depthRoot?: Object3D,
 	): void {
+		this.updateLogDepthUniforms( camera );
+
 		const previousTarget = renderer.getRenderTarget();
 		const previousClearColor = new Color();
 		renderer.getClearColor( previousClearColor );
@@ -141,6 +145,33 @@ export class CesiumGlobeDepth {
 	public dispose(): void {
 		this.packDepthMaterial.dispose();
 		this.target.dispose();
+	}
+
+	/**
+	 * Refreshes the pack-depth shader's log-depth uniforms so they match the
+	 * camera's current near/far. Equivalent to Cesium UniformState.update for
+	 * `czm_currentFrustum`, `czm_farDepthFromNearPlusOne`, and
+	 * `czm_oneOverLog2FarDepthFromNearPlusOne`.
+	 *
+	 * @param camera Active perspective camera.
+	 */
+	private updateLogDepthUniforms( camera: PerspectiveCamera ): void {
+		if ( ! ENABLE_LOG_DEPTH ) {
+			return;
+		}
+
+		const uniforms = this.packDepthMaterial.uniforms;
+		if ( ! ( uniforms.czm_currentFrustum.value instanceof Vector3 ) ) {
+			uniforms.czm_currentFrustum.value = new Vector3();
+		}
+		const currentFrustum = uniforms.czm_currentFrustum.value as Vector3;
+		currentFrustum.set( camera.near, camera.far, 0.0 );
+
+		const farDepthFromNearPlusOne = ( camera.far - camera.near ) + 1.0;
+		const log2FarDepthFromNearPlusOne = Math.log2( farDepthFromNearPlusOne );
+		uniforms.czm_farDepthFromNearPlusOne.value = farDepthFromNearPlusOne;
+		uniforms.czm_oneOverLog2FarDepthFromNearPlusOne.value =
+			log2FarDepthFromNearPlusOne > 0.0 ? 1.0 / log2FarDepthFromNearPlusOne : 1.0;
 	}
 }
 

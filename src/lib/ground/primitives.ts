@@ -30,7 +30,6 @@ import Ellipsoid from '../../../cesium-ground-source/engine/Source/Core/Ellipsoi
 import GeometryPipeline from '../../../cesium-ground-source/engine/Source/Core/GeometryPipeline.js';
 
 import { CesiumClassificationPrimitive } from './classification';
-import { CESIUM_GLOBE_MINIMUM_ALTITUDE } from './constants';
 import {
 	cesiumGeometryToThree,
 	computePlanarExtents,
@@ -40,12 +39,15 @@ import {
 	polygonHierarchyDegreesToCesium,
 	rectangleDegreesFromLonLatPoints,
 } from './geometry';
+import { getTerrainMinMaxHeightsForRectangle } from './terrain-heights';
 import type {
 	CartesianLike,
 	CesiumGeometryResult,
 	CesiumGroundFrameState,
 	CesiumGroundPolygonOptions,
 	CesiumGroundRectanglePrimitiveOptions,
+	PolygonHierarchyDegrees,
+	RectangleDegrees,
 	RectangleRadians,
 } from './types';
 
@@ -58,6 +60,84 @@ import type {
 function normalizePercentOpacity( opacity: number ): number {
 	const safeOpacity = Number.isFinite( opacity ) ? opacity : 100.0;
 	return Math.min( Math.max( safeOpacity, 0.0 ), 100.0 ) / 100.0;
+}
+
+/**
+ * Resolves the minimum and maximum extrusion heights used by Cesium's
+ * RectangleGeometry / PolygonGeometry shadow volume.
+ *
+ * Cesium's GroundPrimitive feeds these from
+ * ApproximateTerrainHeights.getMinimumMaximumHeights, so the shadow volume
+ * is just thick enough to fully contain the rendered terrain. The previous
+ * adapter shipped a hardcoded `±CESIUM_GLOBE_MINIMUM_ALTITUDE` (110 km thick
+ * shadow volume), which combined with the vertex-shader extrude pushed the
+ * top face up to 165 km above terrain and amplified depth-precision jitter
+ * at oblique angles.
+ *
+ * Caller-supplied overrides win, otherwise the terrain-aware query result is
+ * used. If the terrain table is not initialized yet, the underlying helper
+ * returns the Cesium default range (-100000 ... +9000).
+ *
+ * @param rectangleDegrees Plot rectangle in WGS84 degrees.
+ * @param minimumHeightOverride Optional explicit minimum height.
+ * @param maximumHeightOverride Optional explicit maximum height.
+ * @returns Resolved min/max heights used by createShadowVolume.
+ */
+function resolveShadowVolumeHeights(
+	rectangleDegrees: RectangleDegrees,
+	minimumHeightOverride: number | undefined,
+	maximumHeightOverride: number | undefined,
+): { minimumHeight: number; maximumHeight: number } {
+	const terrainHeights = getTerrainMinMaxHeightsForRectangle( rectangleDegrees );
+	const minimumHeight = Number.isFinite( minimumHeightOverride )
+		? ( minimumHeightOverride as number )
+		: terrainHeights.minimumTerrainHeight;
+	let maximumHeight = Number.isFinite( maximumHeightOverride )
+		? ( maximumHeightOverride as number )
+		: terrainHeights.maximumTerrainHeight;
+	if ( maximumHeight <= minimumHeight ) {
+		// Preserve a non-degenerate shadow volume even when the table reports a
+		// bad sample for the queried tile.
+		maximumHeight = minimumHeight + 1.0;
+	}
+
+	return { minimumHeight, maximumHeight };
+}
+
+/**
+ * Computes the polygon's axis-aligned WGS84 rectangle in degrees, used to
+ * query ApproximateTerrainHeights for the shadow volume's height window.
+ *
+ * @param hierarchy Polygon hierarchy in degrees.
+ * @returns Outer rectangle bounding the polygon outer ring, in degrees.
+ */
+function rectangleDegreesFromPolygonHierarchy(
+	hierarchy: PolygonHierarchyDegrees,
+): RectangleDegrees {
+	let west = Number.POSITIVE_INFINITY;
+	let south = Number.POSITIVE_INFINITY;
+	let east = Number.NEGATIVE_INFINITY;
+	let north = Number.NEGATIVE_INFINITY;
+
+	for ( const point of hierarchy.positions ) {
+		if ( ! Number.isFinite( point.longitude ) || ! Number.isFinite( point.latitude ) ) {
+			continue;
+		}
+		west = Math.min( west, point.longitude );
+		east = Math.max( east, point.longitude );
+		south = Math.min( south, point.latitude );
+		north = Math.max( north, point.latitude );
+	}
+
+	if (
+		! Number.isFinite( west ) || ! Number.isFinite( east ) ||
+		! Number.isFinite( south ) || ! Number.isFinite( north ) ||
+		east <= west || north <= south
+	) {
+		throw new Error( 'Polygon hierarchy must contain at least three finite lon/lat points forming a non-degenerate ring.' );
+	}
+
+	return { west, south, east, north };
 }
 
 /**
@@ -90,8 +170,11 @@ export class CesiumGroundRectanglePrimitive {
 		this.rectangle = fillRectangle;
 
 		const granularity = options.granularityRadians ?? ( Math.PI / 180.0 / 32.0 );
-		const minimumHeight = options.minimumHeight ?? - CESIUM_GLOBE_MINIMUM_ALTITUDE;
-		const maximumHeight = options.maximumHeight ?? CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		const { minimumHeight, maximumHeight } = resolveShadowVolumeHeights(
+			renderRectangleDegrees,
+			options.minimumHeight,
+			options.maximumHeight,
+		);
 		const rectangleGeometry = new RectangleGeometry( {
 			rectangle: renderRectangle,
 			ellipsoid: Ellipsoid.WGS84,
@@ -197,8 +280,12 @@ export class CesiumGroundPolygonPrimitive {
 		this.polygonHierarchy = polygonHierarchy;
 
 		const granularity = options.granularityRadians ?? ( Math.PI / 180.0 / 32.0 );
-		const minimumHeight = options.minimumHeight ?? - CESIUM_GLOBE_MINIMUM_ALTITUDE;
-		const maximumHeight = options.maximumHeight ?? CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		const rectangleDegrees = rectangleDegreesFromPolygonHierarchy( options.polygonHierarchyDegrees );
+		const { minimumHeight, maximumHeight } = resolveShadowVolumeHeights(
+			rectangleDegrees,
+			options.minimumHeight,
+			options.maximumHeight,
+		);
 		const polygonGeometry = new PolygonGeometry( {
 			polygonHierarchy,
 			ellipsoid: Ellipsoid.WGS84,

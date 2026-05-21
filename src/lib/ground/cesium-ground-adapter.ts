@@ -19,3 +19,13 @@ export {
 	wgs84NormalFromDegrees,
 	wgs84PositionFromDegrees,
 } from './geometry';
+export {
+	initializeApproximateTerrainHeights,
+	isApproximateTerrainHeightsReady,
+	getTerrainMinMaxHeightsForRectangle,
+} from './terrain-heights';
+export {
+	applyCesiumLogDepthToMaterial,
+	terrainLogDepthUniforms,
+	updateTerrainLogDepthUniforms,
+} from './terrain-log-depth';

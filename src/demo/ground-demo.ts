@@ -24,9 +24,11 @@ import {
 	CesiumGlobeDepth,
 	CesiumGroundPolygonPrimitive,
 	CesiumGroundRectanglePrimitive,
+	initializeApproximateTerrainHeights,
 	longitudeLatitudeFromCenterOffsetsMeters,
 	rectangleDegreesFromCenterSizeMeters,
 	rectangleMeterSizeFromDegrees,
+	updateTerrainLogDepthUniforms,
 	validateCesiumGroundRenderer,
 	wgs84NormalFromDegrees,
 	wgs84PositionFromDegrees,
@@ -72,6 +74,14 @@ interface RectangleGuiModel {
 export function runGroundDemo(): void {
 	installPageStyle();
 	const infoBody = createInfoPanel();
+
+	// Inject the bundled Cesium ApproximateTerrainHeights.json synchronously so
+	// every CesiumGroundRectanglePrimitive / CesiumGroundPolygonPrimitive
+	// created below can pull tile-accurate min/max terrain heights for its
+	// shadow volume. Without this the adapter falls back to the Cesium default
+	// range (-100 km, +9 km), which keeps the demo running but slightly
+	// degrades shadow-volume tightness for arbitrary rectangles.
+	initializeApproximateTerrainHeights();
 
 	const app = document.getElementById( 'app' );
 	if ( ! app ) {
@@ -621,6 +631,13 @@ export function runGroundDemo(): void {
 		camera.updateMatrixWorld();
 		tilesRenderer.setResolutionFromRenderer( camera, renderer );
 		tilesRenderer.update();
+
+		// Refresh the terrain log-depth uniforms before any pass that writes
+		// or samples main framebuffer depth. The packed-depth pass picks up
+		// its own copy inside CesiumGlobeDepth.render() and the shadow-volume
+		// shaders pick theirs up inside groundRectangle.update() below, so
+		// keeping the terrain shim in sync here closes the depth-space loop.
+		updateTerrainLogDepthUniforms( camera.near, camera.far );
 
 		tilesRenderer.group.visible = debugSettings.useTilesDepth;
 		globeDepth.render( renderer, camera, scene, tilesRenderer.group );

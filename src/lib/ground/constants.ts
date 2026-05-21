@@ -22,8 +22,24 @@ export const CLASSIFICATION_MASK = 0x0f;
 // Cesium scene mode numeric value for 3D mode.
 export const SCENE_MODE_3D = 3.0;
 
-// Cesium globe minimum altitude used by the shadow-volume vertex shader.
+// Cesium globe minimum altitude used by the shadow-volume vertex shader as
+// the upper clamp for the per-frame extrude delta. This is intentionally
+// large because it is only an upper bound; the actual extrude amount is
+// driven by czm_geometricToleranceOverMeter * length(positionEC).
 export const CESIUM_GLOBE_MINIMUM_ALTITUDE = 55000.0;
 
 // Geometry expansion equals the requested meter border width.
 export const BORDER_GEOMETRY_EXPANSION_SCALE = 1.0;
+
+// Cesium Scene._maximumScreenSpaceError default value used by
+// UniformState.update to derive czm_geometricToleranceOverMeter. Cesium uses
+// 2.0 by default for the main scene; matching it keeps the shadow-volume
+// vertex extrude in sync with the original GroundPrimitive behaviour.
+export const CESIUM_MAXIMUM_SCREEN_SPACE_ERROR = 2.0;
+
+// Default fallback terrain min/max heights mirroring
+// ApproximateTerrainHeights._defaultMinTerrainHeight /
+// _defaultMaxTerrainHeight. Used when the terrain-height table has not been
+// initialized yet so the adapter still produces a valid shadow volume.
+export const APPROXIMATE_TERRAIN_DEFAULT_MIN_HEIGHT = - 100000.0;
+export const APPROXIMATE_TERRAIN_DEFAULT_MAX_HEIGHT = 9000.0;

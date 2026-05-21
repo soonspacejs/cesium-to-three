@@ -119,6 +119,14 @@ export interface CesiumGroundFrameState {
 	camera: PerspectiveCamera;
 }
 
+export interface CesiumLogDepthParameters {
+	near: number;
+	far: number;
+	farDepthFromNearPlusOne: number;
+	log2FarDepthFromNearPlusOne: number;
+	oneOverLog2FarDepthFromNearPlusOne: number;
+}
+
 export interface PlanarExtents {
 	southWestHigh: Vector3;
 	southWestLow: Vector3;
@@ -163,5 +171,7 @@ export interface SharedUniforms {
 	czm_viewportTransformation: { value: Matrix4 };
 	czm_frustumPlanes: { value: Vector4 };
 	czm_currentFrustum: { value: Vector3 };
+	czm_farDepthFromNearPlusOne: { value: number };
 	czm_log2FarDepthFromNearPlusOne: { value: number };
+	czm_oneOverLog2FarDepthFromNearPlusOne: { value: number };
 }

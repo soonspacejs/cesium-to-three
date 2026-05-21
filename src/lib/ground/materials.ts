@@ -3,7 +3,7 @@
 // Layer: Cesium-to-Three ground shader/material bridge.
 // Role: translate Cesium GroundPrimitive shader snippets into Three
 //       RawShaderMaterial instances while preserving Cesium stencil/color
-//       command semantics.
+//       command semantics, including the Cesium LOG_DEPTH path.
 // Dependencies: Three.js material state and unmodified Cesium GLSL sources.
 // Consumed by: classification.ts and depth.ts.
 // ============================================================
@@ -14,6 +14,7 @@ import {
 	CustomBlending,
 	DoubleSide,
 	KeepStencilOp,
+	LessEqualDepth,
 	NotEqualStencilFunc,
 	OneFactor,
 	OneMinusSrcAlphaFactor,
@@ -39,8 +40,90 @@ import cesiumGammaCorrect from '../../../cesium-ground-source/engine/Source/Shad
 import { CLASSIFICATION_MASK, SCENE_MODE_3D } from './constants';
 import type { SharedUniforms } from './types';
 
+// Three.js's RawShaderMaterial does not run Cesium ShaderSource's automatic
+// LOG_DEPTH wrapping (which adds czm_vertexLogDepth() / czm_writeLogDepth()
+// calls to main()). We replicate that injection manually below. The
+// `LOG_DEPTH` define controls whether the gl_FragDepth path is active in
+// both the GLSL source and the matching Three render state.
+const ENABLE_LOG_DEPTH = true;
+
 /**
- * Creates a shader prefix with Cesium automatic uniforms and batch-table hooks.
+ * Cesium-equivalent log depth helpers expressed in GLSL3. Two key adaptations
+ * vs the stock Cesium snippets:
+ *
+ * - `czm_vertexLogDepth()` matches Cesium exactly: it writes the
+ *   `v_depthFromNearPlusOne` varying and clamps `gl_Position.z` so a vertex
+ *   that landed outside `[-w, w]` due to log-depth precision still reaches
+ *   the fragment shader.
+ * - `czm_writeLogDepth()` uses Cesium's `log2(depth) /
+ *   log2(czm_farDepthFromNearPlusOne)` formula, but **clamps** to the near
+ *   plane (`gl_FragDepth = 0.0`) and far plane (`gl_FragDepth = 1.0`)
+ *   instead of `discard`ing fragments outside the frustum. Cesium can use
+ *   discard because its multifrustum keeps near/far close to the shadow
+ *   volume. Three runs a single frustum, so a shadow volume that spans the
+ *   near plane must clamp to keep stencil counts (DECR_WRAP / INCR_WRAP)
+ *   intact - dropping those fragments would make the final color command
+ *   under- or over-fill the plot.
+ */
+const LOG_DEPTH_VERTEX_HELPERS = /* glsl */ `
+#ifdef LOG_DEPTH
+out float v_depthFromNearPlusOne;
+
+void czm_vertexLogDepth() {
+	v_depthFromNearPlusOne = ( gl_Position.w - czm_currentFrustum.x ) + 1.0;
+	gl_Position.z = clamp( gl_Position.z / gl_Position.w, - 1.0, 1.0 ) * gl_Position.w;
+}
+#endif
+`;
+
+const LOG_DEPTH_FRAGMENT_HELPERS = /* glsl */ `
+#ifdef LOG_DEPTH
+in float v_depthFromNearPlusOne;
+
+void czm_writeLogDepth( float depth ) {
+	if ( depth <= 1.0 ) {
+		gl_FragDepth = 0.0;
+	} else if ( depth > czm_farDepthFromNearPlusOne ) {
+		gl_FragDepth = 1.0;
+	} else {
+		gl_FragDepth = log2( depth ) * czm_oneOverLog2FarDepthFromNearPlusOne;
+	}
+}
+
+void czm_writeLogDepth() {
+	czm_writeLogDepth( v_depthFromNearPlusOne );
+}
+#endif
+`;
+
+/**
+ * Wraps a shader's `main()` into a renamed inner function and replaces it
+ * with a new `main()` that calls the inner function then runs `appended`.
+ * Mirrors Cesium ShaderSource.replaceMain + DerivedCommand log depth wrap.
+ *
+ * @param source GLSL source containing exactly one `void main()` definition.
+ * @param innerName Replacement name for the original `main()` body.
+ * @param appended GLSL statements injected after the original main runs.
+ * @returns Wrapped GLSL with a new `void main()` calling the renamed body.
+ */
+function wrapShaderMain( source: string, innerName: string, appended: string ): string {
+	const pattern = /void\s+main\s*\(\s*(?:void\s*)?\)/;
+	if ( ! pattern.test( source ) ) {
+		throw new Error( `Cesium shader wrap failed: no void main() found while injecting ${ innerName }.` );
+	}
+	const renamed = source.replace( pattern, `void ${ innerName }()` );
+
+	return /* glsl */ `${ renamed }
+void main() {
+	${ innerName }();
+	${ appended }
+}
+`;
+}
+
+/**
+ * Creates the vertex prefix that supplies Cesium automatic uniforms, batch
+ * table hooks, and LOG_DEPTH helpers to the shadow-volume vertex shader.
  *
  * @param defines GLSL defines to prepend exactly as Cesium ShaderSource would.
  * @returns GLSL source prefix.
@@ -60,6 +143,10 @@ uniform vec3 czm_encodedCameraPositionMCHigh;
 uniform vec3 czm_encodedCameraPositionMCLow;
 uniform float czm_geometricToleranceOverMeter;
 uniform float czm_sceneMode;
+uniform vec3 czm_currentFrustum;
+uniform float czm_farDepthFromNearPlusOne;
+uniform float czm_log2FarDepthFromNearPlusOne;
+uniform float czm_oneOverLog2FarDepthFromNearPlusOne;
 
 #define czm_sceneMode3D ${ SCENE_MODE_3D.toFixed( 1 ) }
 #define czm_computePosition() czm_translateRelativeToEye(position3DHigh, position3DLow)
@@ -103,6 +190,8 @@ vec4 czm_branchFreeTernary(bool comparison, vec4 trueValue, vec4 falseValue) {
 }
 
 ${ cesiumTranslateRelativeToEye }
+
+${ LOG_DEPTH_VERTEX_HELPERS }
 `;
 }
 
@@ -129,7 +218,9 @@ uniform mat4 czm_inverseProjection;
 uniform mat4 czm_viewportTransformation;
 uniform vec4 czm_frustumPlanes;
 uniform vec3 czm_currentFrustum;
+uniform float czm_farDepthFromNearPlusOne;
 uniform float czm_log2FarDepthFromNearPlusOne;
+uniform float czm_oneOverLog2FarDepthFromNearPlusOne;
 uniform vec4 u_borderColor;
 uniform float u_borderEnabled;
 uniform float u_borderWidthMeters;
@@ -162,18 +253,32 @@ ${ cesiumUnpackDepth }
 ${ cesiumWindowToEyeCoordinates }
 ${ cesiumPlaneDistance }
 ${ cesiumGammaCorrect }
+
+${ LOG_DEPTH_FRAGMENT_HELPERS }
 `;
 }
 
 /**
- * Creates a shader that packs gl_FragCoord.z with Cesium czm_packDepth.
+ * Creates a shader that packs gl_FragCoord.z with Cesium czm_packDepth in
+ * non-log-depth mode, or packs the Cesium log-depth value when LOG_DEPTH is
+ * active. Either way, the result mirrors what czm_unpackDepth in
+ * ShadowVolumeAppearanceFS expects, so czm_screenToEyeCoordinates can rebuild
+ * eye coordinates correctly inside the color command's fragment shader.
  *
  * @returns RawShaderMaterial used by the globe depth pass.
  */
 export function createPackDepthMaterial(): RawShaderMaterial {
+	const defines = ENABLE_LOG_DEPTH ? [ 'LOG_DEPTH' ] : [];
+	const defineSource = defines.map( define => `#define ${ define }` ).join( '\n' );
+
 	return new RawShaderMaterial( {
 		glslVersion: GLSL3,
-		vertexShader: /* glsl */ `
+		uniforms: {
+			czm_currentFrustum: { value: null },
+			czm_farDepthFromNearPlusOne: { value: 1.0 },
+			czm_oneOverLog2FarDepthFromNearPlusOne: { value: 1.0 },
+		},
+		vertexShader: /* glsl */ `${ defineSource }
 precision highp float;
 precision highp int;
 
@@ -181,11 +286,20 @@ uniform mat4 modelViewMatrix;
 uniform mat4 projectionMatrix;
 in vec3 position;
 
+#ifdef LOG_DEPTH
+uniform vec3 czm_currentFrustum;
+out float v_depthFromNearPlusOne;
+#endif
+
 void main() {
 	gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+#ifdef LOG_DEPTH
+	v_depthFromNearPlusOne = ( gl_Position.w - czm_currentFrustum.x ) + 1.0;
+	gl_Position.z = clamp( gl_Position.z / gl_Position.w, - 1.0, 1.0 ) * gl_Position.w;
+#endif
 }
 `,
-		fragmentShader: /* glsl */ `
+		fragmentShader: /* glsl */ `${ defineSource }
 precision highp float;
 precision highp int;
 
@@ -193,12 +307,36 @@ out vec4 out_FragColor;
 
 ${ cesiumPackDepth }
 
+#ifdef LOG_DEPTH
+in float v_depthFromNearPlusOne;
+uniform float czm_farDepthFromNearPlusOne;
+uniform float czm_oneOverLog2FarDepthFromNearPlusOne;
+
+float czm_computeLogDepth() {
+	float depth = v_depthFromNearPlusOne;
+	if ( depth <= 1.0 ) {
+		return 0.0;
+	}
+	if ( depth > czm_farDepthFromNearPlusOne ) {
+		return 1.0;
+	}
+	return log2( depth ) * czm_oneOverLog2FarDepthFromNearPlusOne;
+}
+#endif
+
 void main() {
-	out_FragColor = czm_packDepth(gl_FragCoord.z);
+#ifdef LOG_DEPTH
+	float depthForPack = czm_computeLogDepth();
+	gl_FragDepth = depthForPack;
+	out_FragColor = czm_packDepth( depthForPack );
+#else
+	out_FragColor = czm_packDepth( gl_FragCoord.z );
+#endif
 }
 `,
 		depthTest: true,
 		depthWrite: true,
+		depthFunc: LessEqualDepth,
 		colorWrite: true,
 		toneMapped: false,
 	} );
@@ -243,6 +381,74 @@ function createColorFragmentBody(): string {
 }
 
 /**
+ * Combines all shared defines, including LOG_DEPTH when enabled.
+ */
+function combineDefines( ...lists: readonly ( string | undefined )[][] ): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+
+	for ( const list of lists ) {
+		for ( const define of list ) {
+			if ( typeof define !== 'string' || define.length === 0 ) {
+				continue;
+			}
+			if ( seen.has( define ) ) {
+				continue;
+			}
+			seen.add( define );
+			out.push( define );
+		}
+	}
+
+	if ( ENABLE_LOG_DEPTH && ! seen.has( 'LOG_DEPTH' ) ) {
+		out.push( 'LOG_DEPTH' );
+	}
+
+	return out;
+}
+
+/**
+ * Wraps the Cesium shadow-volume vertex source with the LOG_DEPTH main()
+ * postlude so czm_vertexLogDepth() runs after gl_Position is finalized.
+ */
+function buildStencilVertexShader(): string {
+	const innerName = 'czm_shadow_volume_stencil_main_vs';
+	const append = ENABLE_LOG_DEPTH ? 'czm_vertexLogDepth();' : '';
+
+	return ENABLE_LOG_DEPTH
+		? wrapShaderMain( cesiumShadowVolumeAppearanceVS, innerName, append )
+		: cesiumShadowVolumeAppearanceVS;
+}
+
+function buildColorVertexShader(): string {
+	const innerName = 'czm_shadow_volume_color_main_vs';
+	const append = ENABLE_LOG_DEPTH ? 'czm_vertexLogDepth();' : '';
+
+	return ENABLE_LOG_DEPTH
+		? wrapShaderMain( cesiumShadowVolumeAppearanceVS, innerName, append )
+		: cesiumShadowVolumeAppearanceVS;
+}
+
+function buildStencilFragmentShader(): string {
+	const innerName = 'czm_shadow_volume_stencil_main_fs';
+	const append = ENABLE_LOG_DEPTH ? 'czm_writeLogDepth();' : '';
+
+	return ENABLE_LOG_DEPTH
+		? wrapShaderMain( cesiumShadowVolumeFS, innerName, append )
+		: cesiumShadowVolumeFS;
+}
+
+function buildColorFragmentShader(): string {
+	const innerName = 'czm_shadow_volume_color_main_fs';
+	const append = ENABLE_LOG_DEPTH ? 'czm_writeLogDepth();' : '';
+	const body = createColorFragmentBody();
+
+	return ENABLE_LOG_DEPTH
+		? wrapShaderMain( body, innerName, append )
+		: body;
+}
+
+/**
  * Creates one face-specific material for Cesium's stencil-depth command.
  *
  * @param uniforms Shared uniforms for all classification commands.
@@ -257,15 +463,23 @@ export function createStencilMaterial(
 	stencilZFail: StencilOp,
 	name: string,
 ): RawShaderMaterial {
+	const defines = combineDefines( [ 'EXTRUDED_GEOMETRY' ] );
+	const vertexShader = buildStencilVertexShader();
+	const fragmentShader = buildStencilFragmentShader();
+
 	const material = new RawShaderMaterial( {
 		glslVersion: GLSL3,
 		uniforms,
-		vertexShader: `${ createVertexPrefix( [ 'EXTRUDED_GEOMETRY' ] ) }\n${ cesiumShadowVolumeAppearanceVS }`,
-		fragmentShader: `${ createFragmentPrefix( [] ) }\n${ cesiumShadowVolumeFS }`,
+		vertexShader: `${ createVertexPrefix( defines ) }\n${ vertexShader }`,
+		fragmentShader: `${ createFragmentPrefix( defines ) }\n${ fragmentShader }`,
 		side,
 		colorWrite: false,
 		depthWrite: false,
 		depthTest: true,
+		// Cesium getStencilDepthRenderState uses DepthFunction.LESS_OR_EQUAL.
+		// Three.js defaults to LessDepth, which silently drops the stencil
+		// op whenever the shadow volume face coincides with terrain depth.
+		depthFunc: LessEqualDepth,
 		stencilWrite: true,
 		stencilFunc: AlwaysStencilFunc,
 		stencilRef: 0,
@@ -289,7 +503,7 @@ export function createStencilMaterial(
  * @returns RawShaderMaterial matching Cesium's color pass render state.
  */
 export function createColorMaterial( uniforms: SharedUniforms, fragmentCull: boolean ): RawShaderMaterial {
-	const defines = [
+	const defines = combineDefines( [
 		'EXTRUDED_GEOMETRY',
 		'TEXTURE_COORDINATES',
 		fragmentCull ? 'CULL_FRAGMENTS' : '',
@@ -297,13 +511,16 @@ export function createColorMaterial( uniforms: SharedUniforms, fragmentCull: boo
 		'FLAT',
 		'REQUIRES_EC',
 		'CESIUM_THREE_BORDER',
-	].filter( define => define.length > 0 );
+	] );
+
+	const vertexShader = buildColorVertexShader();
+	const fragmentShader = buildColorFragmentShader();
 
 	const material = new RawShaderMaterial( {
 		glslVersion: GLSL3,
 		uniforms,
-		vertexShader: `${ createVertexPrefix( defines ) }\n${ cesiumShadowVolumeAppearanceVS }`,
-		fragmentShader: `${ createFragmentPrefix( defines ) }\n${ createColorFragmentBody() }`,
+		vertexShader: `${ createVertexPrefix( defines ) }\n${ vertexShader }`,
+		fragmentShader: `${ createFragmentPrefix( defines ) }\n${ fragmentShader }`,
 		side: DoubleSide,
 		colorWrite: true,
 		depthWrite: false,
@@ -332,3 +549,5 @@ export function createColorMaterial( uniforms: SharedUniforms, fragmentCull: boo
 	material.name = 'CesiumClassificationColorMaterial';
 	return material;
 }
+
+export { ENABLE_LOG_DEPTH };

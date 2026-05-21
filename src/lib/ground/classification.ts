@@ -23,7 +23,11 @@ import {
 	type Material,
 } from 'three';
 
-import { CESIUM_GLOBE_MINIMUM_ALTITUDE, SCENE_MODE_3D } from './constants';
+import {
+	CESIUM_GLOBE_MINIMUM_ALTITUDE,
+	CESIUM_MAXIMUM_SCREEN_SPACE_ERROR,
+	SCENE_MODE_3D,
+} from './constants';
 import { encodeCesiumVector3 } from './geometry';
 import { createColorMaterial, createStencilMaterial } from './materials';
 import type {
@@ -53,37 +57,255 @@ function createViewportTransformation( width: number, height: number ): Matrix4 
 	return matrix;
 }
 
+// Float64 scratch buffers keep the full RTE matrix chain at double precision
+// on the CPU. Three.js Matrix4.elements is a Float32Array, so any roundtrip
+// through `multiplyMatrices` / `copy` silently loses ~7 significant digits.
+// We do the math against these Float64Array scratches and only write the
+// final mat4 uniform back into the Float32 Three.js Matrix4 once.
+const viewRotationFloat64 = new Float64Array( 16 );
+const projectionFloat64 = new Float64Array( 16 );
+const mvpFloat64 = new Float64Array( 16 );
+
 /**
- * Builds a matrix with camera rotation only, matching Cesium RTE uniforms.
+ * Builds the column-major rotation-only view matrix from `camera.quaternion`
+ * at Float64 precision. Equivalent to camera.matrixWorldInverse with the
+ * translation column zeroed, but avoids the Float32 round-trip through
+ * Three.js Matrix4.elements when the quaternion is converted to a matrix.
+ *
+ * @param qx Quaternion x component.
+ * @param qy Quaternion y component.
+ * @param qz Quaternion z component.
+ * @param qw Quaternion w component.
+ * @param out Float64Array(16) destination in column-major layout.
+ */
+function writeViewRotationFloat64(
+	qx: number, qy: number, qz: number, qw: number,
+	out: Float64Array,
+): void {
+	const x2 = qx + qx;
+	const y2 = qy + qy;
+	const z2 = qz + qz;
+	const xx = qx * x2;
+	const xy = qx * y2;
+	const xz = qx * z2;
+	const yy = qy * y2;
+	const yz = qy * z2;
+	const zz = qz * z2;
+	const wx = qw * x2;
+	const wy = qw * y2;
+	const wz = qw * z2;
+
+	// Camera-to-world rotation columns derived directly from the quaternion.
+	const camToWorld00 = 1.0 - ( yy + zz );
+	const camToWorld10 = xy + wz;
+	const camToWorld20 = xz - wy;
+	const camToWorld01 = xy - wz;
+	const camToWorld11 = 1.0 - ( xx + zz );
+	const camToWorld21 = yz + wx;
+	const camToWorld02 = xz + wy;
+	const camToWorld12 = yz - wx;
+	const camToWorld22 = 1.0 - ( xx + yy );
+
+	// View rotation = transpose of the camera-to-world rotation. With the
+	// camera translation zeroed it's the relativeToEye view matrix.
+	out[ 0 ] = camToWorld00; out[ 1 ] = camToWorld01; out[ 2 ] = camToWorld02; out[ 3 ] = 0.0;
+	out[ 4 ] = camToWorld10; out[ 5 ] = camToWorld11; out[ 6 ] = camToWorld12; out[ 7 ] = 0.0;
+	out[ 8 ] = camToWorld20; out[ 9 ] = camToWorld21; out[ 10 ] = camToWorld22; out[ 11 ] = 0.0;
+	out[ 12 ] = 0.0; out[ 13 ] = 0.0; out[ 14 ] = 0.0; out[ 15 ] = 1.0;
+}
+
+/**
+ * Mirrors Three.js PerspectiveCamera.updateProjectionMatrix using Float64
+ * intermediates. The output matches the camera.projectionMatrix for
+ * symmetric centred-frusta (no film offset, no view offset) but does not
+ * carry the rounded values stored in Three.js Float32 elements.
+ *
+ * @param fovDegrees Vertical field of view in degrees.
+ * @param aspect Aspect ratio (width / height).
+ * @param near Near plane distance.
+ * @param far Far plane distance.
+ * @param out Float64Array(16) destination in column-major layout.
+ */
+function writePerspectiveProjectionFloat64(
+	fovDegrees: number, aspect: number, near: number, far: number,
+	out: Float64Array,
+): void {
+	const fovRad = fovDegrees * Math.PI / 180.0;
+	const top = near * Math.tan( 0.5 * fovRad );
+	const bottom = - top;
+	const right = top * aspect;
+	const left = - right;
+
+	const x = ( 2.0 * near ) / ( right - left );
+	const y = ( 2.0 * near ) / ( top - bottom );
+	const a = ( right + left ) / ( right - left );
+	const b = ( top + bottom ) / ( top - bottom );
+	const c = - ( far + near ) / ( far - near );
+	const d = - ( 2.0 * far * near ) / ( far - near );
+
+	out[ 0 ] = x; out[ 1 ] = 0.0; out[ 2 ] = 0.0; out[ 3 ] = 0.0;
+	out[ 4 ] = 0.0; out[ 5 ] = y; out[ 6 ] = 0.0; out[ 7 ] = 0.0;
+	out[ 8 ] = a; out[ 9 ] = b; out[ 10 ] = c; out[ 11 ] = - 1.0;
+	out[ 12 ] = 0.0; out[ 13 ] = 0.0; out[ 14 ] = d; out[ 15 ] = 0.0;
+}
+
+/**
+ * Float64 matrix multiplication: out = a * b. Layout is column-major, matching
+ * Three.js Matrix4.elements. Variable naming `aRowCol` reflects mathematical
+ * convention, while index access goes through column-major offsets.
+ *
+ * @param a Left operand stored column-major in 16 Float64 entries.
+ * @param b Right operand stored column-major in 16 Float64 entries.
+ * @param out Destination stored column-major in 16 Float64 entries.
+ */
+function multiplyMatricesFloat64(
+	a: Float64Array, b: Float64Array, out: Float64Array,
+): void {
+	const a11 = a[ 0 ];
+	const a21 = a[ 1 ];
+	const a31 = a[ 2 ];
+	const a41 = a[ 3 ];
+	const a12 = a[ 4 ];
+	const a22 = a[ 5 ];
+	const a32 = a[ 6 ];
+	const a42 = a[ 7 ];
+	const a13 = a[ 8 ];
+	const a23 = a[ 9 ];
+	const a33 = a[ 10 ];
+	const a43 = a[ 11 ];
+	const a14 = a[ 12 ];
+	const a24 = a[ 13 ];
+	const a34 = a[ 14 ];
+	const a44 = a[ 15 ];
+
+	const b11 = b[ 0 ];
+	const b21 = b[ 1 ];
+	const b31 = b[ 2 ];
+	const b41 = b[ 3 ];
+	const b12 = b[ 4 ];
+	const b22 = b[ 5 ];
+	const b32 = b[ 6 ];
+	const b42 = b[ 7 ];
+	const b13 = b[ 8 ];
+	const b23 = b[ 9 ];
+	const b33 = b[ 10 ];
+	const b43 = b[ 11 ];
+	const b14 = b[ 12 ];
+	const b24 = b[ 13 ];
+	const b34 = b[ 14 ];
+	const b44 = b[ 15 ];
+
+	out[ 0 ] = a11 * b11 + a12 * b21 + a13 * b31 + a14 * b41;
+	out[ 1 ] = a21 * b11 + a22 * b21 + a23 * b31 + a24 * b41;
+	out[ 2 ] = a31 * b11 + a32 * b21 + a33 * b31 + a34 * b41;
+	out[ 3 ] = a41 * b11 + a42 * b21 + a43 * b31 + a44 * b41;
+
+	out[ 4 ] = a11 * b12 + a12 * b22 + a13 * b32 + a14 * b42;
+	out[ 5 ] = a21 * b12 + a22 * b22 + a23 * b32 + a24 * b42;
+	out[ 6 ] = a31 * b12 + a32 * b22 + a33 * b32 + a34 * b42;
+	out[ 7 ] = a41 * b12 + a42 * b22 + a43 * b32 + a44 * b42;
+
+	out[ 8 ] = a11 * b13 + a12 * b23 + a13 * b33 + a14 * b43;
+	out[ 9 ] = a21 * b13 + a22 * b23 + a23 * b33 + a24 * b43;
+	out[ 10 ] = a31 * b13 + a32 * b23 + a33 * b33 + a34 * b43;
+	out[ 11 ] = a41 * b13 + a42 * b23 + a43 * b33 + a44 * b43;
+
+	out[ 12 ] = a11 * b14 + a12 * b24 + a13 * b34 + a14 * b44;
+	out[ 13 ] = a21 * b14 + a22 * b24 + a23 * b34 + a24 * b44;
+	out[ 14 ] = a31 * b14 + a32 * b24 + a33 * b34 + a34 * b44;
+	out[ 15 ] = a41 * b14 + a42 * b24 + a43 * b34 + a44 * b44;
+}
+
+/**
+ * Writes the Cesium normal matrix (modelView rotation as a 3x3) from a 16
+ * entry Float64 column-major matrix into Three.js Matrix3 elements.
+ *
+ * @param source Float64 column-major matrix.
+ * @param destination Three Matrix3 receiver.
+ */
+function writeMatrix3FromFloat64Mat4( source: Float64Array, destination: Matrix3 ): void {
+	const elements = destination.elements;
+	elements[ 0 ] = source[ 0 ];
+	elements[ 1 ] = source[ 1 ];
+	elements[ 2 ] = source[ 2 ];
+	elements[ 3 ] = source[ 4 ];
+	elements[ 4 ] = source[ 5 ];
+	elements[ 5 ] = source[ 6 ];
+	elements[ 6 ] = source[ 8 ];
+	elements[ 7 ] = source[ 9 ];
+	elements[ 8 ] = source[ 10 ];
+}
+
+/**
+ * Updates Cesium automatic uniforms for this frame, including the LOG_DEPTH
+ * uniforms required by the shadow-volume vertex and fragment shaders.
  *
  * @param frameState Current Three-side frame state.
  * @param uniforms Shared material uniforms updated in place.
  */
 function updateFrameStateUniforms( frameState: CesiumGroundFrameState, uniforms: SharedUniforms ): void {
-	const modelViewRelativeToEye = uniforms.czm_modelViewRelativeToEye.value;
-	modelViewRelativeToEye.copy( frameState.camera.matrixWorldInverse );
-	modelViewRelativeToEye.elements[ 12 ] = 0.0;
-	modelViewRelativeToEye.elements[ 13 ] = 0.0;
-	modelViewRelativeToEye.elements[ 14 ] = 0.0;
-	uniforms.czm_modelViewProjectionRelativeToEye.value.multiplyMatrices(
-		frameState.camera.projectionMatrix,
-		modelViewRelativeToEye,
+	const camera = frameState.camera;
+	const quaternion = camera.quaternion;
+
+	// Float64 view rotation directly from the camera quaternion so the
+	// model-view-relative-to-eye matrix is not bottle-necked by Three.js
+	// Float32 storage. Translation stays at zero - the actual offset is
+	// applied in the shader via czm_translateRelativeToEye(positionHigh,
+	// positionLow) using the encoded camera position.
+	writeViewRotationFloat64(
+		quaternion.x, quaternion.y, quaternion.z, quaternion.w,
+		viewRotationFloat64,
 	);
-	uniforms.czm_normal.value.setFromMatrix4( modelViewRelativeToEye );
+
+	writePerspectiveProjectionFloat64(
+		camera.fov, camera.aspect, camera.near, camera.far,
+		projectionFloat64,
+	);
+
+	multiplyMatricesFloat64( projectionFloat64, viewRotationFloat64, mvpFloat64 );
+
+	// Three.js Matrix4.elements is a plain `number[]`, not a Float32Array, so
+	// the typed-array `set()` method is not available. `fromArray()` copies 16
+	// entries by index and works identically with our Float64Array scratch.
+	uniforms.czm_modelViewRelativeToEye.value.fromArray( viewRotationFloat64 );
+	uniforms.czm_modelViewProjectionRelativeToEye.value.fromArray( mvpFloat64 );
+	writeMatrix3FromFloat64Mat4( viewRotationFloat64, uniforms.czm_normal.value );
+
 	uniforms.czm_globeDepthTexture.value = frameState.depthTexture;
 	uniforms.czm_viewport.value.set( 0.0, 0.0, frameState.width, frameState.height );
-	uniforms.czm_inverseProjection.value.copy( frameState.camera.projectionMatrixInverse );
+	uniforms.czm_inverseProjection.value.copy( camera.projectionMatrixInverse );
 	uniforms.czm_viewportTransformation.value.copy(
 		createViewportTransformation( frameState.width, frameState.height ),
 	);
 
-	const near = frameState.camera.near;
-	const far = frameState.camera.far;
-	const top = near * Math.tan( frameState.camera.fov * Math.PI / 360.0 );
-	const right = top * frameState.camera.aspect;
+	const near = camera.near;
+	const far = camera.far;
+	const fovRad = camera.fov * Math.PI / 180.0;
+	const top = near * Math.tan( 0.5 * fovRad );
+	const right = top * camera.aspect;
 	uniforms.czm_frustumPlanes.value.set( top, - top, - right, right );
 	uniforms.czm_currentFrustum.value.set( near, far, 0.0 );
-	uniforms.czm_log2FarDepthFromNearPlusOne.value = Math.log2( far - near + 1.0 );
+
+	const farDepthFromNearPlusOne = ( far - near ) + 1.0;
+	const log2FarDepthFromNearPlusOne = Math.log2( farDepthFromNearPlusOne );
+	const oneOverLog2FarDepthFromNearPlusOne = log2FarDepthFromNearPlusOne > 0.0
+		? 1.0 / log2FarDepthFromNearPlusOne
+		: 1.0;
+	uniforms.czm_farDepthFromNearPlusOne.value = farDepthFromNearPlusOne;
+	uniforms.czm_log2FarDepthFromNearPlusOne.value = log2FarDepthFromNearPlusOne;
+	uniforms.czm_oneOverLog2FarDepthFromNearPlusOne.value = oneOverLog2FarDepthFromNearPlusOne;
+
+	// Cesium UniformState.update derives czm_geometricToleranceOverMeter as
+	// `pixelSizePerMeter * frameState.maximumScreenSpaceError`. The previous
+	// adapter shipped a hardcoded 1.0, which caused the EXTRUDED_GEOMETRY
+	// branch in ShadowVolumeAppearanceVS to always clamp to
+	// u_globeMinimumAltitude (55 km) regardless of eye distance. With the
+	// real formula, near-camera plots get a tiny extrude while distant
+	// plots still cover the configured pixel tolerance.
+	const viewportSize = Math.max( frameState.width, frameState.height, 1.0 );
+	const pixelSizePerMeter = ( Math.tan( 0.5 * fovRad ) * 2.0 ) / viewportSize;
+	uniforms.czm_geometricToleranceOverMeter.value =
+		pixelSizePerMeter * CESIUM_MAXIMUM_SCREEN_SPACE_ERROR;
 }
 
 /**
@@ -119,7 +341,12 @@ export class CesiumClassificationPrimitive {
 			czm_modelViewRelativeToEye: { value: new Matrix4() },
 			czm_modelViewProjectionRelativeToEye: { value: new Matrix4() },
 			czm_normal: { value: new Matrix3() },
-			czm_geometricToleranceOverMeter: { value: 1.0 },
+			// Initial value will be overwritten on the first frame by
+			// updateFrameStateUniforms using the active camera fov / drawing
+			// buffer size. The placeholder is intentionally tiny so the
+			// vertex shader never produces a non-trivial extrude before the
+			// uniforms are filled out.
+			czm_geometricToleranceOverMeter: { value: 0.0 },
 			czm_sceneMode: { value: SCENE_MODE_3D },
 			u_globeMinimumAltitude: { value: CESIUM_GLOBE_MINIMUM_ALTITUDE },
 			u_southWest_HIGH: { value: extents.southWestHigh },
@@ -139,7 +366,9 @@ export class CesiumClassificationPrimitive {
 			czm_viewportTransformation: { value: createViewportTransformation( 1, 1 ) },
 			czm_frustumPlanes: { value: new Vector4() },
 			czm_currentFrustum: { value: new Vector3() },
+			czm_farDepthFromNearPlusOne: { value: 1.0 },
 			czm_log2FarDepthFromNearPlusOne: { value: 1.0 },
+			czm_oneOverLog2FarDepthFromNearPlusOne: { value: 1.0 },
 		};
 
 		const frontStencilMaterial = createStencilMaterial(

@@ -1,8 +1,11 @@
 // ============================================================
 // tiles.ts
 // Layer: 3d-tiles-renderer demo integration.
-// Role: configure Cesium Ion terrain and normalize loaded tile materials.
-// Dependencies: Three.js, 3d-tiles-renderer, demo env helpers.
+// Role: configure Cesium Ion terrain, normalize loaded tile materials, and
+//       inject Cesium-compatible log depth into every terrain shader so the
+//       main framebuffer depth values are coherent with the ground
+//       classification shadow-volume color pass.
+// Dependencies: Three.js, 3d-tiles-renderer, demo env helpers, ground adapter.
 // Consumed by: ground-demo.ts.
 // ============================================================
 
@@ -16,6 +19,7 @@ import { TilesRenderer } from '3d-tiles-renderer';
 import { CesiumIonAuthPlugin } from '3d-tiles-renderer/core/plugins';
 import { QuantizedMeshPlugin } from '3d-tiles-renderer/three/plugins';
 
+import { applyCesiumLogDepthToMaterial } from '../lib/ground';
 import { readStringEnv } from './env';
 
 export interface TilesRuntimeStats {
@@ -74,6 +78,8 @@ export function configureLoadedTileScene( modelScene: Object3D ): void {
 				if ( typeof maybeColoredMaterial.metalness === 'number' ) {
 					maybeColoredMaterial.metalness = 0.0;
 				}
+
+				applyCesiumLogDepthToMaterial( material );
 			}
 		}
 	} );
