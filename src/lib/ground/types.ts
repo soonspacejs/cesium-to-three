@@ -135,6 +135,8 @@ export interface CesiumGroundCirclePrimitiveOptions extends CesiumGroundCircleOp
 	stRotationRadians?: number;
 	ringCount?: number;
 	ringGapRatio?: number;
+	sectorStartDegrees?: number;
+	sectorAngleDegrees?: number;
 	minimumHeight?: number;
 	maximumHeight?: number;
 	renderOrder?: number;
@@ -201,6 +203,8 @@ export interface SharedUniforms {
 	u_circleRenderRadiusMeters: { value: number };
 	u_circleRingCount: { value: number };
 	u_circleRingGapRatio: { value: number };
+	u_circleSectorStartRadians: { value: number };
+	u_circleSectorAngleRadians: { value: number };
 	czm_globeDepthTexture: { value: WebGLRenderTarget['texture'] | null };
 	czm_viewport: { value: Vector4 };
 	czm_inverseProjection: { value: Matrix4 };

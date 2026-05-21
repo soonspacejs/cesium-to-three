@@ -450,6 +450,14 @@ export class CesiumGroundCirclePrimitive {
 		const ringGapRatio = Number.isFinite( requestedRingGapRatio )
 			? Math.max( requestedRingGapRatio, 0.0 )
 			: 0.0;
+		const requestedSectorStartDegrees = options.sectorStartDegrees ?? 0.0;
+		const requestedSectorAngleDegrees = options.sectorAngleDegrees ?? 360.0;
+		const sectorStartRadians = Number.isFinite( requestedSectorStartDegrees )
+			? requestedSectorStartDegrees * Math.PI / 180.0
+			: 0.0;
+		const sectorAngleRadians = Number.isFinite( requestedSectorAngleDegrees )
+			? Math.min( Math.max( requestedSectorAngleDegrees, -360.0 ), 360.0 ) * Math.PI / 180.0
+			: Math.PI * 2.0;
 		this.center = [ centerLongitude, centerLatitude ];
 		this.radius = fillRadiusMeters;
 
@@ -522,6 +530,8 @@ export class CesiumGroundCirclePrimitive {
 			circlePlanar.renderRadiusMeters,
 			ringCount,
 			ringGapRatio,
+			sectorStartRadians,
+			sectorAngleRadians,
 		);
 	}
 

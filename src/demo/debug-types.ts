@@ -56,6 +56,8 @@ export interface GroundDebugSettings {
 	circleStRotationRadians: number;
 	circleRingCount: number;
 	circleRingGapRatio: number;
+	circleSectorStartDegrees: number;
+	circleSectorAngleDegrees: number;
 	circleStrokeColor: string;
 	circleStrokeOpacity: number;
 	circleStrokeWidth: number;

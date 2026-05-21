@@ -147,6 +147,8 @@ uniform float u_circleFillRadiusMeters;
 uniform float u_circleRenderRadiusMeters;
 uniform float u_circleRingCount;
 uniform float u_circleRingGapRatio;
+uniform float u_circleSectorStartRadians;
+uniform float u_circleSectorAngleRadians;
 
 const float czm_pi = 3.141592653589793;
 const float czm_twoPi = 6.283185307179586;
@@ -194,6 +196,11 @@ bool c23_pointInsidePolygon(vec2 point) {
 	}
 
 	return inside;
+}
+
+float c23_wrappedPositiveAngle(float radians) {
+	float wrapped = mod(radians, czm_twoPi);
+	return wrapped < 0.0 ? wrapped + czm_twoPi : wrapped;
 }
 
 ${ cesiumUnpackDepth }
@@ -259,10 +266,19 @@ function createColorFragmentBody(): string {
 #ifndef SPHERICAL
     vec2 planarMeters = uv / v_inversePlaneExtents;
     if (u_circleBorderMode > 0.5) {
-        float circleDistanceMeters = distance(planarMeters, u_circleCenterMeters);
+        vec2 circleVectorMeters = planarMeters - u_circleCenterMeters;
+        float circleDistanceMeters = length(circleVectorMeters);
         if (circleDistanceMeters > u_circleRenderRadiusMeters) {
             discard;
         }
+
+        float safeSectorAngle = clamp(abs(u_circleSectorAngleRadians), 0.0, czm_twoPi);
+        float sectorDirection = u_circleSectorAngleRadians < 0.0 ? -1.0 : 1.0;
+        bool fullCircleSector = safeSectorAngle >= czm_twoPi - 1e-5;
+        float circleAngle = c23_wrappedPositiveAngle(atan(circleVectorMeters.y, circleVectorMeters.x));
+        float sectorStart = c23_wrappedPositiveAngle(u_circleSectorStartRadians);
+        float sectorLocalAngle = c23_wrappedPositiveAngle((circleAngle - sectorStart) * sectorDirection);
+        bool insideSectorAngle = fullCircleSector || sectorLocalAngle <= safeSectorAngle;
 
         float safeRingCount = max(floor(u_circleRingCount + 0.5), 1.0);
         float safeGapRatio = max(u_circleRingGapRatio, 0.0);
@@ -275,8 +291,13 @@ function createColorFragmentBody(): string {
         bool insideFillRadius = circleDistanceMeters <= u_circleFillRadiusMeters;
         bool insideOuterBorder = circleDistanceMeters > u_circleFillRadiusMeters;
         bool insideRingBand = safeRingCount <= 1.0 || cellDistanceMeters <= ringWidthMeters || circleDistanceMeters >= outerRingStartMeters;
+        float sectorEdgeDistanceMeters = min(sectorLocalAngle, max(safeSectorAngle - sectorLocalAngle, 0.0)) * circleDistanceMeters;
+        bool sectorEdgeAllowed = safeRingCount <= 1.0 || circleDistanceMeters >= ringWidthMeters;
+        bool sectorEdge = !fullCircleSector && insideSectorAngle && sectorEdgeAllowed && circleDistanceMeters <= u_circleFillRadiusMeters && sectorEdgeDistanceMeters <= u_borderWidthMeters;
 
-        if (insideOuterBorder) {
+        if (!insideSectorAngle) {
+            color = vec4(color.rgb, 0.0);
+        } else if (insideOuterBorder) {
             if (u_borderEnabled < 0.5 || u_borderColor.a <= 0.0) {
                 color = vec4(color.rgb, 0.0);
             } else {
@@ -288,7 +309,7 @@ function createColorFragmentBody(): string {
             float distanceToRingEdge = min(cellDistanceMeters, ringWidthMeters - cellDistanceMeters);
             bool ringEdge = safeRingCount > 1.0 && circleDistanceMeters > ringWidthMeters && distanceToRingEdge <= u_borderWidthMeters;
             bool centerRingOuterEdge = safeRingCount > 1.0 && abs(circleDistanceMeters - ringWidthMeters) <= u_borderWidthMeters;
-            if (ringEdge || centerRingOuterEdge) {
+            if (ringEdge || centerRingOuterEdge || sectorEdge) {
                 color = czm_gammaCorrect(u_borderColor);
             }
         }

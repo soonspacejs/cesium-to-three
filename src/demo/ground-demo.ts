@@ -246,6 +246,8 @@ export function runGroundDemo(): void {
 		circleStRotationRadians: 0.0,
 		circleRingCount: 3,
 		circleRingGapRatio: 0.55,
+		circleSectorStartDegrees: 0.0,
+		circleSectorAngleDegrees: 90.0,
 		circleStrokeColor: '#ffffff',
 		circleStrokeOpacity: 92,
 		circleStrokeWidth: 300.0,
@@ -601,6 +603,12 @@ export function runGroundDemo(): void {
 		debugSettings.circleRingGapRatio = Number.isFinite( debugSettings.circleRingGapRatio )
 			? clampNumber( debugSettings.circleRingGapRatio, 0.0, 4.0 )
 			: 0.0;
+		debugSettings.circleSectorStartDegrees = Number.isFinite( debugSettings.circleSectorStartDegrees )
+			? clampNumber( debugSettings.circleSectorStartDegrees, -360.0, 360.0 )
+			: 0.0;
+		debugSettings.circleSectorAngleDegrees = Number.isFinite( debugSettings.circleSectorAngleDegrees )
+			? clampNumber( debugSettings.circleSectorAngleDegrees, -360.0, 360.0 )
+			: 360.0;
 	}
 
 	/**
@@ -673,6 +681,8 @@ export function runGroundDemo(): void {
 			stRotationRadians: debugSettings.circleStRotationRadians,
 			ringCount: debugSettings.circleRingCount,
 			ringGapRatio: debugSettings.circleRingGapRatio,
+			sectorStartDegrees: debugSettings.circleSectorStartDegrees,
+			sectorAngleDegrees: debugSettings.circleSectorAngleDegrees,
 			minimumHeight: debugSettings.circleMinimumHeight,
 			maximumHeight: debugSettings.circleMaximumHeight,
 			renderOrder: plotOrderToRenderOrder( debugSettings.circlePlotOrder ),
@@ -925,6 +935,8 @@ export function runGroundDemo(): void {
 		circleFolder.add( debugSettings, 'circleStRotationRadians', - Math.PI, Math.PI, 0.001 ).name( 'stRotation rad' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleRingCount', 1, 12, 1 ).name( 'ring count' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleRingGapRatio', 0.0, 4.0, 0.01 ).name( 'ring gap ratio' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleSectorStartDegrees', - 360.0, 360.0, 1.0 ).name( 'sector start deg' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleSectorAngleDegrees', - 360.0, 360.0, 1.0 ).name( 'sector angle deg' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.addColor( debugSettings, 'circleStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
 		circleFolder.add( debugSettings, 'circleStrokeWidth', 0.0, 100000.0, 100.0 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundCircle );
 		circleFolder.add( debugSettings, 'circleStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
@@ -1041,7 +1053,7 @@ export function runGroundDemo(): void {
 			`Polygon: ${ debugSettings.polygonVisible ? 'on' : 'off' } / order ${ debugSettings.polygonPlotOrder } / PolygonGeometry.createShadowVolume\\n` +
 			`Polygon points: ${ debugSettings.polygonPoints.length } / holes ${ debugSettings.polygonHoles.length } / rotation ${ debugSettings.polygonRotationDegrees.toFixed( 1 ) } deg / dent ${ debugSettings.polygonDentRatio.toFixed( 2 ) } / hole ${ debugSettings.polygonHole ? 'on' : 'off' }\\n` +
 			`Circle: ${ debugSettings.circleVisible ? 'on' : 'off' } / order ${ debugSettings.circlePlotOrder } / CircleGeometry.createShadowVolume\\n` +
-			`Circle center: ${ debugSettings.circleCenterLon.toFixed( 5 ) }, ${ debugSettings.circleCenterLat.toFixed( 5 ) } / radius ${ debugSettings.circleRadius.toFixed( 1 ) } m / rings ${ debugSettings.circleRingCount } / gap ${ debugSettings.circleRingGapRatio.toFixed( 2 ) } / granularity ${ debugSettings.circleGranularityRadians.toFixed( 5 ) } rad\\n` +
+			`Circle center: ${ debugSettings.circleCenterLon.toFixed( 5 ) }, ${ debugSettings.circleCenterLat.toFixed( 5 ) } / radius ${ debugSettings.circleRadius.toFixed( 1 ) } m / rings ${ debugSettings.circleRingCount } / gap ${ debugSettings.circleRingGapRatio.toFixed( 2 ) } / sector ${ debugSettings.circleSectorStartDegrees.toFixed( 0 ) } deg + ${ debugSettings.circleSectorAngleDegrees.toFixed( 0 ) } deg / granularity ${ debugSettings.circleGranularityRadians.toFixed( 5 ) } rad\\n` +
 			`Circle shadow heights: ${ debugSettings.circleMinimumHeight.toFixed( 1 ) } m -> ${ debugSettings.circleMaximumHeight.toFixed( 1 ) } m\\n` +
 			`Debug surface: ${ debugSettings.showDebugSurface ? 'on' : 'off' }\\n` +
 			`Rectangle stroke: ${ debugSettings.strokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.strokeOpacity.toFixed( 0 ) }%\\n` +
