@@ -143,6 +143,28 @@ export interface CesiumGroundCirclePrimitiveOptions extends CesiumGroundCircleOp
 	fragmentCull?: boolean;
 }
 
+export type CesiumGroundPointShape = 'circle' | 'square';
+
+export interface CesiumGroundPointOptions {
+	position: LonLatPoint;
+	shape: CesiumGroundPointShape;
+	size: number;
+	strokeColor: string;
+	strokeWidth: number;
+	strokeOpacity: number;
+	fillColor: string;
+	fillOpacity: number;
+	visible: boolean;
+}
+
+export interface CesiumGroundPointPrimitiveOptions extends CesiumGroundPointOptions {
+	granularityRadians?: number;
+	minimumHeight?: number;
+	maximumHeight?: number;
+	renderOrder?: number;
+	fragmentCull?: boolean;
+}
+
 export interface CesiumClassificationCommandVisibility {
 	frontStencil?: boolean;
 	backStencil?: boolean;

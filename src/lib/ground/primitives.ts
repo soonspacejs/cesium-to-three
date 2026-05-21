@@ -57,6 +57,7 @@ import { createDebugRectangleSurfaceGeometry } from './rectangle/rectangle-debug
 import { computeRectanglePlanarExtents } from './rectangle/rectangle-extents';
 import {
 	expandRectangleDegreesThroughMeters,
+	rectangleDegreesFromCenterSizeMeters,
 	rectangleDegreesFromLonLatPoints,
 } from './rectangle/rectangle-helpers';
 import {
@@ -67,6 +68,7 @@ import type {
 	CesiumGeometryResult,
 	CesiumGroundCirclePrimitiveOptions,
 	CesiumGroundFrameState,
+	CesiumGroundPointPrimitiveOptions,
 	CesiumGroundPolygonPrimitiveOptions,
 	CesiumGroundRectanglePrimitiveOptions,
 	RectangleRadians,
@@ -558,5 +560,120 @@ export class CesiumGroundCirclePrimitive {
 	 */
 	public dispose(): void {
 		this.classification.dispose();
+	}
+}
+
+/**
+ * Ground point implemented as a thin wrapper around existing ground shapes.
+ *
+ * Circle points reuse CesiumGroundCirclePrimitive. Square points reuse
+ * CesiumGroundRectanglePrimitive with a meter-sized rectangle centered on the
+ * point position. This keeps point behavior aligned with the already validated
+ * circle and rectangle ground-classification paths.
+ */
+export class CesiumGroundPointPrimitive {
+	public readonly classification: CesiumClassificationPrimitive;
+	public readonly position: [ number, number ];
+	public readonly shape: 'circle' | 'square';
+	public readonly size: number;
+
+	private readonly primitive: CesiumGroundCirclePrimitive | CesiumGroundRectanglePrimitive;
+
+	public constructor( options: CesiumGroundPointPrimitiveOptions ) {
+		const longitude = options.position[ 0 ];
+		const latitude = options.position[ 1 ];
+		if (
+			! Number.isFinite( longitude ) ||
+			! Number.isFinite( latitude ) ||
+			longitude < -180.0 ||
+			longitude > 180.0 ||
+			latitude < -90.0 ||
+			latitude > 90.0
+		) {
+			throw new Error( 'Cesium ground point position must be a valid WGS84 [lon, lat] point.' );
+		}
+
+		const sizeMeters = Number.isFinite( options.size )
+			? Math.max( options.size, 1.0 )
+			: 1.0;
+		const shape = options.shape === 'square' ? 'square' : 'circle';
+		this.position = [ longitude, latitude ];
+		this.shape = shape;
+		this.size = sizeMeters;
+
+		if ( shape === 'circle' ) {
+			this.primitive = new CesiumGroundCirclePrimitive( {
+				center: this.position,
+				radius: sizeMeters * 0.5,
+				strokeColor: options.strokeColor,
+				strokeWidth: options.strokeWidth,
+				strokeOpacity: options.strokeOpacity,
+				fillColor: options.fillColor,
+				fillOpacity: options.fillOpacity,
+				visible: options.visible,
+				granularityRadians: options.granularityRadians,
+				sectorStartDegrees: 0.0,
+				sectorAngleDegrees: 360.0,
+				ringCount: 1.0,
+				ringGapRatio: 0.0,
+				minimumHeight: options.minimumHeight,
+				maximumHeight: options.maximumHeight,
+				renderOrder: options.renderOrder,
+				fragmentCull: options.fragmentCull,
+			} );
+		} else {
+			const rectangleDegrees = rectangleDegreesFromCenterSizeMeters(
+				longitude,
+				latitude,
+				sizeMeters,
+				sizeMeters,
+			);
+			this.primitive = new CesiumGroundRectanglePrimitive( {
+				points: [
+					[ rectangleDegrees.west, rectangleDegrees.south ],
+					[ rectangleDegrees.east, rectangleDegrees.south ],
+					[ rectangleDegrees.east, rectangleDegrees.north ],
+					[ rectangleDegrees.west, rectangleDegrees.north ],
+				],
+				strokeColor: options.strokeColor,
+				strokeWidth: options.strokeWidth,
+				strokeOpacity: options.strokeOpacity,
+				fillColor: options.fillColor,
+				fillOpacity: options.fillOpacity,
+				visible: options.visible,
+				granularityRadians: options.granularityRadians,
+				minimumHeight: options.minimumHeight,
+				maximumHeight: options.maximumHeight,
+				renderOrder: options.renderOrder,
+				fragmentCull: options.fragmentCull,
+			} );
+		}
+
+		this.classification = this.primitive.classification;
+	}
+
+	/**
+	 * Updates per-frame uniforms.
+	 *
+	 * @param frameState Current Three-side frame state.
+	 */
+	public update( frameState: CesiumGroundFrameState ): void {
+		this.primitive.update( frameState );
+	}
+
+	/**
+	 * Updates this point's command-block render order.
+	 *
+	 * @param renderOrder Base order assigned to the front-stencil command.
+	 */
+	public setRenderOrder( renderOrder: number ): void {
+		this.primitive.setRenderOrder( renderOrder );
+	}
+
+	/**
+	 * Releases resources.
+	 */
+	public dispose(): void {
+		this.primitive.dispose();
 	}
 }

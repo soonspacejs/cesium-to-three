@@ -13,7 +13,12 @@
 export { validateCesiumGroundRenderer } from './validation';
 export { CesiumGlobeDepth, createCesiumEllipsoidDepthMeshes } from './depth';
 export { CesiumClassificationPrimitive } from './classification';
-export { CesiumGroundRectanglePrimitive, CesiumGroundPolygonPrimitive, CesiumGroundCirclePrimitive } from './primitives';
+export {
+	CesiumGroundCirclePrimitive,
+	CesiumGroundPointPrimitive,
+	CesiumGroundPolygonPrimitive,
+	CesiumGroundRectanglePrimitive,
+} from './primitives';
 
 // 矩形相关 lon/lat 度坐标 helper(从 geometry.ts 迁出到 rectangle-helpers.ts;
 // 历史 caller 仍能从 cesium-ground-adapter 拿到,公开 API 与重构前一致)。

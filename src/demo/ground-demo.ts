@@ -23,6 +23,7 @@ import GUI from 'lil-gui';
 import {
 	CesiumGlobeDepth,
 	CesiumGroundCirclePrimitive,
+	CesiumGroundPointPrimitive,
 	CesiumGroundPolygonPrimitive,
 	CesiumGroundRectanglePrimitive,
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
@@ -54,7 +55,7 @@ const RECTANGLE_CENTER_LAT = readNumberEnv( 'VITE_PLOT_LAT', 27.9881 );
 const RECTANGLE_HALF_WIDTH_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_WIDTH_DEGREES', 0.05 );
 const RECTANGLE_HALF_HEIGHT_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_HEIGHT_DEGREES', 0.03 );
 const DEBUG_GROUND_SURFACE = readStringEnv( 'VITE_DEBUG_GROUND_SURFACE', 'false' ).toLowerCase() === 'true';
-type DemoPlotId = 'rectangle' | 'polygon' | 'circle';
+type DemoPlotId = 'rectangle' | 'polygon' | 'circle' | 'point';
 
 interface RectangleGuiModel {
 	points: string;
@@ -253,6 +254,17 @@ export function runGroundDemo(): void {
 		circleStrokeWidth: 300.0,
 		circleFillColor: '#00ff88',
 		circleFillOpacity: 64,
+		pointVisible: true,
+		pointPlotOrder: 3,
+		pointShape: 'circle',
+		pointLon: RECTANGLE_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 1.35,
+		pointLat: RECTANGLE_CENTER_LAT,
+		pointSize: Math.max( Math.min( initialRectangleMeterSize.widthMeters, initialRectangleMeterSize.heightMeters ) * 0.12, 100.0 ),
+		pointStrokeColor: '#ffffff',
+		pointStrokeOpacity: 95,
+		pointStrokeWidth: 120.0,
+		pointFillColor: '#ffcc00',
+		pointFillOpacity: 82,
 		showDebugSurface: DEBUG_GROUND_SURFACE,
 		debugSurfaceHeight: 5000.0,
 		debugSurfaceOpacity: 0.55,
@@ -278,6 +290,7 @@ export function runGroundDemo(): void {
 	debugSettings.rectanglePlotOrder = plotOrderRegistry.register( 'rectangle', debugSettings.rectanglePlotOrder );
 	debugSettings.polygonPlotOrder = plotOrderRegistry.register( 'polygon', debugSettings.polygonPlotOrder );
 	debugSettings.circlePlotOrder = plotOrderRegistry.register( 'circle', debugSettings.circlePlotOrder );
+	debugSettings.pointPlotOrder = plotOrderRegistry.register( 'point', debugSettings.pointPlotOrder );
 
 	/**
 	 * Returns the current fill rectangle derived from the public points field.
@@ -533,6 +546,14 @@ export function runGroundDemo(): void {
 			return;
 		}
 
+		if ( target === 'point' ) {
+			debugSettings.pointPlotOrder = plotOrderRegistry.update(
+				'point',
+				debugSettings.pointPlotOrder,
+			);
+			return;
+		}
+
 		debugSettings.polygonPlotOrder = plotOrderRegistry.update(
 			'polygon',
 			debugSettings.polygonPlotOrder,
@@ -609,6 +630,31 @@ export function runGroundDemo(): void {
 		debugSettings.circleSectorAngleDegrees = Number.isFinite( debugSettings.circleSectorAngleDegrees )
 			? clampNumber( debugSettings.circleSectorAngleDegrees, -360.0, 360.0 )
 			: 360.0;
+	}
+
+	/**
+	 * Normalizes point GUI values before geometry rebuilds.
+	 */
+	function normalizePointDebugSettings(): void {
+		debugSettings.pointLon = Number.isFinite( debugSettings.pointLon )
+			? clampNumber( debugSettings.pointLon, -180.0, 180.0 )
+			: RECTANGLE_CENTER_LON;
+		debugSettings.pointLat = Number.isFinite( debugSettings.pointLat )
+			? clampNumber( debugSettings.pointLat, -90.0, 90.0 )
+			: RECTANGLE_CENTER_LAT;
+		debugSettings.pointSize = Number.isFinite( debugSettings.pointSize )
+			? Math.max( debugSettings.pointSize, 1.0 )
+			: 1.0;
+		debugSettings.pointStrokeWidth = Number.isFinite( debugSettings.pointStrokeWidth )
+			? Math.max( debugSettings.pointStrokeWidth, 0.0 )
+			: 0.0;
+		debugSettings.pointStrokeOpacity = Number.isFinite( debugSettings.pointStrokeOpacity )
+			? clampNumber( debugSettings.pointStrokeOpacity, 0.0, 100.0 )
+			: 100.0;
+		debugSettings.pointFillOpacity = Number.isFinite( debugSettings.pointFillOpacity )
+			? clampNumber( debugSettings.pointFillOpacity, 0.0, 100.0 )
+			: 100.0;
+		debugSettings.pointShape = debugSettings.pointShape === 'square' ? 'square' : 'circle';
 	}
 
 	/**
@@ -690,12 +736,40 @@ export function runGroundDemo(): void {
 		} );
 	}
 
+	/**
+	 * Creates a ground point from the current GUI settings.
+	 *
+	 * @returns Ground point primitive backed by either circle or rectangle.
+	 */
+	function createGroundPoint(): CesiumGroundPointPrimitive {
+		normalizePointDebugSettings();
+
+		return new CesiumGroundPointPrimitive( {
+			position: [ debugSettings.pointLon, debugSettings.pointLat ],
+			shape: debugSettings.pointShape,
+			size: debugSettings.pointSize,
+			strokeColor: debugSettings.pointStrokeColor,
+			strokeWidth: debugSettings.pointStrokeWidth,
+			strokeOpacity: debugSettings.pointStrokeOpacity,
+			fillColor: debugSettings.pointFillColor,
+			fillOpacity: debugSettings.pointFillOpacity,
+			visible: debugSettings.pointVisible,
+			granularityRadians: debugSettings.circleGranularityRadians,
+			minimumHeight: debugSettings.circleMinimumHeight,
+			maximumHeight: debugSettings.circleMaximumHeight,
+			renderOrder: plotOrderToRenderOrder( debugSettings.pointPlotOrder ),
+			fragmentCull: debugSettings.fragmentCull,
+		} );
+	}
+
 	let groundRectangle = createGroundRectangle();
 	let groundPolygon = createGroundPolygon();
 	let groundCircle = createGroundCircle();
+	let groundPoint = createGroundPoint();
 	scene.add( groundRectangle.classification.group );
 	scene.add( groundPolygon.classification.group );
 	scene.add( groundCircle.classification.group );
+	scene.add( groundPoint.classification.group );
 
 	/**
 	 * Applies GUI state to the existing primitive without rebuilding geometry.
@@ -769,6 +843,25 @@ export function runGroundDemo(): void {
 			debugSettings.circleStrokeOpacity / 100.0,
 			debugSettings.circleStrokeWidth,
 		);
+
+		groundPoint.classification.setColor(
+			new Color( debugSettings.pointFillColor ),
+			debugSettings.pointFillOpacity / 100.0,
+		);
+		groundPoint.classification.setFragmentCulling( debugSettings.fragmentCull );
+		groundPoint.setRenderOrder( plotOrderToRenderOrder( debugSettings.pointPlotOrder ) );
+		groundPoint.classification.group.visible = debugSettings.pointVisible;
+		groundPoint.classification.setCommandVisibility( {
+			frontStencil: debugSettings.showFrontStencil,
+			backStencil: debugSettings.showBackStencil,
+			color: debugSettings.showColorPass,
+		} );
+		groundPoint.classification.setBorderStyle(
+			debugSettings.pointStrokeWidth > 0.0,
+			new Color( debugSettings.pointStrokeColor ),
+			debugSettings.pointStrokeOpacity / 100.0,
+			debugSettings.pointStrokeWidth,
+		);
 	}
 
 	/**
@@ -792,6 +885,14 @@ export function runGroundDemo(): void {
 	 */
 	function applyCirclePlotOrder(): void {
 		updateRegisteredPlotOrder( 'circle' );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Applies a point plot-order edit while preserving every other plot order.
+	 */
+	function applyPointPlotOrder(): void {
+		updateRegisteredPlotOrder( 'point' );
 		applyGroundDebugSettings();
 	}
 
@@ -848,6 +949,7 @@ export function runGroundDemo(): void {
 	function rebuildGroundCircleFromGui(): void {
 		normalizeCircleDebugSettings();
 		rebuildGroundCircle();
+		rebuildGroundPoint();
 	}
 
 	/**
@@ -880,6 +982,17 @@ export function runGroundDemo(): void {
 		groundCircle.dispose();
 		groundCircle = createGroundCircle();
 		scene.add( groundCircle.classification.group );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Rebuilds the point primitive after shape, size, or position edits.
+	 */
+	function rebuildGroundPoint(): void {
+		scene.remove( groundPoint.classification.group );
+		groundPoint.dispose();
+		groundPoint = createGroundPoint();
+		scene.add( groundPoint.classification.group );
 		applyGroundDebugSettings();
 	}
 
@@ -942,6 +1055,19 @@ export function runGroundDemo(): void {
 		circleFolder.add( debugSettings, 'circleStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
 		circleFolder.addColor( debugSettings, 'circleFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		circleFolder.add( debugSettings, 'circleFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
+
+		const pointFolder = gui.addFolder( 'Point' );
+		pointFolder.add( debugSettings, 'pointVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		pointFolder.add( debugSettings, 'pointPlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyPointPlotOrder ).listen();
+		pointFolder.add( debugSettings, 'pointShape', [ 'circle', 'square' ] ).name( 'shape' ).onFinishChange( rebuildGroundPoint ).listen();
+		pointFolder.add( debugSettings, 'pointLon', - 180.0, 180.0, 0.0001 ).name( 'lon' ).onFinishChange( rebuildGroundPoint ).listen();
+		pointFolder.add( debugSettings, 'pointLat', - 90.0, 90.0, 0.0001 ).name( 'lat' ).onFinishChange( rebuildGroundPoint ).listen();
+		pointFolder.add( debugSettings, 'pointSize', 1.0, 50000.0, 1.0 ).name( 'size m' ).onFinishChange( rebuildGroundPoint ).listen();
+		pointFolder.addColor( debugSettings, 'pointStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		pointFolder.add( debugSettings, 'pointStrokeWidth', 0.0, 10000.0, 10.0 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundPoint ).listen();
+		pointFolder.add( debugSettings, 'pointStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		pointFolder.addColor( debugSettings, 'pointFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
+		pointFolder.add( debugSettings, 'pointFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
 
 		const passesFolder = gui.addFolder( 'Passes' );
 		passesFolder.add( debugSettings, 'showFrontStencil' ).name( 'front stencil' ).onChange( applyGroundDebugSettings );
@@ -1031,6 +1157,12 @@ export function runGroundDemo(): void {
 			height: renderer.domElement.height,
 			camera,
 		} );
+		groundPoint.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
 
 		renderer.render( scene, camera );
 
@@ -1055,10 +1187,12 @@ export function runGroundDemo(): void {
 			`Circle: ${ debugSettings.circleVisible ? 'on' : 'off' } / order ${ debugSettings.circlePlotOrder } / CircleGeometry.createShadowVolume\\n` +
 			`Circle center: ${ debugSettings.circleCenterLon.toFixed( 5 ) }, ${ debugSettings.circleCenterLat.toFixed( 5 ) } / radius ${ debugSettings.circleRadius.toFixed( 1 ) } m / rings ${ debugSettings.circleRingCount } / gap ${ debugSettings.circleRingGapRatio.toFixed( 2 ) } / sector ${ debugSettings.circleSectorStartDegrees.toFixed( 0 ) } deg + ${ debugSettings.circleSectorAngleDegrees.toFixed( 0 ) } deg / granularity ${ debugSettings.circleGranularityRadians.toFixed( 5 ) } rad\\n` +
 			`Circle shadow heights: ${ debugSettings.circleMinimumHeight.toFixed( 1 ) } m -> ${ debugSettings.circleMaximumHeight.toFixed( 1 ) } m\\n` +
+			`Point: ${ debugSettings.pointVisible ? 'on' : 'off' } / order ${ debugSettings.pointPlotOrder } / ${ debugSettings.pointShape } / size ${ debugSettings.pointSize.toFixed( 1 ) } m\\n` +
 			`Debug surface: ${ debugSettings.showDebugSurface ? 'on' : 'off' }\\n` +
 			`Rectangle stroke: ${ debugSettings.strokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.strokeOpacity.toFixed( 0 ) }%\\n` +
 			`Polygon stroke: ${ debugSettings.polygonStrokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.polygonStrokeOpacity.toFixed( 0 ) }%\\n` +
 			`Circle stroke: ${ debugSettings.circleStrokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.circleStrokeOpacity.toFixed( 0 ) }%\\n` +
+			`Point stroke: ${ debugSettings.pointStrokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.pointStrokeOpacity.toFixed( 0 ) }%\\n` +
 			`CULL_FRAGMENTS: ${ debugSettings.fragmentCull ? 'on' : 'off' }\\n` +
 			`Shader: ShadowVolumeAppearanceVS/FS + ShadowVolumeFS\\n` +
 			`Stencil mask: 0x0f, zfail front=DECR_WRAP back=INCR_WRAP\\n` +
@@ -1090,6 +1224,9 @@ export function runGroundDemo(): void {
 		},
 		get groundCircle() {
 			return groundCircle;
+		},
+		get groundPoint() {
+			return groundPoint;
 		},
 	};
 

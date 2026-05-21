@@ -7,6 +7,7 @@
 // ============================================================
 
 import type { LonLatPoint } from '../lib/ground';
+import type { CesiumGroundPointShape } from '../lib/ground';
 
 export interface GroundDebugSettings {
 	points: LonLatPoint[];
@@ -63,6 +64,17 @@ export interface GroundDebugSettings {
 	circleStrokeWidth: number;
 	circleFillColor: string;
 	circleFillOpacity: number;
+	pointVisible: boolean;
+	pointPlotOrder: number;
+	pointShape: CesiumGroundPointShape;
+	pointLon: number;
+	pointLat: number;
+	pointSize: number;
+	pointStrokeColor: string;
+	pointStrokeOpacity: number;
+	pointStrokeWidth: number;
+	pointFillColor: string;
+	pointFillOpacity: number;
 	showDebugSurface: boolean;
 	debugSurfaceHeight: number;
 	debugSurfaceOpacity: number;
