@@ -48,20 +48,34 @@ import {
 
 const PLAIN_CENTER_LON = 121.5;
 const PLAIN_CENTER_LAT = 31.24;
-const DEFAULT_PLOT_SIZE_METERS = 10.0;
-const MIN_GUI_METER_VALUE = 1.0;
-const MAX_GUI_METER_VALUE = 20.0;
-const MIN_GUI_OFFSET_METERS = - MAX_GUI_METER_VALUE;
-const MAX_GUI_OFFSET_METERS = MAX_GUI_METER_VALUE;
-const GUI_METER_STEP = 0.1;
+
+// Rectangle ships as the "small-scale" plot: a small physical object (~10 m
+// edge) the camera typically views from far away, which is where the jitter
+// repro lives. GUI bounds are kept tight around the default size.
+const RECTANGLE_DEFAULT_SIZE_METERS = 10.0;
+const RECTANGLE_MIN_GUI_METER_VALUE = 1.0;
+const RECTANGLE_MAX_GUI_METER_VALUE = 50.0;
+const RECTANGLE_GUI_METER_STEP = 0.1;
+const RECTANGLE_DEFAULT_STROKE_WIDTH_METERS = RECTANGLE_DEFAULT_SIZE_METERS;
+const RECTANGLE_DEFAULT_DEBUG_SURFACE_HEIGHT_METERS = RECTANGLE_DEFAULT_SIZE_METERS;
+
+// Polygon ships as the "large-scale" plot: a multi-kilometre object that
+// stresses the shadow-volume / log-depth path under a near-camera view.
+const POLYGON_DEFAULT_SIZE_METERS = 5000.0;
+const POLYGON_MIN_GUI_METER_VALUE = 100.0;
+const POLYGON_MAX_GUI_METER_VALUE = 20000.0;
+const POLYGON_GUI_METER_STEP = 10.0;
+const POLYGON_MIN_GUI_OFFSET_METERS = - POLYGON_MAX_GUI_METER_VALUE;
+const POLYGON_MAX_GUI_OFFSET_METERS = POLYGON_MAX_GUI_METER_VALUE;
+
 const CAMERA_HEIGHT_MULTIPLIER = 8.0;
 const CAMERA_EAST_MULTIPLIER = 3.0;
 const MIN_CAMERA_HEIGHT_METERS = 40.0;
 const MIN_CAMERA_EAST_METERS = 20.0;
 const RECTANGLE_CENTER_LON = readNumberEnv( 'VITE_PLOT_LON', PLAIN_CENTER_LON );
 const RECTANGLE_CENTER_LAT = readNumberEnv( 'VITE_PLOT_LAT', PLAIN_CENTER_LAT );
-const RECTANGLE_WIDTH_METERS = readNumberEnv( 'VITE_PLOT_WIDTH_METERS', DEFAULT_PLOT_SIZE_METERS );
-const RECTANGLE_HEIGHT_METERS = readNumberEnv( 'VITE_PLOT_HEIGHT_METERS', DEFAULT_PLOT_SIZE_METERS );
+const RECTANGLE_WIDTH_METERS = readNumberEnv( 'VITE_PLOT_WIDTH_METERS', RECTANGLE_DEFAULT_SIZE_METERS );
+const RECTANGLE_HEIGHT_METERS = readNumberEnv( 'VITE_PLOT_HEIGHT_METERS', RECTANGLE_DEFAULT_SIZE_METERS );
 const DEBUG_GROUND_SURFACE = readStringEnv( 'VITE_DEBUG_GROUND_SURFACE', 'false' ).toLowerCase() === 'true';
 
 interface RectangleGuiModel {
@@ -121,12 +135,19 @@ export function runGroundDemo(): void {
 	const target = wgs84PositionFromDegrees( RECTANGLE_CENTER_LON, RECTANGLE_CENTER_LAT, 0.0 );
 	const up = wgs84NormalFromDegrees( RECTANGLE_CENTER_LON, RECTANGLE_CENTER_LAT );
 	const eastBias = new Vector3( - up.y, up.x, 0.0 ).normalize();
+	// Frame the camera around whichever plot is larger so both the small-scale
+	// rectangle and the large-scale polygon are visible without manual zooming.
+	const initialMaxPlotMeters = Math.max(
+		RECTANGLE_WIDTH_METERS,
+		RECTANGLE_HEIGHT_METERS,
+		POLYGON_DEFAULT_SIZE_METERS,
+	);
 	const cameraHeightMeters = Math.max(
-		Math.max( RECTANGLE_WIDTH_METERS, RECTANGLE_HEIGHT_METERS ) * CAMERA_HEIGHT_MULTIPLIER,
+		initialMaxPlotMeters * CAMERA_HEIGHT_MULTIPLIER,
 		MIN_CAMERA_HEIGHT_METERS,
 	);
 	const cameraEastMeters = Math.max(
-		Math.max( RECTANGLE_WIDTH_METERS, RECTANGLE_HEIGHT_METERS ) * CAMERA_EAST_MULTIPLIER,
+		initialMaxPlotMeters * CAMERA_EAST_MULTIPLIER,
 		MIN_CAMERA_EAST_METERS,
 	);
 	camera.position
@@ -189,7 +210,7 @@ export function runGroundDemo(): void {
 		rectanglePlotOrder: 0,
 		strokeColor: '#ffffff',
 		strokeOpacity: 95,
-		strokeWidth: DEFAULT_PLOT_SIZE_METERS,
+		strokeWidth: RECTANGLE_DEFAULT_STROKE_WIDTH_METERS,
 		fragmentCull: true,
 		useTilesDepth: true,
 		showTiles: true,
@@ -204,15 +225,15 @@ export function runGroundDemo(): void {
 		polygonCenterLat: RECTANGLE_CENTER_LAT,
 		polygonOffsetEastMeters: 0.0,
 		polygonOffsetNorthMeters: 0.0,
-		polygonWidthMeters: clampNumber( initialRectangleMeterSize.widthMeters, MIN_GUI_METER_VALUE, MAX_GUI_METER_VALUE ),
-		polygonHeightMeters: clampNumber( initialRectangleMeterSize.heightMeters, MIN_GUI_METER_VALUE, MAX_GUI_METER_VALUE ),
+		polygonWidthMeters: POLYGON_DEFAULT_SIZE_METERS,
+		polygonHeightMeters: POLYGON_DEFAULT_SIZE_METERS,
 		polygonRotationDegrees: 18.0,
 		polygonVertexCount: 5,
 		polygonDentRatio: 1.0,
 		polygonHole: false,
 		polygonHoleScale: 0.36,
 		showDebugSurface: DEBUG_GROUND_SURFACE,
-		debugSurfaceHeight: DEFAULT_PLOT_SIZE_METERS,
+		debugSurfaceHeight: RECTANGLE_DEFAULT_DEBUG_SURFACE_HEIGHT_METERS,
 		debugSurfaceOpacity: 0.55,
 		rebuild: () => rebuildGroundRectangle(),
 	};
@@ -320,17 +341,17 @@ export function runGroundDemo(): void {
 	 */
 	function normalizePolygonDebugSettings(): void {
 		debugSettings.polygonOffsetEastMeters = Number.isFinite( debugSettings.polygonOffsetEastMeters )
-			? clampNumber( debugSettings.polygonOffsetEastMeters, MIN_GUI_OFFSET_METERS, MAX_GUI_OFFSET_METERS )
+			? clampNumber( debugSettings.polygonOffsetEastMeters, POLYGON_MIN_GUI_OFFSET_METERS, POLYGON_MAX_GUI_OFFSET_METERS )
 			: 0.0;
 		debugSettings.polygonOffsetNorthMeters = Number.isFinite( debugSettings.polygonOffsetNorthMeters )
-			? clampNumber( debugSettings.polygonOffsetNorthMeters, MIN_GUI_OFFSET_METERS, MAX_GUI_OFFSET_METERS )
+			? clampNumber( debugSettings.polygonOffsetNorthMeters, POLYGON_MIN_GUI_OFFSET_METERS, POLYGON_MAX_GUI_OFFSET_METERS )
 			: 0.0;
 		debugSettings.polygonWidthMeters = Number.isFinite( debugSettings.polygonWidthMeters )
-			? clampNumber( debugSettings.polygonWidthMeters, MIN_GUI_METER_VALUE, MAX_GUI_METER_VALUE )
-			: DEFAULT_PLOT_SIZE_METERS;
+			? clampNumber( debugSettings.polygonWidthMeters, POLYGON_MIN_GUI_METER_VALUE, POLYGON_MAX_GUI_METER_VALUE )
+			: POLYGON_DEFAULT_SIZE_METERS;
 		debugSettings.polygonHeightMeters = Number.isFinite( debugSettings.polygonHeightMeters )
-			? clampNumber( debugSettings.polygonHeightMeters, MIN_GUI_METER_VALUE, MAX_GUI_METER_VALUE )
-			: DEFAULT_PLOT_SIZE_METERS;
+			? clampNumber( debugSettings.polygonHeightMeters, POLYGON_MIN_GUI_METER_VALUE, POLYGON_MAX_GUI_METER_VALUE )
+			: POLYGON_DEFAULT_SIZE_METERS;
 		debugSettings.polygonRotationDegrees = Number.isFinite( debugSettings.polygonRotationDegrees )
 			? debugSettings.polygonRotationDegrees
 			: 0.0;
@@ -541,7 +562,7 @@ export function runGroundDemo(): void {
 		const rectangleFolder = gui.addFolder( 'Rectangle' );
 		rectangleFolder.add( rectangleGuiModel, 'points' ).name( 'points' ).onFinishChange( rebuildRectangleFromPointsText ).listen();
 		rectangleFolder.addColor( debugSettings, 'strokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
-		rectangleFolder.add( debugSettings, 'strokeWidth', MIN_GUI_METER_VALUE, MAX_GUI_METER_VALUE, GUI_METER_STEP ).name( 'strokeWidth' ).onFinishChange( rebuildGroundRectangle );
+		rectangleFolder.add( debugSettings, 'strokeWidth', RECTANGLE_MIN_GUI_METER_VALUE, RECTANGLE_MAX_GUI_METER_VALUE, RECTANGLE_GUI_METER_STEP ).name( 'strokeWidth' ).onFinishChange( rebuildGroundRectangle );
 		rectangleFolder.add( debugSettings, 'strokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
 		rectangleFolder.addColor( debugSettings, 'fillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		rectangleFolder.add( debugSettings, 'fillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
@@ -555,10 +576,10 @@ export function runGroundDemo(): void {
 		polygonFolder.add( debugSettings, 'polygonAlpha', 0.0, 1.0, 0.01 ).name( 'polygon alpha' ).onChange( applyGroundDebugSettings );
 		polygonFolder.add( debugSettings, 'polygonCenterLon', - 180.0, 180.0, 0.0001 ).name( 'center lon' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonCenterLat', - 85.0, 85.0, 0.0001 ).name( 'center lat' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
-		polygonFolder.add( debugSettings, 'polygonOffsetEastMeters', MIN_GUI_OFFSET_METERS, MAX_GUI_OFFSET_METERS, GUI_METER_STEP ).name( 'offset east m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
-		polygonFolder.add( debugSettings, 'polygonOffsetNorthMeters', MIN_GUI_OFFSET_METERS, MAX_GUI_OFFSET_METERS, GUI_METER_STEP ).name( 'offset north m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
-		polygonFolder.add( debugSettings, 'polygonWidthMeters', MIN_GUI_METER_VALUE, MAX_GUI_METER_VALUE, GUI_METER_STEP ).name( 'width m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
-		polygonFolder.add( debugSettings, 'polygonHeightMeters', MIN_GUI_METER_VALUE, MAX_GUI_METER_VALUE, GUI_METER_STEP ).name( 'height m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
+		polygonFolder.add( debugSettings, 'polygonOffsetEastMeters', POLYGON_MIN_GUI_OFFSET_METERS, POLYGON_MAX_GUI_OFFSET_METERS, POLYGON_GUI_METER_STEP ).name( 'offset east m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
+		polygonFolder.add( debugSettings, 'polygonOffsetNorthMeters', POLYGON_MIN_GUI_OFFSET_METERS, POLYGON_MAX_GUI_OFFSET_METERS, POLYGON_GUI_METER_STEP ).name( 'offset north m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
+		polygonFolder.add( debugSettings, 'polygonWidthMeters', POLYGON_MIN_GUI_METER_VALUE, POLYGON_MAX_GUI_METER_VALUE, POLYGON_GUI_METER_STEP ).name( 'width m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
+		polygonFolder.add( debugSettings, 'polygonHeightMeters', POLYGON_MIN_GUI_METER_VALUE, POLYGON_MAX_GUI_METER_VALUE, POLYGON_GUI_METER_STEP ).name( 'height m' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonRotationDegrees', - 180.0, 180.0, 1.0 ).name( 'rotation deg' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonVertexCount', 3, 16, 1 ).name( 'vertices' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
 		polygonFolder.add( debugSettings, 'polygonDentRatio', 0.05, 1.0, 0.01 ).name( 'dent ratio' ).onFinishChange( rebuildGroundPolygonFromGui ).listen();
@@ -577,7 +598,7 @@ export function runGroundDemo(): void {
 
 		const debugFolder = gui.addFolder( 'Debug Surface' );
 		debugFolder.add( debugSettings, 'showDebugSurface' ).name( 'show surface' ).onChange( applyGroundDebugSettings );
-		debugFolder.add( debugSettings, 'debugSurfaceHeight', MIN_GUI_METER_VALUE, MAX_GUI_METER_VALUE, GUI_METER_STEP ).name( 'surface height m' ).onFinishChange( rebuildGroundRectangle );
+		debugFolder.add( debugSettings, 'debugSurfaceHeight', RECTANGLE_MIN_GUI_METER_VALUE, RECTANGLE_MAX_GUI_METER_VALUE, RECTANGLE_GUI_METER_STEP ).name( 'surface height m' ).onFinishChange( rebuildGroundRectangle );
 		debugFolder.add( debugSettings, 'debugSurfaceOpacity', 0.0, 1.0, 0.01 ).name( 'surface opacity' ).onChange( applyGroundDebugSettings );
 
 		const statusFolder = gui.addFolder( 'Status' );
