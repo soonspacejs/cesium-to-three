@@ -5,11 +5,12 @@
 // Role:  build rectangle and polygon shadow volumes using the native modules
 //        under math/, rectangle/, and polygon/. The classification runtime
 //        (classification.ts, materials.ts, depth.ts, terrain-log-depth.ts,
-//        terrain-heights.ts) is deliberately untouched — every precision
-//        fix landed for the jitter issue (Float64 MVP, LOG_DEPTH, dynamic
-//        czm_geometricToleranceOverMeter, LessEqualDepth stencil, terrain
-//        log-depth injection, ApproximateTerrainHeights window) stays
-//        bit-for-bit identical.
+//        terrain-heights.ts) keeps every precision fix bit-for-bit identical
+//        (Float64 MVP, LOG_DEPTH, dynamic czm_geometricToleranceOverMeter,
+//        LessEqualDepth stencil, terrain log-depth injection, ApproximateTerrainHeights
+//        window). The only additive change on the classification side is the
+//        polygon-stroke point-in-polygon path, which is on a separate shader
+//        branch keyed off `u_polygonBorderMode`.
 // Dependencies: Three.js debug meshes, native rectangle/polygon/math modules,
 //        classification primitive runtime, ApproximateTerrainHeights query.
 // Consumed by: public ground adapter and demos.
@@ -27,6 +28,10 @@ import {
 import { CesiumClassificationPrimitive } from './classification';
 import { computePolygonPlanarExtents } from './polygon/polygon-extents';
 import {
+	expandPolygonPointsThroughMeters,
+} from './polygon/polygon-helpers';
+import {
+	normalizePolygonPoints,
 	polygonHierarchyFromLonLatPoints,
 	type PolygonHierarchy,
 } from './polygon/polygon-hierarchy';
@@ -34,6 +39,7 @@ import {
 	buildPolygonShadowVolumeGeometry,
 	type PolygonGeometryUserData,
 } from './polygon/polygon-shadow-volume';
+import { computePolygonPlanarStylePoints } from './polygon/polygon-style-points';
 import { createDebugRectangleSurfaceGeometry } from './rectangle/rectangle-debug';
 import { computeRectanglePlanarExtents } from './rectangle/rectangle-extents';
 import {
@@ -69,11 +75,9 @@ function normalizePercentOpacity( opacity: number ): number {
  * Resolves the minimum and maximum extrusion heights used by the local
  * shadow-volume builder.
  *
- * The terrain-aware path is identical to the previous Cesium-bound version:
- * caller overrides win, otherwise ApproximateTerrainHeights queries the
- * rectangle for tile-accurate min/max so the shadow volume is just thick
- * enough to enclose the rendered terrain (this is one of the precision
- * fixes we explicitly preserve here).
+ * Caller overrides win, otherwise ApproximateTerrainHeights queries the
+ * rectangle for tile-accurate min/max so the shadow volume stays just thick
+ * enough to enclose the rendered terrain (one of the precision fixes — kept).
  *
  * @param rectangleDegrees Plot rectangle in WGS84 degrees.
  * @param minimumHeightOverride Optional explicit minimum height.
@@ -93,37 +97,34 @@ function resolveShadowVolumeHeights(
 		? ( maximumHeightOverride as number )
 		: terrainHeights.maximumTerrainHeight;
 	if ( maximumHeight <= minimumHeight ) {
-		// Keep a non-degenerate shadow volume even if the table reports a bad
-		// sample for the queried tile.
 		maximumHeight = minimumHeight + 1.0;
 	}
 	return { minimumHeight, maximumHeight };
 }
 
 /**
- * Computes the polygon's outer-ring axis-aligned WGS84 rectangle in degrees.
- * Used to query ApproximateTerrainHeights for the shadow volume's height
- * window.
- *
- * @param hierarchyDegrees Plot polygon hierarchy in degrees.
- * @returns Outer rectangle (degrees).
+ * Computes the outer-ring axis-aligned WGS84 rectangle (degrees) from a flat
+ * lon/lat point list. Used both to query ApproximateTerrainHeights and as the
+ * polygon stroke planar reference rectangle.
  */
-function rectangleDegreesFromPolygonHierarchyDegrees(
-	hierarchyDegrees: PolygonHierarchyDegrees,
+function rectangleDegreesFromLonLatPointList(
+	points: readonly LonLatPoint[],
 ): RectangleDegrees {
 	let west = Number.POSITIVE_INFINITY;
 	let south = Number.POSITIVE_INFINITY;
 	let east = Number.NEGATIVE_INFINITY;
 	let north = Number.NEGATIVE_INFINITY;
 
-	for ( const point of hierarchyDegrees.positions ) {
-		if ( ! Number.isFinite( point.longitude ) || ! Number.isFinite( point.latitude ) ) {
+	for ( const point of points ) {
+		const lon = point[ 0 ];
+		const lat = point[ 1 ];
+		if ( ! Number.isFinite( lon ) || ! Number.isFinite( lat ) ) {
 			continue;
 		}
-		west = Math.min( west, point.longitude );
-		east = Math.max( east, point.longitude );
-		south = Math.min( south, point.latitude );
-		north = Math.max( north, point.latitude );
+		west = Math.min( west, lon );
+		east = Math.max( east, lon );
+		south = Math.min( south, lat );
+		north = Math.max( north, lat );
 	}
 
 	if (
@@ -131,20 +132,16 @@ function rectangleDegreesFromPolygonHierarchyDegrees(
 		! Number.isFinite( south ) || ! Number.isFinite( north ) ||
 		east <= west || north <= south
 	) {
-		throw new Error( 'Polygon hierarchy must contain at least three finite lon/lat points forming a non-degenerate ring.' );
+		throw new Error( 'Polygon points must contain at least three finite lon/lat values forming a non-degenerate ring.' );
 	}
 
 	return { west, south, east, north };
 }
 
 /**
- * Converts the legacy `PolygonHierarchyDegrees` (positions as
- * `{ longitude, latitude }` objects with optional sub-hierarchies for holes)
- * into the flat `LonLatPoint[]` plus `LonLatPoint[][]` shape expected by the
- * native polygon module.
- *
- * @param hierarchy Polygon hierarchy in degrees (legacy adapter contract).
- * @returns Outer ring as `LonLatPoint[]` and holes as `LonLatPoint[][]`.
+ * Converts the legacy `PolygonHierarchyDegrees` representation into the flat
+ * (LonLatPoint[], LonLatPoint[][]) pair consumed by the native polygon
+ * module.
  */
 function polygonHierarchyDegreesToLonLatPoints(
 	hierarchy: PolygonHierarchyDegrees,
@@ -164,9 +161,6 @@ function polygonHierarchyDegreesToLonLatPoints(
  * Adapts the native `PolygonHierarchy` (Vector3 ECEF) back to the public
  * `CartesianLike` shape so external callers reading
  * `primitive.polygonHierarchy.positions` get an unchanged contract.
- *
- * @param hierarchy Native polygon hierarchy.
- * @returns Cartesian-like positions plus optional Cartesian-like hole rings.
  */
 function polygonHierarchyToCartesianLike(
 	hierarchy: PolygonHierarchy,
@@ -185,10 +179,52 @@ function polygonHierarchyToCartesianLike(
 }
 
 /**
+ * Centroid of a lon/lat ring. Used as the rotation pivot when an in-plane
+ * polygon rotation is requested via `options.rotationDegrees`.
+ */
+function lonLatCentroid( points: readonly LonLatPoint[] ): LonLatPoint {
+	let lonSum = 0.0;
+	let latSum = 0.0;
+	for ( const p of points ) {
+		lonSum += p[ 0 ];
+		latSum += p[ 1 ];
+	}
+	const safeCount = Math.max( points.length, 1 );
+	return [ lonSum / safeCount, latSum / safeCount ];
+}
+
+/**
+ * Rotates a lon/lat ring around a pivot. Approximate (small-area) rotation:
+ * we treat lon/lat as flat 2-D coordinates around the pivot, which matches
+ * what the reference project does for the demo polygon (radius < a few km).
+ */
+function rotateLonLatPoints(
+	points: readonly LonLatPoint[],
+	pivot: LonLatPoint,
+	rotationDegrees: number,
+): LonLatPoint[] {
+	if ( ! Number.isFinite( rotationDegrees ) || rotationDegrees === 0.0 ) {
+		return points.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
+	}
+
+	const rad = rotationDegrees * Math.PI / 180.0;
+	const cos = Math.cos( rad );
+	const sin = Math.sin( rad );
+
+	return points.map( ( p ) => {
+		const dx = p[ 0 ] - pivot[ 0 ];
+		const dy = p[ 1 ] - pivot[ 1 ];
+		return [
+			pivot[ 0 ] + dx * cos - dy * sin,
+			pivot[ 1 ] + dx * sin + dy * cos,
+		] as LonLatPoint;
+	} );
+}
+
+/**
  * Ground rectangle implemented with the native rectangle shadow-volume
  * pipeline. The classification command group is reused unchanged, preserving
- * every precision fix landed for the jitter issue (Float64 MVP, LOG_DEPTH,
- * dynamic geometric tolerance, LessEqualDepth stencil).
+ * every precision fix landed for the jitter issue.
  */
 export class CesiumGroundRectanglePrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
@@ -196,10 +232,8 @@ export class CesiumGroundRectanglePrimitive {
 	public readonly rectangle: RectangleRadians;
 
 	public constructor( options: CesiumGroundRectanglePrimitiveOptions ) {
-		// Plot-spec four lon/lat points → axis-aligned degree rectangle.
 		const rectangleDegrees = rectangleDegreesFromLonLatPoints( options.points );
 
-		// Stroke width (meters) outward expansion → render-time degree rectangle.
 		const strokeWidthMeters = Math.max(
 			Number.isFinite( options.strokeWidth ) ? options.strokeWidth : 0.0,
 			0.0,
@@ -209,7 +243,6 @@ export class CesiumGroundRectanglePrimitive {
 			strokeWidthMeters,
 		);
 
-		// Two radians-form rectangles (fill = stroke inner, render = with outward expansion).
 		const fillRectangleRadians = rectangleRadiansFromDegrees(
 			rectangleDegrees.west,
 			rectangleDegrees.south,
@@ -224,17 +257,14 @@ export class CesiumGroundRectanglePrimitive {
 		);
 		this.rectangle = fillRectangleRadians;
 
-		// Granularity default matches the previous adapter (π / (180 · 32)).
 		const granularity = options.granularityRadians ?? ( Math.PI / 180.0 / 32.0 );
 
-		// Terrain-aware shadow-volume window (one of the precision fixes — kept here).
 		const { minimumHeight, maximumHeight } = resolveShadowVolumeHeights(
 			renderRectangleDegrees,
 			options.minimumHeight,
 			options.maximumHeight,
 		);
 
-		// Geometry build (one local call replaces the previous 6-step Cesium chain).
 		const threeGeometry = buildRectangleShadowVolumeGeometry( {
 			rectangle: renderRectangleRadians,
 			granularity,
@@ -242,7 +272,6 @@ export class CesiumGroundRectanglePrimitive {
 			maximumHeight,
 		} );
 
-		// PlanarExtents uniforms (still computed from radians-form rectangles).
 		const extents = computeRectanglePlanarExtents(
 			renderRectangleRadians,
 			fillRectangleRadians,
@@ -267,7 +296,6 @@ export class CesiumGroundRectanglePrimitive {
 			strokeWidthMeters,
 		);
 
-		// Optional debug surface keeps the historical lon/lat → ENU grid behaviour.
 		this.debugSurface = null;
 		if ( options.debugSurface === true ) {
 			const debugThreeGeometry = createDebugRectangleSurfaceGeometry(
@@ -327,70 +355,147 @@ export class CesiumGroundRectanglePrimitive {
 }
 
 /**
- * Ground polygon implemented with the native polygon shadow-volume pipeline.
- * The public option / property surface is unchanged from the previous
- * Cesium-bound version so the demo (and other callers) keep working.
+ * Ground polygon implemented with the native polygon shadow-volume pipeline,
+ * with stroke support via the classification primitive's polygon-border
+ * uniforms (additive; no impact on the precision paths).
+ *
+ * Two call shapes are accepted:
+ *   1. The new ref-style API: `points`, optional `holes` / `hole` /
+ *      `rotationDegrees`, plus separate `fillColor` / `strokeColor` etc.
+ *   2. The legacy `polygonHierarchyDegrees` form with `color` / `alpha`. The
+ *      constructor detects which one is present and routes accordingly.
  */
 export class CesiumGroundPolygonPrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
 	public readonly polygonHierarchy: { positions: CartesianLike[]; holes: unknown[] };
+	public readonly rotationDegrees: number;
+	public readonly hole: boolean;
 
 	public constructor( options: CesiumGroundPolygonOptions ) {
-		// Legacy adapter accepts a polygonHierarchyDegrees object — convert to
-		// the flat (LonLatPoint[], LonLatPoint[][]) tuple the native module wants.
-		const { points, holes } = polygonHierarchyDegreesToLonLatPoints(
-			options.polygonHierarchyDegrees,
-		);
-		const polygonHierarchy = polygonHierarchyFromLonLatPoints( points, holes );
-		this.polygonHierarchy = polygonHierarchyToCartesianLike( polygonHierarchy );
+		// Resolve the input shape — prefer the new ref-style API when present.
+		const usingPlotSpec = Array.isArray( options.points ) && options.points.length > 0;
+		let outerLonLat: LonLatPoint[];
+		let holesLonLat: LonLatPoint[][];
 
+		if ( usingPlotSpec ) {
+			outerLonLat = normalizePolygonPoints( options.points as LonLatPoint[] );
+			const holesInput = options.hole === true && Array.isArray( options.holes )
+				? options.holes
+				: [];
+			holesLonLat = holesInput.map( ( hole ) => normalizePolygonPoints( hole ) );
+		} else if ( options.polygonHierarchyDegrees ) {
+			const flattened = polygonHierarchyDegreesToLonLatPoints(
+				options.polygonHierarchyDegrees,
+			);
+			outerLonLat = flattened.points;
+			holesLonLat = flattened.holes;
+		} else {
+			throw new Error(
+				'CesiumGroundPolygonPrimitive requires either `points` or `polygonHierarchyDegrees`.',
+			);
+		}
+
+		this.rotationDegrees = Number.isFinite( options.rotationDegrees )
+			? ( options.rotationDegrees as number )
+			: 0.0;
+		this.hole = options.hole === true;
+
+		// Apply in-plane rotation around the outer-ring centroid (matches ref demo).
+		const rotationPivot = lonLatCentroid( outerLonLat );
+		const rotatedOuter = rotateLonLatPoints( outerLonLat, rotationPivot, this.rotationDegrees );
+		const rotatedHoles = holesLonLat.map(
+			( hole ) => rotateLonLatPoints( hole, rotationPivot, this.rotationDegrees ),
+		);
+
+		// Stroke width (meters) outward expansion → render-time outer ring.
+		const strokeWidthMeters = Math.max(
+			Number.isFinite( options.strokeWidth ) ? ( options.strokeWidth as number ) : 0.0,
+			0.0,
+		);
+		const renderOuter = strokeWidthMeters > 0.0
+			? expandPolygonPointsThroughMeters( rotatedOuter, strokeWidthMeters )
+			: rotatedOuter.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
+
+		// Fill + render hierarchies. The fill ring drives planar style points
+		// for the shader's point-in-polygon test; the render ring drives the
+		// shadow-volume geometry plus the planar extents.
+		const fillHierarchy = polygonHierarchyFromLonLatPoints( rotatedOuter, rotatedHoles );
+		const renderHierarchy = polygonHierarchyFromLonLatPoints( renderOuter, rotatedHoles );
+		this.polygonHierarchy = polygonHierarchyToCartesianLike( fillHierarchy );
+
+		// Granularity default keeps parity with the prior adapter.
 		const granularity = options.granularityRadians ?? ( Math.PI / 180.0 / 32.0 );
 
-		// Terrain-aware shadow-volume window — also driven by the outer ring
-		// rectangle, identical to the rectangle path.
-		const rectangleDegrees = rectangleDegreesFromPolygonHierarchyDegrees(
-			options.polygonHierarchyDegrees,
-		);
+		// Terrain-aware shadow-volume window (precision fix preserved).
+		const rectangleDegrees = rectangleDegreesFromLonLatPointList( renderOuter );
 		const { minimumHeight, maximumHeight } = resolveShadowVolumeHeights(
 			rectangleDegrees,
 			options.minimumHeight,
 			options.maximumHeight,
 		);
 
-		// Geometry build (one local call replaces the previous 6-step Cesium chain).
+		// One local call replaces the previous 6-step Cesium chain.
 		const threeGeometry = buildPolygonShadowVolumeGeometry( {
-			hierarchy: polygonHierarchy,
+			hierarchy: renderHierarchy,
 			granularity,
 			minimumHeight,
 			maximumHeight,
 		} );
 
-		// Pull the outer-ring radians rectangle from userData (populated by
-		// buildPolygonShadowVolumeGeometry) so PlanarExtents reuses the same
-		// ENU centre downstream caller would compute anyway.
 		const userData = threeGeometry.userData as PolygonGeometryUserData;
 		const polygonRectangle = userData.polygonRectangle;
 
 		const extents = computePolygonPlanarExtents(
 			polygonRectangle,
-			polygonHierarchy,
+			renderHierarchy,
 			maximumHeight,
 		);
-		const color = new Color( options.color ?? 0x00aaff );
-		const alpha = options.alpha ?? 0.65;
+
+		// Polygon stroke planar reference points — the fill ring projected into
+		// the same SW-meter plane the fragment shader uses for uv decoding.
+		const stylePoints = computePolygonPlanarStylePoints(
+			polygonRectangle,
+			renderHierarchy,
+			rotatedOuter,
+			maximumHeight,
+		);
+
+		// Fill color / alpha resolution: new API uses fillColor + fillOpacity
+		// (0..100 percent), legacy API uses color + alpha (0..1).
+		let fillColorInput: Color | string | number;
+		let fillAlpha: number;
+		if ( usingPlotSpec ) {
+			fillColorInput = options.fillColor ?? '#00aaff';
+			fillAlpha = normalizePercentOpacity(
+				Number.isFinite( options.fillOpacity ) ? ( options.fillOpacity as number ) : 65,
+			);
+		} else {
+			fillColorInput = options.color ?? 0x00aaff;
+			fillAlpha = Number.isFinite( options.alpha ) ? ( options.alpha as number ) : 0.65;
+		}
+		const color = new Color( fillColorInput );
+
 		this.classification = new CesiumClassificationPrimitive(
 			threeGeometry,
 			extents,
 			color,
-			alpha,
+			fillAlpha,
 			options.renderOrder ?? 30,
 			options.fragmentCull ?? true,
 		);
-		// Polygon path keeps the existing "no axis-aligned stroke" behaviour —
-		// the classification material's u_innerMetersRect-based border only
-		// makes sense for the rectangle path, so this preserves the previous
-		// adapter's exact behaviour.
-		this.classification.setBorderStyle( false, new Color( 0xffffff ), 0.0, 0.0 );
+		this.classification.group.visible = options.visible ?? true;
+		this.classification.setBorderStyle(
+			strokeWidthMeters > 0.0,
+			new Color( options.strokeColor ?? '#ffffff' ),
+			normalizePercentOpacity(
+				Number.isFinite( options.strokeOpacity ) ? ( options.strokeOpacity as number ) : 95,
+			),
+			strokeWidthMeters,
+		);
+		// Activate the polygon-stroke shader branch with the fill ring's planar
+		// meter coordinates. Three or more points enable polygon-border mode,
+		// fewer fall back to the rectangle axis-aligned border.
+		this.classification.setPolygonBorderPoints( stylePoints );
 	}
 
 	/**

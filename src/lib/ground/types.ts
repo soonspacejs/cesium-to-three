@@ -12,6 +12,7 @@ import type {
 	Matrix3,
 	Matrix4,
 	PerspectiveCamera,
+	Vector2,
 	Vector3,
 	Vector4,
 	WebGLRenderTarget,
@@ -95,8 +96,25 @@ export interface CesiumGroundRectanglePrimitiveOptions extends CesiumGroundRecta
 	fragmentCull?: boolean;
 }
 
+/**
+ * Public-facing polygon options that mirror the rectangle plot-spec contract
+ * (lon/lat point ring + stroke / fill + visible flag + optional holes
+ * + optional in-plane rotation). The legacy adapter's
+ * `polygonHierarchyDegrees` form is also accepted; the constructor branches
+ * on whichever field is present so existing callers keep working.
+ */
 export interface CesiumGroundPolygonOptions {
-	polygonHierarchyDegrees: PolygonHierarchyDegrees;
+	points?: LonLatPoint[];
+	holes?: LonLatPoint[][];
+	hole?: boolean;
+	rotationDegrees?: number;
+	strokeColor?: string;
+	strokeWidth?: number;
+	strokeOpacity?: number;
+	fillColor?: string;
+	fillOpacity?: number;
+	visible?: boolean;
+	polygonHierarchyDegrees?: PolygonHierarchyDegrees;
 	color?: Color | string | number;
 	alpha?: number;
 	granularityRadians?: number;
@@ -165,6 +183,9 @@ export interface SharedUniforms {
 	u_borderEnabled: { value: number };
 	u_borderWidthMeters: { value: number };
 	u_innerMetersRect: { value: Vector4 };
+	u_polygonBorderMode: { value: number };
+	u_polygonPointCount: { value: number };
+	u_polygonPoints: { value: Vector2[] };
 	czm_globeDepthTexture: { value: WebGLRenderTarget['texture'] | null };
 	czm_viewport: { value: Vector4 };
 	czm_inverseProjection: { value: Matrix4 };

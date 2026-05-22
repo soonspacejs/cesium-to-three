@@ -9,6 +9,7 @@
 import type { LonLatPoint } from '../lib/ground';
 
 export interface GroundDebugSettings {
+	// Rectangle plot
 	points: LonLatPoint[];
 	centerLon: number;
 	centerLat: number;
@@ -31,21 +32,21 @@ export interface GroundDebugSettings {
 	showFrontStencil: boolean;
 	showBackStencil: boolean;
 	showColorPass: boolean;
-	showPolygon: boolean;
+
+	// Polygon plot
+	polygonVisible: boolean;
 	polygonPlotOrder: number;
-	polygonColor: string;
-	polygonAlpha: number;
-	polygonCenterLon: number;
-	polygonCenterLat: number;
-	polygonOffsetEastMeters: number;
-	polygonOffsetNorthMeters: number;
-	polygonWidthMeters: number;
-	polygonHeightMeters: number;
+	polygonStrokeColor: string;
+	polygonStrokeOpacity: number;
+	polygonStrokeWidth: number;
+	polygonFillColor: string;
+	polygonFillOpacity: number;
+	polygonPoints: LonLatPoint[];
+	polygonHoles: LonLatPoint[][];
 	polygonRotationDegrees: number;
-	polygonVertexCount: number;
-	polygonDentRatio: number;
 	polygonHole: boolean;
-	polygonHoleScale: number;
+
+	// Debug surface
 	showDebugSurface: boolean;
 	debugSurfaceHeight: number;
 	debugSurfaceOpacity: number;
