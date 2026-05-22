@@ -83,13 +83,17 @@ const TERRAIN_FRAGMENT_WRITE = /* glsl */ `
 	}
 `;
 
-interface CesiumLogDepthFlaggedMaterial extends Material {
+// Type-only view of a Three.js Material with our custom userData marker. We
+// use an intersection type rather than `interface extends Material` so we do
+// not redeclare `onBeforeCompile` against Three's stricter (non-optional)
+// signature — the runtime assignment goes through the relaxed `OnBeforeCompileFn`
+// shape declared above and is cast at the assignment site below.
+type CesiumLogDepthFlaggedMaterial = Material & {
 	userData: {
 		cesiumLogDepthApplied?: boolean;
 		[ key: string ]: unknown;
 	};
-	onBeforeCompile?: OnBeforeCompileFn;
-}
+};
 
 /**
  * Replaces the first occurrence of `pattern` in `source` and verifies that the
@@ -132,9 +136,11 @@ export function applyCesiumLogDepthToMaterial( material: Material ): void {
 	}
 	flagged.userData.cesiumLogDepthApplied = true;
 
-	const previousOnBeforeCompile = flagged.onBeforeCompile;
+	const previousOnBeforeCompile = flagged.onBeforeCompile as
+		| OnBeforeCompileFn
+		| undefined;
 
-	flagged.onBeforeCompile = ( shader, renderer ) => {
+	const nextOnBeforeCompile: OnBeforeCompileFn = ( shader, renderer ) => {
 		if ( typeof previousOnBeforeCompile === 'function' ) {
 			previousOnBeforeCompile( shader, renderer );
 		}
@@ -169,6 +175,12 @@ export function applyCesiumLogDepthToMaterial( material: Material ): void {
 			`${ TERRAIN_FRAGMENT_WRITE }\n}`,
 		);
 	};
+	// Three.js types declare onBeforeCompile against
+	// `WebGLProgramParametersWithUniforms`. Our internal `ShaderLike` shape is
+	// structurally compatible (same `uniforms / vertexShader / fragmentShader`
+	// fields). Cast at assignment so the relaxed inner type does not leak into
+	// Three.js's stricter signature.
+	flagged.onBeforeCompile = nextOnBeforeCompile as unknown as Material[ 'onBeforeCompile' ];
 
 	// Force Three.js to recompile this material with the augmented shader.
 	flagged.needsUpdate = true;

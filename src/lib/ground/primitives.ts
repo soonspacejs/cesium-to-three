@@ -1,10 +1,17 @@
 // ============================================================
 // primitives.ts
-// Layer: Cesium GroundPrimitive geometry construction.
-// Role: build rectangle and polygon shadow volumes with unmodified Cesium
-//       geometry generators, then wrap them in Three classification commands.
-// Dependencies: Cesium Core geometry, Three.js debug meshes, ground geometry
-//       helpers, and classification command group.
+// Layer: ground primitive construction (rectangle and polygon paths are now
+//        Cesium-free for geometry generation).
+// Role:  build rectangle and polygon shadow volumes using the native modules
+//        under math/, rectangle/, and polygon/. The classification runtime
+//        (classification.ts, materials.ts, depth.ts, terrain-log-depth.ts,
+//        terrain-heights.ts) is deliberately untouched — every precision
+//        fix landed for the jitter issue (Float64 MVP, LOG_DEPTH, dynamic
+//        czm_geometricToleranceOverMeter, LessEqualDepth stencil, terrain
+//        log-depth injection, ApproximateTerrainHeights window) stays
+//        bit-for-bit identical.
+// Dependencies: Three.js debug meshes, native rectangle/polygon/math modules,
+//        classification primitive runtime, ApproximateTerrainHeights query.
 // Consumed by: public ground adapter and demos.
 // ============================================================
 
@@ -13,39 +20,35 @@ import {
 	DoubleSide,
 	Mesh,
 	MeshBasicMaterial,
+	Vector3,
 	type Material,
 } from 'three';
 
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import Rectangle from '../../../cesium-ground-source/engine/Source/Core/Rectangle.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import RectangleGeometry from '../../../cesium-ground-source/engine/Source/Core/RectangleGeometry.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import PolygonGeometry from '../../../cesium-ground-source/engine/Source/Core/PolygonGeometry.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import VertexFormat from '../../../cesium-ground-source/engine/Source/Core/VertexFormat.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import Ellipsoid from '../../../cesium-ground-source/engine/Source/Core/Ellipsoid.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
-import GeometryPipeline from '../../../cesium-ground-source/engine/Source/Core/GeometryPipeline.js';
-
 import { CesiumClassificationPrimitive } from './classification';
+import { computePolygonPlanarExtents } from './polygon/polygon-extents';
 import {
-	cesiumGeometryToThree,
-	computePlanarExtents,
-	computePolygonPlanarExtents,
-	createDebugRectangleSurfaceGeometry,
+	polygonHierarchyFromLonLatPoints,
+	type PolygonHierarchy,
+} from './polygon/polygon-hierarchy';
+import {
+	buildPolygonShadowVolumeGeometry,
+	type PolygonGeometryUserData,
+} from './polygon/polygon-shadow-volume';
+import { createDebugRectangleSurfaceGeometry } from './rectangle/rectangle-debug';
+import { computeRectanglePlanarExtents } from './rectangle/rectangle-extents';
+import {
 	expandRectangleDegreesThroughMeters,
-	polygonHierarchyDegreesToCesium,
 	rectangleDegreesFromLonLatPoints,
-} from './geometry';
+} from './rectangle/rectangle-helpers';
+import { rectangleRadiansFromDegrees } from './rectangle/rectangle-radians';
+import { buildRectangleShadowVolumeGeometry } from './rectangle/rectangle-shadow-volume';
 import { getTerrainMinMaxHeightsForRectangle } from './terrain-heights';
 import type {
 	CartesianLike,
-	CesiumGeometryResult,
 	CesiumGroundFrameState,
 	CesiumGroundPolygonOptions,
 	CesiumGroundRectanglePrimitiveOptions,
+	LonLatPoint,
 	PolygonHierarchyDegrees,
 	RectangleDegrees,
 	RectangleRadians,
@@ -63,25 +66,19 @@ function normalizePercentOpacity( opacity: number ): number {
 }
 
 /**
- * Resolves the minimum and maximum extrusion heights used by Cesium's
- * RectangleGeometry / PolygonGeometry shadow volume.
+ * Resolves the minimum and maximum extrusion heights used by the local
+ * shadow-volume builder.
  *
- * Cesium's GroundPrimitive feeds these from
- * ApproximateTerrainHeights.getMinimumMaximumHeights, so the shadow volume
- * is just thick enough to fully contain the rendered terrain. The previous
- * adapter shipped a hardcoded `±CESIUM_GLOBE_MINIMUM_ALTITUDE` (110 km thick
- * shadow volume), which combined with the vertex-shader extrude pushed the
- * top face up to 165 km above terrain and amplified depth-precision jitter
- * at oblique angles.
- *
- * Caller-supplied overrides win, otherwise the terrain-aware query result is
- * used. If the terrain table is not initialized yet, the underlying helper
- * returns the Cesium default range (-100000 ... +9000).
+ * The terrain-aware path is identical to the previous Cesium-bound version:
+ * caller overrides win, otherwise ApproximateTerrainHeights queries the
+ * rectangle for tile-accurate min/max so the shadow volume is just thick
+ * enough to enclose the rendered terrain (this is one of the precision
+ * fixes we explicitly preserve here).
  *
  * @param rectangleDegrees Plot rectangle in WGS84 degrees.
  * @param minimumHeightOverride Optional explicit minimum height.
  * @param maximumHeightOverride Optional explicit maximum height.
- * @returns Resolved min/max heights used by createShadowVolume.
+ * @returns Resolved min/max heights for buildShadowVolumeGeometry.
  */
 function resolveShadowVolumeHeights(
 	rectangleDegrees: RectangleDegrees,
@@ -96,30 +93,30 @@ function resolveShadowVolumeHeights(
 		? ( maximumHeightOverride as number )
 		: terrainHeights.maximumTerrainHeight;
 	if ( maximumHeight <= minimumHeight ) {
-		// Preserve a non-degenerate shadow volume even when the table reports a
-		// bad sample for the queried tile.
+		// Keep a non-degenerate shadow volume even if the table reports a bad
+		// sample for the queried tile.
 		maximumHeight = minimumHeight + 1.0;
 	}
-
 	return { minimumHeight, maximumHeight };
 }
 
 /**
- * Computes the polygon's axis-aligned WGS84 rectangle in degrees, used to
- * query ApproximateTerrainHeights for the shadow volume's height window.
+ * Computes the polygon's outer-ring axis-aligned WGS84 rectangle in degrees.
+ * Used to query ApproximateTerrainHeights for the shadow volume's height
+ * window.
  *
- * @param hierarchy Polygon hierarchy in degrees.
- * @returns Outer rectangle bounding the polygon outer ring, in degrees.
+ * @param hierarchyDegrees Plot polygon hierarchy in degrees.
+ * @returns Outer rectangle (degrees).
  */
-function rectangleDegreesFromPolygonHierarchy(
-	hierarchy: PolygonHierarchyDegrees,
+function rectangleDegreesFromPolygonHierarchyDegrees(
+	hierarchyDegrees: PolygonHierarchyDegrees,
 ): RectangleDegrees {
 	let west = Number.POSITIVE_INFINITY;
 	let south = Number.POSITIVE_INFINITY;
 	let east = Number.NEGATIVE_INFINITY;
 	let north = Number.NEGATIVE_INFINITY;
 
-	for ( const point of hierarchy.positions ) {
+	for ( const point of hierarchyDegrees.positions ) {
 		if ( ! Number.isFinite( point.longitude ) || ! Number.isFinite( point.latitude ) ) {
 			continue;
 		}
@@ -141,57 +138,117 @@ function rectangleDegreesFromPolygonHierarchy(
 }
 
 /**
- * Ground rectangle implemented with Cesium RectangleGeometry.createShadowVolume.
+ * Converts the legacy `PolygonHierarchyDegrees` (positions as
+ * `{ longitude, latitude }` objects with optional sub-hierarchies for holes)
+ * into the flat `LonLatPoint[]` plus `LonLatPoint[][]` shape expected by the
+ * native polygon module.
+ *
+ * @param hierarchy Polygon hierarchy in degrees (legacy adapter contract).
+ * @returns Outer ring as `LonLatPoint[]` and holes as `LonLatPoint[][]`.
+ */
+function polygonHierarchyDegreesToLonLatPoints(
+	hierarchy: PolygonHierarchyDegrees,
+): { points: LonLatPoint[]; holes: LonLatPoint[][] } {
+	const points = hierarchy.positions.map(
+		( p ) => [ p.longitude, p.latitude ] as LonLatPoint,
+	);
+	const holes = ( hierarchy.holes ?? [] ).map(
+		( sub ) => sub.positions.map(
+			( p ) => [ p.longitude, p.latitude ] as LonLatPoint,
+		),
+	);
+	return { points, holes };
+}
+
+/**
+ * Adapts the native `PolygonHierarchy` (Vector3 ECEF) back to the public
+ * `CartesianLike` shape so external callers reading
+ * `primitive.polygonHierarchy.positions` get an unchanged contract.
+ *
+ * @param hierarchy Native polygon hierarchy.
+ * @returns Cartesian-like positions plus optional Cartesian-like hole rings.
+ */
+function polygonHierarchyToCartesianLike(
+	hierarchy: PolygonHierarchy,
+): { positions: CartesianLike[]; holes: unknown[] } {
+	const positions: CartesianLike[] = hierarchy.positions.map(
+		( v: Vector3 ) => ( { x: v.x, y: v.y, z: v.z } as CartesianLike ),
+	);
+	const holes: unknown[] = ( hierarchy.holes ?? [] ).map(
+		( hole ) => ( {
+			positions: hole.positions.map(
+				( v: Vector3 ) => ( { x: v.x, y: v.y, z: v.z } as CartesianLike ),
+			),
+		} ),
+	);
+	return { positions, holes };
+}
+
+/**
+ * Ground rectangle implemented with the native rectangle shadow-volume
+ * pipeline. The classification command group is reused unchanged, preserving
+ * every precision fix landed for the jitter issue (Float64 MVP, LOG_DEPTH,
+ * dynamic geometric tolerance, LessEqualDepth stencil).
  */
 export class CesiumGroundRectanglePrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
 	public readonly debugSurface: Mesh | null;
-	public readonly rectangle: unknown;
+	public readonly rectangle: RectangleRadians;
 
 	public constructor( options: CesiumGroundRectanglePrimitiveOptions ) {
+		// Plot-spec four lon/lat points → axis-aligned degree rectangle.
 		const rectangleDegrees = rectangleDegreesFromLonLatPoints( options.points );
-		const fillRectangle = Rectangle.fromDegrees(
+
+		// Stroke width (meters) outward expansion → render-time degree rectangle.
+		const strokeWidthMeters = Math.max(
+			Number.isFinite( options.strokeWidth ) ? options.strokeWidth : 0.0,
+			0.0,
+		);
+		const renderRectangleDegrees = expandRectangleDegreesThroughMeters(
+			rectangleDegrees,
+			strokeWidthMeters,
+		);
+
+		// Two radians-form rectangles (fill = stroke inner, render = with outward expansion).
+		const fillRectangleRadians = rectangleRadiansFromDegrees(
 			rectangleDegrees.west,
 			rectangleDegrees.south,
 			rectangleDegrees.east,
 			rectangleDegrees.north,
 		);
-		const strokeWidthMeters = Math.max( Number.isFinite( options.strokeWidth ) ? options.strokeWidth : 0.0, 0.0 );
-		const renderRectangleDegrees = expandRectangleDegreesThroughMeters(
-			rectangleDegrees,
-			strokeWidthMeters,
-		);
-		const renderRectangle = Rectangle.fromDegrees(
+		const renderRectangleRadians = rectangleRadiansFromDegrees(
 			renderRectangleDegrees.west,
 			renderRectangleDegrees.south,
 			renderRectangleDegrees.east,
 			renderRectangleDegrees.north,
 		);
-		this.rectangle = fillRectangle;
+		this.rectangle = fillRectangleRadians;
 
+		// Granularity default matches the previous adapter (π / (180 · 32)).
 		const granularity = options.granularityRadians ?? ( Math.PI / 180.0 / 32.0 );
+
+		// Terrain-aware shadow-volume window (one of the precision fixes — kept here).
 		const { minimumHeight, maximumHeight } = resolveShadowVolumeHeights(
 			renderRectangleDegrees,
 			options.minimumHeight,
 			options.maximumHeight,
 		);
-		const rectangleGeometry = new RectangleGeometry( {
-			rectangle: renderRectangle,
-			ellipsoid: Ellipsoid.WGS84,
+
+		// Geometry build (one local call replaces the previous 6-step Cesium chain).
+		const threeGeometry = buildRectangleShadowVolumeGeometry( {
+			rectangle: renderRectangleRadians,
 			granularity,
-			vertexFormat: VertexFormat.POSITION_ONLY,
+			minimumHeight,
+			maximumHeight,
 		} );
-		const shadowVolumeGeometry = RectangleGeometry.createShadowVolume(
-			rectangleGeometry,
-			() => minimumHeight,
-			() => maximumHeight,
+
+		// PlanarExtents uniforms (still computed from radians-form rectangles).
+		const extents = computeRectanglePlanarExtents(
+			renderRectangleRadians,
+			fillRectangleRadians,
+			maximumHeight,
 		);
-		const cesiumGeometry = RectangleGeometry.createGeometry( shadowVolumeGeometry ) as CesiumGeometryResult;
 
-		GeometryPipeline.encodeAttribute( cesiumGeometry, 'position', 'position3DHigh', 'position3DLow' );
-
-		const threeGeometry = cesiumGeometryToThree( cesiumGeometry );
-		const extents = computePlanarExtents( renderRectangle, Ellipsoid.WGS84, maximumHeight, fillRectangle );
 		const color = new Color( options.fillColor );
 		const alpha = normalizePercentOpacity( options.fillOpacity );
 		this.classification = new CesiumClassificationPrimitive(
@@ -210,10 +267,11 @@ export class CesiumGroundRectanglePrimitive {
 			strokeWidthMeters,
 		);
 
+		// Optional debug surface keeps the historical lon/lat → ENU grid behaviour.
 		this.debugSurface = null;
 		if ( options.debugSurface === true ) {
 			const debugThreeGeometry = createDebugRectangleSurfaceGeometry(
-				fillRectangle as RectangleRadians,
+				fillRectangleRadians,
 				options.debugSurfaceHeight ?? 5000.0,
 			);
 			const debugMaterial = new MeshBasicMaterial( {
@@ -269,44 +327,53 @@ export class CesiumGroundRectanglePrimitive {
 }
 
 /**
- * Ground polygon implemented with Cesium PolygonGeometry.createShadowVolume.
+ * Ground polygon implemented with the native polygon shadow-volume pipeline.
+ * The public option / property surface is unchanged from the previous
+ * Cesium-bound version so the demo (and other callers) keep working.
  */
 export class CesiumGroundPolygonPrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
 	public readonly polygonHierarchy: { positions: CartesianLike[]; holes: unknown[] };
 
 	public constructor( options: CesiumGroundPolygonOptions ) {
-		const polygonHierarchy = polygonHierarchyDegreesToCesium( options.polygonHierarchyDegrees );
-		this.polygonHierarchy = polygonHierarchy;
+		// Legacy adapter accepts a polygonHierarchyDegrees object — convert to
+		// the flat (LonLatPoint[], LonLatPoint[][]) tuple the native module wants.
+		const { points, holes } = polygonHierarchyDegreesToLonLatPoints(
+			options.polygonHierarchyDegrees,
+		);
+		const polygonHierarchy = polygonHierarchyFromLonLatPoints( points, holes );
+		this.polygonHierarchy = polygonHierarchyToCartesianLike( polygonHierarchy );
 
 		const granularity = options.granularityRadians ?? ( Math.PI / 180.0 / 32.0 );
-		const rectangleDegrees = rectangleDegreesFromPolygonHierarchy( options.polygonHierarchyDegrees );
+
+		// Terrain-aware shadow-volume window — also driven by the outer ring
+		// rectangle, identical to the rectangle path.
+		const rectangleDegrees = rectangleDegreesFromPolygonHierarchyDegrees(
+			options.polygonHierarchyDegrees,
+		);
 		const { minimumHeight, maximumHeight } = resolveShadowVolumeHeights(
 			rectangleDegrees,
 			options.minimumHeight,
 			options.maximumHeight,
 		);
-		const polygonGeometry = new PolygonGeometry( {
-			polygonHierarchy,
-			ellipsoid: Ellipsoid.WGS84,
+
+		// Geometry build (one local call replaces the previous 6-step Cesium chain).
+		const threeGeometry = buildPolygonShadowVolumeGeometry( {
+			hierarchy: polygonHierarchy,
 			granularity,
-			vertexFormat: VertexFormat.POSITION_ONLY,
-			perPositionHeight: false,
+			minimumHeight,
+			maximumHeight,
 		} );
-		const shadowVolumeGeometry = PolygonGeometry.createShadowVolume(
-			polygonGeometry,
-			() => minimumHeight,
-			() => maximumHeight,
-		);
-		const cesiumGeometry = PolygonGeometry.createGeometry( shadowVolumeGeometry ) as CesiumGeometryResult;
 
-		GeometryPipeline.encodeAttribute( cesiumGeometry, 'position', 'position3DHigh', 'position3DLow' );
+		// Pull the outer-ring radians rectangle from userData (populated by
+		// buildPolygonShadowVolumeGeometry) so PlanarExtents reuses the same
+		// ENU centre downstream caller would compute anyway.
+		const userData = threeGeometry.userData as PolygonGeometryUserData;
+		const polygonRectangle = userData.polygonRectangle;
 
-		const threeGeometry = cesiumGeometryToThree( cesiumGeometry );
 		const extents = computePolygonPlanarExtents(
-			polygonGeometry.rectangle,
+			polygonRectangle,
 			polygonHierarchy,
-			Ellipsoid.WGS84,
 			maximumHeight,
 		);
 		const color = new Color( options.color ?? 0x00aaff );
@@ -319,6 +386,10 @@ export class CesiumGroundPolygonPrimitive {
 			options.renderOrder ?? 30,
 			options.fragmentCull ?? true,
 		);
+		// Polygon path keeps the existing "no axis-aligned stroke" behaviour —
+		// the classification material's u_innerMetersRect-based border only
+		// makes sense for the rectangle path, so this preserves the previous
+		// adapter's exact behaviour.
 		this.classification.setBorderStyle( false, new Color( 0xffffff ), 0.0, 0.0 );
 	}
 

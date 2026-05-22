@@ -31,6 +31,12 @@ export const CESIUM_GLOBE_MINIMUM_ALTITUDE = 55000.0;
 // Geometry expansion equals the requested meter border width.
 export const BORDER_GEOMETRY_EXPANSION_SCALE = 1.0;
 
+// Maximum polygon outline vertices honoured by the geometry pipeline. Mirrors
+// the shader-side uniform slot count in the reference project. The current
+// adapter does not feed these into the classification material, but the
+// polygon hierarchy validator still uses this cap to keep input sane.
+export const MAX_POLYGON_STYLE_VERTICES = 128;
+
 // Cesium Scene._maximumScreenSpaceError default value used by
 // UniformState.update to derive czm_geometricToleranceOverMeter. Cesium uses
 // 2.0 by default for the main scene; matching it keeps the shadow-volume

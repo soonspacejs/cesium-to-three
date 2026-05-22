@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"D:/my/cesium-to-three/\" 2>&1)",
+      "Bash(mkdir -p \"D:/my/code/cesium-to-three-ref\")",
+      "Bash(unzip -q \"D:/my/cesium-to-three/cesium-to-three.zip\" -d \"D:/my/code/cesium-to-three-ref\")",
+      "Bash(cp -r \"D:/my/code/cesium-to-three-ref/src/lib/ground/math\" \"D:/my/code/cesium-to-three/src/lib/ground/\")",
+      "Bash(cp -r \"D:/my/code/cesium-to-three-ref/src/lib/ground/rectangle\" \"D:/my/code/cesium-to-three/src/lib/ground/\")",
+      "Bash(cp -r \"D:/my/code/cesium-to-three-ref/src/lib/ground/polygon\" \"D:/my/code/cesium-to-three/src/lib/ground/\")",
+      "Bash(npx tsc *)",
+      "Bash(echo \"exit=$?\")"
+    ]
+  }
+}
