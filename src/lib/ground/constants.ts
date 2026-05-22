@@ -37,6 +37,14 @@ export const BORDER_GEOMETRY_EXPANSION_SCALE = 1.0;
 // polygon hierarchy validator still uses this cap to keep input sane.
 export const MAX_POLYGON_STYLE_VERTICES = 128;
 
+// Lower bound for circle tessellation in interactive demos. Cesium uses
+// roughly 0.001 rad in production; we expose a slightly larger floor so the
+// GUI slider never produces multi-million-vertex meshes by accident.
+export const MIN_CIRCLE_GRANULARITY_RADIANS = 0.0025;
+
+// Upper bound for circle tessellation in interactive demos.
+export const MAX_CIRCLE_GRANULARITY_RADIANS = 0.2;
+
 // Cesium Scene._maximumScreenSpaceError default value used by
 // UniformState.update to derive czm_geometricToleranceOverMeter. Cesium uses
 // 2.0 by default for the main scene; matching it keeps the shadow-volume

@@ -46,6 +46,28 @@ export interface GroundDebugSettings {
 	polygonRotationDegrees: number;
 	polygonHole: boolean;
 
+	// Circle plot
+	circleVisible: boolean;
+	circlePlotOrder: number;
+	circleCenterLon: number;
+	circleCenterLat: number;
+	circleRadius: number;
+	circleHeight: number;
+	circleExtrudedHeight: number;
+	circleMinimumHeight: number;
+	circleMaximumHeight: number;
+	circleGranularityRadians: number;
+	circleStRotationRadians: number;
+	circleRingCount: number;
+	circleRingGapMeters: number;
+	circleSectorStartDegrees: number;
+	circleSectorAngleDegrees: number;
+	circleStrokeColor: string;
+	circleStrokeOpacity: number;
+	circleStrokeWidth: number;
+	circleFillColor: string;
+	circleFillOpacity: number;
+
 	// Debug surface
 	showDebugSurface: boolean;
 	debugSurfaceHeight: number;

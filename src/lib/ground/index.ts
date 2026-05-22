@@ -7,11 +7,18 @@
 // ============================================================
 
 export * from './cesium-ground-adapter';
+export {
+	CESIUM_GLOBE_MINIMUM_ALTITUDE,
+	MAX_CIRCLE_GRANULARITY_RADIANS,
+	MIN_CIRCLE_GRANULARITY_RADIANS,
+} from './constants';
 export type {
 	CartesianLike,
 	CesiumClassificationCommandVisibility,
 	CesiumGeometryAttribute,
 	CesiumGeometryResult,
+	CesiumGroundCircleOptions,
+	CesiumGroundCirclePrimitiveOptions,
 	CesiumGroundFrameState,
 	CesiumGroundPolygonOptions,
 	CesiumGroundRectangleOptions,

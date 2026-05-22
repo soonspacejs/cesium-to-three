@@ -17,7 +17,11 @@
 export { validateCesiumGroundRenderer } from './validation';
 export { CesiumGlobeDepth, createCesiumEllipsoidDepthMeshes } from './depth';
 export { CesiumClassificationPrimitive } from './classification';
-export { CesiumGroundRectanglePrimitive, CesiumGroundPolygonPrimitive } from './primitives';
+export {
+	CesiumGroundCirclePrimitive,
+	CesiumGroundPolygonPrimitive,
+	CesiumGroundRectanglePrimitive,
+} from './primitives';
 
 // Rectangle helpers (formerly re-exported from geometry.ts).
 export {

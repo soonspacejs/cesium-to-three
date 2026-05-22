@@ -26,6 +26,13 @@ import {
 } from 'three';
 
 import { CesiumClassificationPrimitive } from './classification';
+import { computeCirclePlanarExtents } from './circle/circle-extents';
+import { buildCircleShadowVolumeGeometry } from './circle/circle-shadow-volume';
+import {
+	CESIUM_GLOBE_MINIMUM_ALTITUDE,
+	MAX_CIRCLE_GRANULARITY_RADIANS,
+	MIN_CIRCLE_GRANULARITY_RADIANS,
+} from './constants';
 import { computePolygonPlanarExtents } from './polygon/polygon-extents';
 import {
 	expandPolygonPointsThroughMeters,
@@ -51,6 +58,7 @@ import { buildRectangleShadowVolumeGeometry } from './rectangle/rectangle-shadow
 import { getTerrainMinMaxHeightsForRectangle } from './terrain-heights';
 import type {
 	CartesianLike,
+	CesiumGroundCirclePrimitiveOptions,
 	CesiumGroundFrameState,
 	CesiumGroundPolygonOptions,
 	CesiumGroundRectanglePrimitiveOptions,
@@ -509,6 +517,158 @@ export class CesiumGroundPolygonPrimitive {
 
 	/**
 	 * Updates this polygon's command-block render order.
+	 *
+	 * @param renderOrder Base order assigned to the front-stencil command.
+	 */
+	public setRenderOrder( renderOrder: number ): void {
+		this.classification.setRenderOrder( renderOrder );
+	}
+
+	/**
+	 * Releases resources.
+	 */
+	public dispose(): void {
+		this.classification.dispose();
+	}
+}
+
+/**
+ * Ground circle implemented with the native circle shadow-volume pipeline.
+ *
+ * Plot-spec options are the same shape the reference project uses
+ * (`center` + `radius` + stroke/fill/visible, plus optional decoration:
+ * `ringCount`, `ringGapMeters`, `sectorStartDegrees`, `sectorAngleDegrees`,
+ * `stRotationRadians`, `granularityRadians`, `height` / `extrudedHeight` for
+ * the shadow-volume window, and `renderOrder`/`fragmentCull` knobs). The
+ * fragment shader's circle branch is activated via
+ * `classification.setCircleBorderStyle(...)`; nothing on the LOG_DEPTH or
+ * Float64 paths is touched.
+ */
+export class CesiumGroundCirclePrimitive {
+	public readonly classification: CesiumClassificationPrimitive;
+	public readonly center: LonLatPoint;
+	public readonly radius: number;
+
+	public constructor( options: CesiumGroundCirclePrimitiveOptions ) {
+		const centerLongitude = options.center[ 0 ];
+		const centerLatitude = options.center[ 1 ];
+		if (
+			! Number.isFinite( centerLongitude ) ||
+			! Number.isFinite( centerLatitude ) ||
+			centerLongitude < - 180.0 ||
+			centerLongitude > 180.0 ||
+			centerLatitude < - 90.0 ||
+			centerLatitude > 90.0
+		) {
+			throw new Error( 'Ground circle center must be a valid WGS84 [lon, lat] point.' );
+		}
+
+		const fillRadiusMeters = Number.isFinite( options.radius )
+			? Math.max( options.radius, 1.0 )
+			: 1.0;
+		const strokeWidthMeters = Math.max(
+			Number.isFinite( options.strokeWidth ) ? options.strokeWidth : 0.0,
+			0.0,
+		);
+		const renderRadiusMeters = fillRadiusMeters + strokeWidthMeters;
+
+		const requestedRingCount = options.ringCount ?? 1.0;
+		const requestedRingGapMeters = options.ringGapMeters ?? 0.0;
+		const ringCount = Number.isFinite( requestedRingCount )
+			? Math.max( Math.floor( requestedRingCount ), 1.0 )
+			: 1.0;
+		const ringGapMeters = Number.isFinite( requestedRingGapMeters )
+			? Math.max( requestedRingGapMeters, 0.0 )
+			: 0.0;
+
+		const requestedSectorStartDegrees = options.sectorStartDegrees ?? 0.0;
+		const requestedSectorAngleDegrees = options.sectorAngleDegrees ?? 360.0;
+		const sectorStartRadians = Number.isFinite( requestedSectorStartDegrees )
+			? requestedSectorStartDegrees * Math.PI / 180.0
+			: 0.0;
+		const sectorAngleRadians = Number.isFinite( requestedSectorAngleDegrees )
+			? Math.min( Math.max( requestedSectorAngleDegrees, - 360.0 ), 360.0 ) * Math.PI / 180.0
+			: Math.PI * 2.0;
+
+		this.center = [ centerLongitude, centerLatitude ];
+		this.radius = fillRadiusMeters;
+
+		const requestedGranularity = options.granularityRadians ?? ( Math.PI / 180.0 );
+		const granularityRadians = Number.isFinite( requestedGranularity )
+			? Math.min(
+				Math.max( requestedGranularity, MIN_CIRCLE_GRANULARITY_RADIANS ),
+				MAX_CIRCLE_GRANULARITY_RADIANS,
+			)
+			: Math.PI / 180.0;
+
+		// Shadow-volume vertical window. Caller-supplied minimum/maximumHeight
+		// wins; otherwise fall back to the Cesium ±55 km altitude window. We
+		// skip ApproximateTerrainHeights here because the circle plot lives
+		// in a small disc and the ±55 km fallback already covers it cleanly.
+		const minimumHeight = options.minimumHeight ?? - CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		let maximumHeight = options.maximumHeight ?? CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		if ( maximumHeight <= minimumHeight ) {
+			maximumHeight = minimumHeight + 1.0;
+		}
+
+		const threeGeometry = buildCircleShadowVolumeGeometry( {
+			centerLongitudeDegrees: centerLongitude,
+			centerLatitudeDegrees: centerLatitude,
+			radiusMeters: renderRadiusMeters,
+			granularityRadians,
+			stRotationRadians: options.stRotationRadians ?? 0.0,
+			minimumHeight,
+			maximumHeight,
+		} );
+
+		const circlePlanar = computeCirclePlanarExtents(
+			centerLongitude,
+			centerLatitude,
+			fillRadiusMeters,
+			renderRadiusMeters,
+			maximumHeight,
+		);
+
+		const color = new Color( options.fillColor );
+		const alpha = normalizePercentOpacity( options.fillOpacity );
+
+		this.classification = new CesiumClassificationPrimitive(
+			threeGeometry,
+			circlePlanar.extents,
+			color,
+			alpha,
+			options.renderOrder ?? 50,
+			options.fragmentCull ?? true,
+		);
+		this.classification.group.visible = options.visible;
+		this.classification.setBorderStyle(
+			strokeWidthMeters > 0.0,
+			new Color( options.strokeColor ),
+			normalizePercentOpacity( options.strokeOpacity ),
+			strokeWidthMeters,
+		);
+		this.classification.setCircleBorderStyle(
+			circlePlanar.centerMeters,
+			circlePlanar.fillRadiusMeters,
+			circlePlanar.renderRadiusMeters,
+			ringCount,
+			ringGapMeters,
+			sectorStartRadians,
+			sectorAngleRadians,
+		);
+	}
+
+	/**
+	 * Updates per-frame uniforms.
+	 *
+	 * @param frameState Current Three-side frame state.
+	 */
+	public update( frameState: CesiumGroundFrameState ): void {
+		this.classification.update( frameState );
+	}
+
+	/**
+	 * Updates this circle's command-block render order.
 	 *
 	 * @param renderOrder Base order assigned to the front-stencil command.
 	 */

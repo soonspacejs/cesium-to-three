@@ -373,6 +373,17 @@ export class CesiumClassificationPrimitive {
 					() => new Vector2(),
 				),
 			},
+			// Circle border / ring / sector uniforms (additive feature, ring
+			// and sector decoration inside the color command — no impact on
+			// the precision paths either).
+			u_circleBorderMode: { value: 0.0 },
+			u_circleCenterMeters: { value: new Vector2() },
+			u_circleFillRadiusMeters: { value: 0.0 },
+			u_circleRenderRadiusMeters: { value: 0.0 },
+			u_circleRingCount: { value: 1.0 },
+			u_circleRingGapMeters: { value: 0.0 },
+			u_circleSectorStartRadians: { value: 0.0 },
+			u_circleSectorAngleRadians: { value: Math.PI * 2.0 },
 			czm_globeDepthTexture: { value: null },
 			czm_viewport: { value: new Vector4( 0.0, 0.0, 1.0, 1.0 ) },
 			czm_inverseProjection: { value: new Matrix4() },
@@ -492,6 +503,61 @@ export class CesiumClassificationPrimitive {
 
 		this.uniforms.u_polygonPointCount.value = pointCount;
 		this.uniforms.u_polygonBorderMode.value = pointCount >= 3 ? 1.0 : 0.0;
+		// Activating the polygon branch disables the circle branch so the
+		// fragment shader never tries to read circle uniforms left over from
+		// a previous primitive setup.
+		this.uniforms.u_circleBorderMode.value = 0.0;
+	}
+
+	/**
+	 * Supplies circle styling values in planar meter coordinates so the color
+	 * fragment can decorate the disc with concentric rings, a sector cut-out,
+	 * and an outer stroke band. Calling with both radii at zero disables the
+	 * circle branch and the rectangle / polygon paths take over.
+	 *
+	 * @param centerMeters Circle center relative to the shader's SW meter origin.
+	 * @param fillRadiusMeters Public fill radius in meters.
+	 * @param renderRadiusMeters Shadow-volume render radius in meters.
+	 * @param ringCount Number of filled concentric bands. Defaults to 1.
+	 * @param ringGapMeters Transparent gap width between filled bands in meters.
+	 * @param sectorStartRadians Start angle in the circle's local ENU plane.
+	 * @param sectorAngleRadians Positive angular sweep; ±2π means full circle.
+	 */
+	public setCircleBorderStyle(
+		centerMeters: Vector2,
+		fillRadiusMeters: number,
+		renderRadiusMeters: number,
+		ringCount = 1.0,
+		ringGapMeters = 0.0,
+		sectorStartRadians = 0.0,
+		sectorAngleRadians = Math.PI * 2.0,
+	): void {
+		const safeRingCount = Number.isFinite( ringCount )
+			? Math.max( Math.floor( ringCount ), 1.0 )
+			: 1.0;
+		const safeRingGapMeters = Number.isFinite( ringGapMeters )
+			? Math.max( ringGapMeters, 0.0 )
+			: 0.0;
+		const safeSectorStartRadians = Number.isFinite( sectorStartRadians )
+			? sectorStartRadians
+			: 0.0;
+		const safeSectorAngleRadians = Number.isFinite( sectorAngleRadians )
+			? Math.min( Math.max( sectorAngleRadians, - Math.PI * 2.0 ), Math.PI * 2.0 )
+			: Math.PI * 2.0;
+
+		this.uniforms.u_circleCenterMeters.value.copy( centerMeters );
+		this.uniforms.u_circleFillRadiusMeters.value = Math.max( fillRadiusMeters, 0.0 );
+		this.uniforms.u_circleRenderRadiusMeters.value = Math.max( renderRadiusMeters, 0.0 );
+		this.uniforms.u_circleRingCount.value = safeRingCount;
+		this.uniforms.u_circleRingGapMeters.value = safeRingGapMeters;
+		this.uniforms.u_circleSectorStartRadians.value = safeSectorStartRadians;
+		this.uniforms.u_circleSectorAngleRadians.value = safeSectorAngleRadians;
+		this.uniforms.u_circleBorderMode.value =
+			fillRadiusMeters > 0.0 && renderRadiusMeters > 0.0 ? 1.0 : 0.0;
+		// Activating the circle branch disables the polygon branch (mutually
+		// exclusive in the fragment shader).
+		this.uniforms.u_polygonBorderMode.value = 0.0;
+		this.uniforms.u_polygonPointCount.value = 0.0;
 	}
 
 	/**
