@@ -8,7 +8,18 @@
       "Bash(cp -r \"D:/my/code/cesium-to-three-ref/src/lib/ground/rectangle\" \"D:/my/code/cesium-to-three/src/lib/ground/\")",
       "Bash(cp -r \"D:/my/code/cesium-to-three-ref/src/lib/ground/polygon\" \"D:/my/code/cesium-to-three/src/lib/ground/\")",
       "Bash(npx tsc *)",
-      "Bash(echo \"exit=$?\")"
+      "Bash(echo \"exit=$?\")",
+      "Bash(ls \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files.zip\")",
+      "Bash(mkdir -p files_extracted)",
+      "Bash(unzip -o files.zip -d files_extracted)",
+      "Bash(cp \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files_extracted\\\\README.md\" \"D:\\\\my\\\\code\\\\cesium-to-three\\\\src\\\\lib\\\\arrow\\\\README.md\")",
+      "Bash(cp \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files_extracted\\\\index.ts\" \"D:\\\\my\\\\code\\\\cesium-to-three\\\\src\\\\lib\\\\arrow\\\\index.ts\")",
+      "Bash(cp \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files_extracted\\\\arrow-types.ts\" \"D:\\\\my\\\\code\\\\cesium-to-three\\\\src\\\\lib\\\\arrow\\\\arrow-types.ts\")",
+      "Bash(cp \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files_extracted\\\\arrow-geometry.ts\" \"D:\\\\my\\\\code\\\\cesium-to-three\\\\src\\\\lib\\\\arrow\\\\arrow-geometry.ts\")",
+      "Bash(cp \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files_extracted\\\\arrow-curves.ts\" \"D:\\\\my\\\\code\\\\cesium-to-three\\\\src\\\\lib\\\\arrow\\\\arrow-curves.ts\")",
+      "Bash(npm run *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(xargs grep -l \"writeLogDepth\\\\|czm_writeLogDepth\\\\|czm_vertexLogDepth\")"
     ]
   }
 }

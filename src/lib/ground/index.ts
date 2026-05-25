@@ -9,6 +9,7 @@
 export * from './cesium-ground-adapter';
 export {
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
+	CESIUM_GROUND_NON_PICKABLE_LAYER,
 	MAX_CIRCLE_GRANULARITY_RADIANS,
 	MIN_CIRCLE_GRANULARITY_RADIANS,
 } from './constants';

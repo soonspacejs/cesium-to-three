@@ -68,6 +68,37 @@ export interface GroundDebugSettings {
 	circleFillColor: string;
 	circleFillOpacity: number;
 
+	// Large-scale companion plots
+	largeRectangleVisible: boolean;
+	largeRectanglePlotOrder: number;
+	largeRectangleStrokeColor: string;
+	largeRectangleStrokeOpacity: number;
+	largeRectangleStrokeWidth: number;
+	largeRectangleFillColor: string;
+	largeRectangleFillOpacity: number;
+	largeRectanglePoints: LonLatPoint[];
+	largeRectangleWidthMeters: number;
+	largeRectangleHeightMeters: number;
+	largePolygonVisible: boolean;
+	largePolygonPlotOrder: number;
+	largePolygonStrokeColor: string;
+	largePolygonStrokeOpacity: number;
+	largePolygonStrokeWidth: number;
+	largePolygonFillColor: string;
+	largePolygonFillOpacity: number;
+	largePolygonPoints: LonLatPoint[];
+	largePolygonRotationDegrees: number;
+	largeCircleVisible: boolean;
+	largeCirclePlotOrder: number;
+	largeCircleCenterLon: number;
+	largeCircleCenterLat: number;
+	largeCircleRadius: number;
+	largeCircleStrokeColor: string;
+	largeCircleStrokeOpacity: number;
+	largeCircleStrokeWidth: number;
+	largeCircleFillColor: string;
+	largeCircleFillOpacity: number;
+
 	// Debug surface
 	showDebugSurface: boolean;
 	debugSurfaceHeight: number;

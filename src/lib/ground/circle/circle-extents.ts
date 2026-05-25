@@ -45,7 +45,6 @@ const _circleSwLow = new Vector3();
  * @param centerLatitudeDegrees Circle center latitude in degrees.
  * @param fillRadiusMeters Public Cesium circle radius in meters.
  * @param renderRadiusMeters Radius used for the shadow volume, including stroke.
- * @param maximumHeight Shadow-volume top height in meters.
  * @returns Planar extents plus circle style uniforms in the same meter frame.
  */
 export function computeCirclePlanarExtents(
@@ -53,11 +52,10 @@ export function computeCirclePlanarExtents(
 	centerLatitudeDegrees: number,
 	fillRadiusMeters: number,
 	renderRadiusMeters: number,
-	maximumHeight: number,
 ): CirclePlanarExtents {
 	_circleCenterCarto.longitude = centerLongitudeDegrees * Math.PI / 180.0;
 	_circleCenterCarto.latitude = centerLatitudeDegrees * Math.PI / 180.0;
-	_circleCenterCarto.height = maximumHeight;
+	_circleCenterCarto.height = 0.0;
 	cartographicToCartesian( _circleCenterCarto, _circleCenterEcef );
 	eastNorthUpToFixedFrame( _circleCenterEcef, _circleEnuToEcef );
 

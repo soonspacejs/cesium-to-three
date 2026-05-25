@@ -57,3 +57,19 @@ export const CESIUM_MAXIMUM_SCREEN_SPACE_ERROR = 2.0;
 // initialized yet so the adapter still produces a valid shadow volume.
 export const APPROXIMATE_TERRAIN_DEFAULT_MIN_HEIGHT = - 100000.0;
 export const APPROXIMATE_TERRAIN_DEFAULT_MAX_HEIGHT = 9000.0;
+
+// Three.js layer index used by every Cesium-ground "non-pickable" mesh
+// (classification shadow-volume stencil/back-stencil/color meshes, and the
+// rectangle debug-surface mesh). These meshes need to **render** as part of
+// the ground pipeline but must NEVER be hit by camera-control raycasts:
+//   - shadow-volume meshes are extruded multi-km boxes — picking them would
+//     pin the camera at maximumHeight altitude
+//   - debug-surface is a debug-only visualization plane at debugSurfaceHeight
+//     (default 5km) — picking it would pin the camera at that altitude
+// Three.js Raycaster.intersect only honours `layers`, not `visible`, so a
+// hidden mesh still raycasts unless its layer mask excludes the raycaster's
+// mask. By assigning these meshes to a non-default layer, the demo's default
+// raycaster (layer 0) silently skips them; the host camera must
+// `camera.layers.enable( CESIUM_GROUND_NON_PICKABLE_LAYER )` so they still
+// render. See ground-demo.ts for the camera-side opt-in.
+export const CESIUM_GROUND_NON_PICKABLE_LAYER = 1;

@@ -23,6 +23,8 @@
 
 import { Quaternion, Vector3 } from 'three';
 
+import { geodeticSurfaceNormal } from '../math/ellipsoid';
+
 // ============================================================
 // 模块级 scratch
 //   命名对齐 Cesium EllipseGeometryLibrary.js 同位置 scratch 变量,
@@ -44,14 +46,13 @@ const _scratchCartesian1 = new Vector3();
 const _scratchCartesian2 = new Vector3();
 const _scratchCartesian3 = new Vector3();
 
-// _pointOnEllipsoid 内部 scratch(对应 Cesium L8-11)
+// _pointOnEllipsoid 内部 scratch(对应 Cesium L8-11)。旧路径目前只保留作
+// 数值对照，实际圆顶点生成走 _pointOnLocalEnuCircle。
 const _rotAxisScratch = new Vector3();
 const _tempVecScratch = new Vector3();
 const _unitQuatScratch = new Quaternion();
 
 // _matrix3FromQuaternion 输出 column-major 9 元素 storage。
-// 对应 Cesium L11 的 `const rotMtx = new Matrix3()`(底层是
-// 长度 9 的 Float64 数组,column-major)。
 const _rotMtxStorage: number[] = new Array( 9 );
 
 /**
@@ -367,6 +368,36 @@ function _pointOnEllipsoid(
 	return result;
 }
 
+void _pointOnEllipsoid;
+
+/**
+ * Builds one CPU Float64 circle point from local WGS84 ENU meter offsets.
+ *
+ * Unlike Cesium's geocentric rotation helper above, this function treats the
+ * requested radius as a true local east/north meter distance before the point
+ * is uploaded to the GPU. The output is still ECEF world space, but the source
+ * of truth is the local 2-D circle.
+ */
+function _pointOnLocalEnuCircle(
+	theta: number,
+	rotation: number,
+	center: Vector3,
+	northVec: Vector3,
+	eastVec: Vector3,
+	radius: number,
+	result: Vector3,
+): Vector3 {
+	const azimuth = theta + rotation;
+	const eastMeters = radius * Math.cos( azimuth );
+	const northMeters = radius * Math.sin( azimuth );
+
+	_cartesianMultiplyByScalar( eastVec, eastMeters, result );
+	_cartesianMultiplyByScalar( northVec, northMeters, _tempVecScratch );
+	_cartesianAdd( result, _tempVecScratch, result );
+	_cartesianAdd( center, result, result );
+	return result;
+}
+
 /**
  * Circle fill 网格 + 外圈点的返回结构。
  *
@@ -432,27 +463,17 @@ export function computeCircleFillPositions(
 	// ============================================================
 	// 6.3.1 · 准备阶段(逐字 Cesium L118-138)
 	// ============================================================
-	const semiMinorAxis = radius;
-	const semiMajorAxis = radius;
 
 	// R4 · ×8 因子:Cesium 注释 L123-126 说明这是为了让弧长匹配椭圆而非
 	// 球面。本期严格保留,**caller 传入的 granularity 是"原始值"**。
 	const internalGranularity = granularity * 8.0;
 
-	const aSqr = semiMinorAxis * semiMinorAxis;
-	const bSqr = semiMajorAxis * semiMajorAxis;
-	const ab = semiMajorAxis * semiMinorAxis;
-
-	// mag = |center|(Cesium Cartesian3.magnitude)
-	const mag = Math.sqrt(
-		center.x * center.x +
-		center.y * center.y +
-		center.z * center.z,
-	);
 
 	// ── 局部基(详见 doc 03 节)──
-	// unitPos = center / mag(Cesium normalize 路径)
-	const unitPos = _cartesianNormalize( center, _unitPosScratch );
+	const upVec = geodeticSurfaceNormal( center, _unitPosScratch );
+	if ( upVec === undefined ) {
+		throw new Error( 'computeCircleFillPositions: cannot build ENU frame at ellipsoid center.' );
+	}
 
 	// eastVec = normalize(UNIT_Z × center)
 	// 用 Cesium Cartesian3.cross 严格复刻,而非 Three.js Vector3.crossVectors —
@@ -460,10 +481,10 @@ export function computeCircleFillPositions(
 	let eastVec = _cartesianCross( _UNIT_Z as unknown as Vector3, center, _eastVecScratch );
 	eastVec = _cartesianNormalize( eastVec, eastVec );
 
-	// northVec = unitPos × eastVec
-	// 因 unitPos 与 eastVec 都是单位向量且正交,叉积本身就是单位向量
-	// —— Cesium 不再调用 normalize,本期同行为。
-	const northVec = _cartesianCross( unitPos, eastVec, _northVecScratch );
+	// northVec = geodetic up × eastVec. This is the true local WGS84 ENU
+	// north axis; using geocentric center/magnitude subtly tilts the meter
+	// frame on an ellipsoid and is visible in the 1:1 circle test.
+	const northVec = _cartesianCross( upVec, eastVec, _northVecScratch );
 
 	// ============================================================
 	// 6.3.2 · numPts 计算 + if-branch 兜底(逐字 Cesium L141-147)
@@ -506,11 +527,10 @@ export function computeCircleFillPositions(
 	// 6.3.4 · Region 1:最北顶点(逐字 Cesium L185-208)
 	// ============================================================
 	theta = Math.PI / 2.0;
-	position = _pointOnEllipsoid(
+	position = _pointOnLocalEnuCircle(
 		theta, rotation,
-		northVec, eastVec,
-		aSqr, ab, bSqr,
-		mag, unitPos, position,
+		center, northVec, eastVec,
+		radius, position,
 	);
 
 	// fill 写入(addFillPositions = true)
@@ -532,17 +552,15 @@ export function computeCircleFillPositions(
 	// 6.3.5 · Region 2:东半象限主循环(逐字 Cesium L209-269)
 	// ============================================================
 	for ( i = 1; i < numPts + 1; ++i ) {
-		position = _pointOnEllipsoid(
+		position = _pointOnLocalEnuCircle(
 			theta, rotation,
-			northVec, eastVec,
-			aSqr, ab, bSqr,
-			mag, unitPos, position,
+			center, northVec, eastVec,
+			radius, position,
 		);
-		reflectedPosition = _pointOnEllipsoid(
+		reflectedPosition = _pointOnLocalEnuCircle(
 			Math.PI - theta, rotation,
-			northVec, eastVec,
-			aSqr, ab, bSqr,
-			mag, unitPos, reflectedPosition,
+			center, northVec, eastVec,
+			radius, reflectedPosition,
 		);
 
 		// fill 写入:position → 内插 ×(numInterior-2) → reflectedPosition
@@ -586,17 +604,15 @@ export function computeCircleFillPositions(
 		theta = ( Math.PI / 2.0 ) - ( i - 1 ) * deltaTheta;
 
 		// position 用 -theta(南半象限);reflectedPosition 用 theta + π
-		position = _pointOnEllipsoid(
+		position = _pointOnLocalEnuCircle(
 			-theta, rotation,
-			northVec, eastVec,
-			aSqr, ab, bSqr,
-			mag, unitPos, position,
+			center, northVec, eastVec,
+			radius, position,
 		);
-		reflectedPosition = _pointOnEllipsoid(
+		reflectedPosition = _pointOnLocalEnuCircle(
 			theta + Math.PI, rotation,
-			northVec, eastVec,
-			aSqr, ab, bSqr,
-			mag, unitPos, reflectedPosition,
+			center, northVec, eastVec,
+			radius, reflectedPosition,
 		);
 
 		positions[ positionIndex++ ] = position.x;
@@ -631,11 +647,10 @@ export function computeCircleFillPositions(
 	// 6.3.7 · Region 4:最南顶点(逐字 Cesium L334-362)
 	// ============================================================
 	theta = Math.PI / 2.0;
-	position = _pointOnEllipsoid(
+	position = _pointOnLocalEnuCircle(
 		-theta, rotation,
-		northVec, eastVec,
-		aSqr, ab, bSqr,
-		mag, unitPos, position,
+		center, northVec, eastVec,
+		radius, position,
 	);
 
 	positions[ positionIndex++ ] = position.x;

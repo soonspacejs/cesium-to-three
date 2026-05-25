@@ -29,9 +29,11 @@ import {
 	CesiumGroundPolygonPrimitive,
 	CesiumGroundRectanglePrimitive,
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
+	CESIUM_GROUND_NON_PICKABLE_LAYER,
 	MAX_CIRCLE_GRANULARITY_RADIANS,
 	MIN_CIRCLE_GRANULARITY_RADIANS,
 	initializeApproximateTerrainHeights,
+	longitudeLatitudeFromCenterOffsetsMeters,
 	rectangleMeterSizeFromDegrees,
 	updateTerrainLogDepthUniforms,
 	validateCesiumGroundRenderer,
@@ -44,6 +46,7 @@ import { readNumberEnv, readStringEnv } from './env';
 import { type GroundDebugSettings, type GroundDebugStatus } from './debug-types';
 import {
 	clampNumber,
+	createLocalPolygonOffsets,
 	PlotOrderRegistry,
 	plotOrderToRenderOrder,
 } from './plot-utils';
@@ -53,14 +56,51 @@ import {
 	type TileRuntimeCounters,
 	type TilesRuntimeStats,
 } from './tiles';
+import { ArrowSubsystem, type ArrowPlotId } from './arrow-demo';
 
 const RECTANGLE_CENTER_LON = readNumberEnv( 'VITE_PLOT_LON', 86.9250 );
 const RECTANGLE_CENTER_LAT = readNumberEnv( 'VITE_PLOT_LAT', 27.9881 );
-const RECTANGLE_HALF_WIDTH_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_WIDTH_DEGREES', 0.05 );
-const RECTANGLE_HALF_HEIGHT_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_HEIGHT_DEGREES', 0.03 );
+// 1:1 scale test mode: each primitive is ~10 m so a typical close camera
+// puts ~1 px per meter on screen. Half-side ≈ 5 m at lat 28° ≈ 4.5e-5 deg.
+const RECTANGLE_HALF_WIDTH_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_WIDTH_DEGREES', 5.0e-5 );
+const RECTANGLE_HALF_HEIGHT_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_HEIGHT_DEGREES', 5.0e-5 );
 const DEBUG_GROUND_SURFACE = readStringEnv( 'VITE_DEBUG_GROUND_SURFACE', 'false' ).toLowerCase() === 'true';
 
-type DemoPlotId = 'rectangle' | 'polygon' | 'circle';
+// Arrow subsystem toggle. Kept as a const so it stays easy to flip during
+// debugging. Originally introduced to isolate the (now-fixed) curved fill
+// cut artefact: with arrows off we proved the artefact was intrinsic to the
+// ground primitive pipeline (terrain-aware shadow volume too short) rather
+// than something the arrow code introduced — fix lives in primitives.ts
+// where rectangle / polygon now use the same ±55km flat shadow volume as
+// the circle primitive.
+const ENABLE_ARROW_SUBSYSTEM = true;
+
+// 1:1 scale test: each primitive ~10 m. Spread the 3 ground primitives so
+// they sit at distinct lon AND lat slots (not just on a line), making it
+// easier to tell them apart at close zoom. ~50-80 m separation in both axes
+// at lat 28° (1 m ≈ 1.02e-5 deg lon ≈ 9.01e-6 deg lat).
+//
+// Layout (centre = rectangle):
+//      [polygon]          ← NE, ~50 m east + ~30 m north
+//   [rectangle]            ← centre
+//                 [circle] ← SE, ~60 m east + ~50 m south... no wait
+//
+// Picked positions: polygon NE, circle SW, so neither overlaps the arrows
+// that arrow-demo.ts spawns around the rectangle's N / E / S / SW / NW
+// quadrants (see arrow-demo.ts buildInitialControlPoints layout comment).
+const POLYGON_OFFSET_LON = 70.0 * 1.02e-5;   // ~70 m east of rectangle
+const POLYGON_OFFSET_LAT = 18.0 * 9.01e-6;   // ~18 m north of rectangle
+const CIRCLE_OFFSET_LON = -65.0 * 1.02e-5;   // ~65 m west of rectangle
+const CIRCLE_OFFSET_LAT = -18.0 * 9.01e-6;   // ~18 m south of rectangle
+
+type DemoPlotId =
+	| 'rectangle'
+	| 'polygon'
+	| 'circle'
+	| 'largeRectangle'
+	| 'largePolygon'
+	| 'largeCircle'
+	| ArrowPlotId;
 
 interface RectangleGuiModel {
 	points: string;
@@ -69,6 +109,26 @@ interface RectangleGuiModel {
 interface PolygonGuiModel {
 	points: string;
 	holes: string;
+}
+
+/**
+ * Converts local ENU meter offsets around one WGS84 anchor into lon/lat pairs.
+ *
+ * @param centerLongitude Longitude of the ENU anchor in degrees.
+ * @param centerLatitude Latitude of the ENU anchor in degrees.
+ * @param offsets Local east/north offsets in meters.
+ * @returns WGS84 lon/lat pairs in the same order as offsets.
+ */
+function lonLatPointsFromMeterOffsets(
+	centerLongitude: number,
+	centerLatitude: number,
+	offsets: { eastMeters: number; northMeters: number }[],
+): LonLatPoint[] {
+	return longitudeLatitudeFromCenterOffsetsMeters(
+		centerLongitude,
+		centerLatitude,
+		offsets,
+	).map( point => [ point.longitude, point.latitude ] as LonLatPoint );
 }
 
 /**
@@ -118,6 +178,15 @@ export function runGroundDemo(): void {
 		40000000.0,
 	);
 	camera.up.set( 0.0, 0.0, 1.0 );
+	// Enable the Cesium-ground non-pickable layer so shadow-volume meshes
+	// and the rectangle debug-surface still render. Those meshes were moved
+	// off layer 0 in classification.ts / primitives.ts so the default
+	// raycaster (used by GlobeControls for adjustHeight + zoomPoint
+	// resolution) silently skips them — otherwise the multi-km shadow
+	// volume box top / 5 km debug surface would pin the camera at altitude.
+	// Three.js cameras default to `layers.set(0)`; we explicitly enable the
+	// non-pickable layer here to keep both layers in the render path.
+	camera.layers.enable( CESIUM_GROUND_NON_PICKABLE_LAYER );
 
 	const target = wgs84PositionFromDegrees( RECTANGLE_CENTER_LON, RECTANGLE_CENTER_LAT, 0.0 );
 	const up = wgs84NormalFromDegrees( RECTANGLE_CENTER_LON, RECTANGLE_CENTER_LAT );
@@ -128,6 +197,29 @@ export function runGroundDemo(): void {
 		.addScaledVector( eastBias, 260000.0 );
 	camera.lookAt( target );
 	camera.updateMatrixWorld();
+
+	// Camera preset for the 1:1 scale test. ~150 m altitude + a small east
+	// bias so the rectangle/polygon/circle and the surrounding arrows all
+	// sit comfortably inside the camera frustum at close zoom. Triggered by
+	// the "fly to plot" GUI button below.
+	const FLY_TO_ALTITUDE_METERS = 150.0;
+	const FLY_TO_EAST_OFFSET_METERS = 40.0;
+
+	/**
+	 * Snaps the camera to the rectangle-centre preset so the user can stop
+	 * mouse-wheel-scrolling from 720km down to the 10m primitives.
+	 * `controls.update()` runs on the next frame anyway, so we only need to
+	 * write camera.position + orientation here; GlobeControls picks up the
+	 * new state without any explicit reset call.
+	 */
+	function flyToPlot(): void {
+		camera.position
+			.copy( target )
+			.addScaledVector( up, FLY_TO_ALTITUDE_METERS )
+			.addScaledVector( eastBias, FLY_TO_EAST_OFFSET_METERS );
+		camera.lookAt( target );
+		camera.updateMatrixWorld();
+	}
 
 	const tilesRenderer = createCesiumTilesRenderer();
 	const tileCounters: TileRuntimeCounters = {
@@ -159,60 +251,103 @@ export function runGroundDemo(): void {
 		north: RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES,
 	};
 	const initialRectangleMeterSize = rectangleMeterSizeFromDegrees( initialRectangleDegrees );
-	const initialCircleRadiusMeters = Math.max(
-		Math.min( initialRectangleMeterSize.widthMeters, initialRectangleMeterSize.heightMeters ) * 0.28,
-		200.0,
-	);
+	// 1:1 scale test: fix the circle radius at 5 m (10 m diameter) regardless
+	// of how the rectangle size scales — so the size sliders stay independent.
+	const initialCircleRadiusMeters = 5.0;
 	const initialRectanglePoints: LonLatPoint[] = [
 		[ initialRectangleDegrees.west, initialRectangleDegrees.south ],
 		[ initialRectangleDegrees.east, initialRectangleDegrees.south ],
 		[ initialRectangleDegrees.east, initialRectangleDegrees.north ],
 		[ initialRectangleDegrees.west, initialRectangleDegrees.north ],
 	];
+	// Polygon spawned offset east of the rectangle (POLYGON_OFFSET_*), so its
+	// footprint does NOT overlap the rectangle. Isolation test: lets us
+	// confirm whether overlapping primitive footprints contribute to the
+	// curved-band fill cut.
+	const POLYGON_CENTER_LON = RECTANGLE_CENTER_LON + POLYGON_OFFSET_LON;
+	const POLYGON_CENTER_LAT = RECTANGLE_CENTER_LAT + POLYGON_OFFSET_LAT;
 	const initialPolygonPoints: LonLatPoint[] = [
 		[
-			RECTANGLE_CENTER_LON,
-			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.65,
+			POLYGON_CENTER_LON,
+			POLYGON_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.65,
 		],
 		[
-			RECTANGLE_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.55,
-			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.2,
+			POLYGON_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.55,
+			POLYGON_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.2,
 		],
 		[
-			RECTANGLE_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.34,
-			RECTANGLE_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.56,
+			POLYGON_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.34,
+			POLYGON_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.56,
 		],
 		[
-			RECTANGLE_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.34,
-			RECTANGLE_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.56,
+			POLYGON_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.34,
+			POLYGON_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.56,
 		],
 		[
-			RECTANGLE_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.55,
-			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.2,
+			POLYGON_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.55,
+			POLYGON_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.2,
 		],
 	];
 	const initialPolygonHolePoints: LonLatPoint[] = [
 		[
-			RECTANGLE_CENTER_LON,
-			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.18,
+			POLYGON_CENTER_LON,
+			POLYGON_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.18,
 		],
 		[
-			RECTANGLE_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.18,
-			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.06,
+			POLYGON_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.18,
+			POLYGON_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.06,
 		],
 		[
-			RECTANGLE_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.11,
-			RECTANGLE_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.16,
+			POLYGON_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 0.11,
+			POLYGON_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.16,
 		],
 		[
-			RECTANGLE_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.11,
-			RECTANGLE_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.16,
+			POLYGON_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.11,
+			POLYGON_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES * 0.16,
 		],
 		[
-			RECTANGLE_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.18,
-			RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.06,
+			POLYGON_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES * 0.18,
+			POLYGON_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES * 0.06,
 		],
 	];
+	const largePlotAnchors = lonLatPointsFromMeterOffsets(
+		RECTANGLE_CENTER_LON,
+		RECTANGLE_CENTER_LAT,
+		[
+			{ eastMeters: - 14000.0, northMeters: 11500.0 },
+			{ eastMeters: 1000.0, northMeters: 14500.0 },
+			{ eastMeters: 15000.0, northMeters: 11500.0 },
+		],
+	);
+	const largeRectangleCenter = largePlotAnchors[ 0 ];
+	const largePolygonCenter = largePlotAnchors[ 1 ];
+	const largeCircleCenter = largePlotAnchors[ 2 ];
+	const initialLargeRectangleWidthMeters = 10000.0;
+	const initialLargeRectangleHeightMeters = 5000.0;
+	const initialLargeRectanglePoints = lonLatPointsFromMeterOffsets(
+		largeRectangleCenter[ 0 ],
+		largeRectangleCenter[ 1 ],
+		[
+			{ eastMeters: - initialLargeRectangleWidthMeters * 0.5, northMeters: - initialLargeRectangleHeightMeters * 0.5 },
+			{ eastMeters: initialLargeRectangleWidthMeters * 0.5, northMeters: - initialLargeRectangleHeightMeters * 0.5 },
+			{ eastMeters: initialLargeRectangleWidthMeters * 0.5, northMeters: initialLargeRectangleHeightMeters * 0.5 },
+			{ eastMeters: - initialLargeRectangleWidthMeters * 0.5, northMeters: initialLargeRectangleHeightMeters * 0.5 },
+		],
+	);
+	const initialLargePolygonWidthMeters = 10000.0;
+	const initialLargePolygonHeightMeters = 8000.0;
+	const initialLargePolygonRotationDegrees = 14.0;
+	const initialLargePolygonPoints = lonLatPointsFromMeterOffsets(
+		largePolygonCenter[ 0 ],
+		largePolygonCenter[ 1 ],
+		createLocalPolygonOffsets(
+			initialLargePolygonWidthMeters,
+			initialLargePolygonHeightMeters,
+			6,
+			initialLargePolygonRotationDegrees,
+		),
+	);
+	const initialLargeCircleRadiusMeters = 5000.0;
 
 	const debugSettings: GroundDebugSettings = {
 		points: initialRectanglePoints,
@@ -230,7 +365,7 @@ export function runGroundDemo(): void {
 		rectanglePlotOrder: 0,
 		strokeColor: '#ffffff',
 		strokeOpacity: 95,
-		strokeWidth: 300.0,
+		strokeWidth: 1.0,
 		fragmentCull: true,
 		useTilesDepth: true,
 		showTiles: true,
@@ -241,7 +376,7 @@ export function runGroundDemo(): void {
 		polygonPlotOrder: 1,
 		polygonStrokeColor: '#ffffff',
 		polygonStrokeOpacity: 92,
-		polygonStrokeWidth: 300.0,
+		polygonStrokeWidth: 1.0,
 		polygonFillColor: '#00aaff',
 		polygonFillOpacity: 68,
 		polygonPoints: initialPolygonPoints,
@@ -250,8 +385,8 @@ export function runGroundDemo(): void {
 		polygonHole: false,
 		circleVisible: true,
 		circlePlotOrder: 2,
-		circleCenterLon: RECTANGLE_CENTER_LON + RECTANGLE_HALF_WIDTH_DEGREES * 1.35,
-		circleCenterLat: RECTANGLE_CENTER_LAT,
+		circleCenterLon: RECTANGLE_CENTER_LON + CIRCLE_OFFSET_LON,
+		circleCenterLat: RECTANGLE_CENTER_LAT + CIRCLE_OFFSET_LAT,
 		circleRadius: initialCircleRadiusMeters,
 		circleHeight: 0.0,
 		circleExtrudedHeight: 0.0,
@@ -265,9 +400,38 @@ export function runGroundDemo(): void {
 		circleSectorAngleDegrees: 90.0,
 		circleStrokeColor: '#ffffff',
 		circleStrokeOpacity: 92,
-		circleStrokeWidth: 300.0,
+		circleStrokeWidth: 1.0,
 		circleFillColor: '#00ff88',
 		circleFillOpacity: 64,
+		largeRectangleVisible: true,
+		largeRectanglePlotOrder: 8,
+		largeRectangleStrokeColor: '#ffffff',
+		largeRectangleStrokeOpacity: 92,
+		largeRectangleStrokeWidth: 150.0,
+		largeRectangleFillColor: '#ffcc00',
+		largeRectangleFillOpacity: 48,
+		largeRectanglePoints: initialLargeRectanglePoints,
+		largeRectangleWidthMeters: initialLargeRectangleWidthMeters,
+		largeRectangleHeightMeters: initialLargeRectangleHeightMeters,
+		largePolygonVisible: true,
+		largePolygonPlotOrder: 9,
+		largePolygonStrokeColor: '#ffffff',
+		largePolygonStrokeOpacity: 92,
+		largePolygonStrokeWidth: 150.0,
+		largePolygonFillColor: '#00ddff',
+		largePolygonFillOpacity: 46,
+		largePolygonPoints: initialLargePolygonPoints,
+		largePolygonRotationDegrees: initialLargePolygonRotationDegrees,
+		largeCircleVisible: true,
+		largeCirclePlotOrder: 10,
+		largeCircleCenterLon: largeCircleCenter[ 0 ],
+		largeCircleCenterLat: largeCircleCenter[ 1 ],
+		largeCircleRadius: initialLargeCircleRadiusMeters,
+		largeCircleStrokeColor: '#ffffff',
+		largeCircleStrokeOpacity: 92,
+		largeCircleStrokeWidth: 150.0,
+		largeCircleFillColor: '#66ff66',
+		largeCircleFillOpacity: 42,
 		showDebugSurface: DEBUG_GROUND_SURFACE,
 		debugSurfaceHeight: 5000.0,
 		debugSurfaceOpacity: 0.55,
@@ -293,6 +457,9 @@ export function runGroundDemo(): void {
 	debugSettings.rectanglePlotOrder = plotOrderRegistry.register( 'rectangle', debugSettings.rectanglePlotOrder );
 	debugSettings.polygonPlotOrder = plotOrderRegistry.register( 'polygon', debugSettings.polygonPlotOrder );
 	debugSettings.circlePlotOrder = plotOrderRegistry.register( 'circle', debugSettings.circlePlotOrder );
+	debugSettings.largeRectanglePlotOrder = plotOrderRegistry.register( 'largeRectangle', debugSettings.largeRectanglePlotOrder );
+	debugSettings.largePolygonPlotOrder = plotOrderRegistry.register( 'largePolygon', debugSettings.largePolygonPlotOrder );
+	debugSettings.largeCirclePlotOrder = plotOrderRegistry.register( 'largeCircle', debugSettings.largeCirclePlotOrder );
 
 	/**
 	 * Returns the current fill rectangle derived from the public points field.
@@ -548,9 +715,74 @@ export function runGroundDemo(): void {
 			return;
 		}
 
+		if ( target === 'largeRectangle' ) {
+			debugSettings.largeRectanglePlotOrder = plotOrderRegistry.update(
+				'largeRectangle',
+				debugSettings.largeRectanglePlotOrder,
+			);
+			return;
+		}
+
+		if ( target === 'largePolygon' ) {
+			debugSettings.largePolygonPlotOrder = plotOrderRegistry.update(
+				'largePolygon',
+				debugSettings.largePolygonPlotOrder,
+			);
+			return;
+		}
+
+		if ( target === 'largeCircle' ) {
+			debugSettings.largeCirclePlotOrder = plotOrderRegistry.update(
+				'largeCircle',
+				debugSettings.largeCirclePlotOrder,
+			);
+			return;
+		}
+
 		debugSettings.polygonPlotOrder = plotOrderRegistry.update(
 			'polygon',
 			debugSettings.polygonPlotOrder,
+		);
+	}
+
+	/**
+	 * Rebuilds the large rectangle's editable points from its meter size.
+	 */
+	function syncLargeRectanglePointsFromMeters(): void {
+		debugSettings.largeRectangleWidthMeters = Number.isFinite( debugSettings.largeRectangleWidthMeters )
+			? Math.max( debugSettings.largeRectangleWidthMeters, 100.0 )
+			: initialLargeRectangleWidthMeters;
+		debugSettings.largeRectangleHeightMeters = Number.isFinite( debugSettings.largeRectangleHeightMeters )
+			? Math.max( debugSettings.largeRectangleHeightMeters, 100.0 )
+			: initialLargeRectangleHeightMeters;
+		debugSettings.largeRectanglePoints = lonLatPointsFromMeterOffsets(
+			largeRectangleCenter[ 0 ],
+			largeRectangleCenter[ 1 ],
+			[
+				{ eastMeters: - debugSettings.largeRectangleWidthMeters * 0.5, northMeters: - debugSettings.largeRectangleHeightMeters * 0.5 },
+				{ eastMeters: debugSettings.largeRectangleWidthMeters * 0.5, northMeters: - debugSettings.largeRectangleHeightMeters * 0.5 },
+				{ eastMeters: debugSettings.largeRectangleWidthMeters * 0.5, northMeters: debugSettings.largeRectangleHeightMeters * 0.5 },
+				{ eastMeters: - debugSettings.largeRectangleWidthMeters * 0.5, northMeters: debugSettings.largeRectangleHeightMeters * 0.5 },
+			],
+		);
+	}
+
+	/**
+	 * Rebuilds the large polygon's six-point meter footprint.
+	 */
+	function syncLargePolygonPointsFromMeters(): void {
+		debugSettings.largePolygonRotationDegrees = Number.isFinite( debugSettings.largePolygonRotationDegrees )
+			? debugSettings.largePolygonRotationDegrees
+			: initialLargePolygonRotationDegrees;
+		debugSettings.largePolygonPoints = lonLatPointsFromMeterOffsets(
+			largePolygonCenter[ 0 ],
+			largePolygonCenter[ 1 ],
+			createLocalPolygonOffsets(
+				initialLargePolygonWidthMeters,
+				initialLargePolygonHeightMeters,
+				6,
+				debugSettings.largePolygonRotationDegrees,
+			),
 		);
 	}
 
@@ -703,12 +935,100 @@ export function runGroundDemo(): void {
 		} );
 	}
 
+	/**
+	 * Creates the large-scale rectangle companion primitive.
+	 *
+	 * @returns Ground rectangle spanning kilometers instead of meters.
+	 */
+	function createLargeGroundRectangle(): CesiumGroundRectanglePrimitive {
+		syncLargeRectanglePointsFromMeters();
+
+		return new CesiumGroundRectanglePrimitive( {
+			points: debugSettings.largeRectanglePoints,
+			strokeColor: debugSettings.largeRectangleStrokeColor,
+			strokeWidth: debugSettings.largeRectangleStrokeWidth,
+			strokeOpacity: debugSettings.largeRectangleStrokeOpacity,
+			fillColor: debugSettings.largeRectangleFillColor,
+			fillOpacity: debugSettings.largeRectangleFillOpacity,
+			visible: debugSettings.largeRectangleVisible,
+			renderOrder: plotOrderToRenderOrder( debugSettings.largeRectanglePlotOrder ),
+			fragmentCull: debugSettings.fragmentCull,
+		} );
+	}
+
+	/**
+	 * Creates the large-scale polygon companion primitive.
+	 *
+	 * @returns Ground polygon spanning kilometers instead of meters.
+	 */
+	function createLargeGroundPolygon(): CesiumGroundPolygonPrimitive {
+		syncLargePolygonPointsFromMeters();
+
+		return new CesiumGroundPolygonPrimitive( {
+			points: debugSettings.largePolygonPoints,
+			strokeColor: debugSettings.largePolygonStrokeColor,
+			strokeWidth: debugSettings.largePolygonStrokeWidth,
+			strokeOpacity: debugSettings.largePolygonStrokeOpacity,
+			fillColor: debugSettings.largePolygonFillColor,
+			fillOpacity: debugSettings.largePolygonFillOpacity,
+			visible: debugSettings.largePolygonVisible,
+			rotationDegrees: 0.0,
+			renderOrder: plotOrderToRenderOrder( debugSettings.largePolygonPlotOrder ),
+			fragmentCull: debugSettings.fragmentCull,
+		} );
+	}
+
+	/**
+	 * Creates the large-scale circle companion primitive.
+	 *
+	 * @returns Ground circle with a 5 km default radius.
+	 */
+	function createLargeGroundCircle(): CesiumGroundCirclePrimitive {
+		debugSettings.largeCircleRadius = Number.isFinite( debugSettings.largeCircleRadius )
+			? Math.max( debugSettings.largeCircleRadius, 100.0 )
+			: initialLargeCircleRadiusMeters;
+
+		return new CesiumGroundCirclePrimitive( {
+			center: [ debugSettings.largeCircleCenterLon, debugSettings.largeCircleCenterLat ],
+			radius: debugSettings.largeCircleRadius,
+			strokeColor: debugSettings.largeCircleStrokeColor,
+			strokeWidth: debugSettings.largeCircleStrokeWidth,
+			strokeOpacity: debugSettings.largeCircleStrokeOpacity,
+			fillColor: debugSettings.largeCircleFillColor,
+			fillOpacity: debugSettings.largeCircleFillOpacity,
+			visible: debugSettings.largeCircleVisible,
+			height: 0.0,
+			extrudedHeight: 0.0,
+			granularityRadians: Math.PI / 180.0 / 8.0,
+			stRotationRadians: 0.0,
+			ringCount: 3,
+			ringGapMeters: debugSettings.largeCircleRadius * 0.55 / 4.1,
+			sectorStartDegrees: 0.0,
+			sectorAngleDegrees: 360.0,
+			minimumHeight: - CESIUM_GLOBE_MINIMUM_ALTITUDE,
+			maximumHeight: CESIUM_GLOBE_MINIMUM_ALTITUDE,
+			renderOrder: plotOrderToRenderOrder( debugSettings.largeCirclePlotOrder ),
+			fragmentCull: debugSettings.fragmentCull,
+		} );
+	}
+
 	let groundRectangle = createGroundRectangle();
 	let groundPolygon = createGroundPolygon();
 	let groundCircle = createGroundCircle();
+	let largeGroundRectangle = createLargeGroundRectangle();
+	let largeGroundPolygon = createLargeGroundPolygon();
+	let largeGroundCircle = createLargeGroundCircle();
 	scene.add( groundRectangle.classification.group );
 	scene.add( groundPolygon.classification.group );
 	scene.add( groundCircle.classification.group );
+	scene.add( largeGroundRectangle.classification.group );
+	scene.add( largeGroundPolygon.classification.group );
+	scene.add( largeGroundCircle.classification.group );
+
+	// Lazily set after createGroundDebugGui() so we can attach to its GUI root.
+	// Forwarded settings (fragmentCull + pass visibility) are applied via the
+	// ArrowSubsystem's public hooks from applyGroundDebugSettings() below.
+	let arrowSubsystem: ArrowSubsystem | null = null;
 
 	/**
 	 * Applies GUI state to the existing primitive without rebuilding geometry.
@@ -782,6 +1102,76 @@ export function runGroundDemo(): void {
 			debugSettings.circleStrokeOpacity / 100.0,
 			debugSettings.circleStrokeWidth,
 		);
+
+		largeGroundRectangle.classification.setColor(
+			new Color( debugSettings.largeRectangleFillColor ),
+			debugSettings.largeRectangleFillOpacity / 100.0,
+		);
+		largeGroundRectangle.classification.setFragmentCulling( debugSettings.fragmentCull );
+		largeGroundRectangle.setRenderOrder( plotOrderToRenderOrder( debugSettings.largeRectanglePlotOrder ) );
+		largeGroundRectangle.classification.group.visible = debugSettings.largeRectangleVisible;
+		largeGroundRectangle.classification.setCommandVisibility( {
+			frontStencil: debugSettings.showFrontStencil,
+			backStencil: debugSettings.showBackStencil,
+			color: debugSettings.showColorPass,
+		} );
+		largeGroundRectangle.classification.setBorderStyle(
+			debugSettings.largeRectangleStrokeWidth > 0.0,
+			new Color( debugSettings.largeRectangleStrokeColor ),
+			debugSettings.largeRectangleStrokeOpacity / 100.0,
+			debugSettings.largeRectangleStrokeWidth,
+		);
+
+		largeGroundPolygon.classification.setColor(
+			new Color( debugSettings.largePolygonFillColor ),
+			debugSettings.largePolygonFillOpacity / 100.0,
+		);
+		largeGroundPolygon.classification.setFragmentCulling( debugSettings.fragmentCull );
+		largeGroundPolygon.setRenderOrder( plotOrderToRenderOrder( debugSettings.largePolygonPlotOrder ) );
+		largeGroundPolygon.classification.group.visible = debugSettings.largePolygonVisible;
+		largeGroundPolygon.classification.setCommandVisibility( {
+			frontStencil: debugSettings.showFrontStencil,
+			backStencil: debugSettings.showBackStencil,
+			color: debugSettings.showColorPass,
+		} );
+		largeGroundPolygon.classification.setBorderStyle(
+			debugSettings.largePolygonStrokeWidth > 0.0,
+			new Color( debugSettings.largePolygonStrokeColor ),
+			debugSettings.largePolygonStrokeOpacity / 100.0,
+			debugSettings.largePolygonStrokeWidth,
+		);
+
+		largeGroundCircle.classification.setColor(
+			new Color( debugSettings.largeCircleFillColor ),
+			debugSettings.largeCircleFillOpacity / 100.0,
+		);
+		largeGroundCircle.classification.setFragmentCulling( debugSettings.fragmentCull );
+		largeGroundCircle.setRenderOrder( plotOrderToRenderOrder( debugSettings.largeCirclePlotOrder ) );
+		largeGroundCircle.classification.group.visible = debugSettings.largeCircleVisible;
+		largeGroundCircle.classification.setCommandVisibility( {
+			frontStencil: debugSettings.showFrontStencil,
+			backStencil: debugSettings.showBackStencil,
+			color: debugSettings.showColorPass,
+		} );
+		largeGroundCircle.classification.setBorderStyle(
+			debugSettings.largeCircleStrokeWidth > 0.0,
+			new Color( debugSettings.largeCircleStrokeColor ),
+			debugSettings.largeCircleStrokeOpacity / 100.0,
+			debugSettings.largeCircleStrokeWidth,
+		);
+
+		// Shared render-state knobs (fragment culling + 3-pass visibility) must
+		// reach every arrow primitive too; defer until the subsystem exists so
+		// the very first applyGroundDebugSettings() (called before subsystem
+		// construction) is still a no-op for arrows.
+		if ( arrowSubsystem ) {
+			arrowSubsystem.applyFragmentCull( debugSettings.fragmentCull );
+			arrowSubsystem.applyPassVisibility( {
+				frontStencil: debugSettings.showFrontStencil,
+				backStencil: debugSettings.showBackStencil,
+				color: debugSettings.showColorPass,
+			} );
+		}
 	}
 
 	/**
@@ -805,6 +1195,30 @@ export function runGroundDemo(): void {
 	 */
 	function applyCirclePlotOrder(): void {
 		updateRegisteredPlotOrder( 'circle' );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Applies a large rectangle plot-order edit.
+	 */
+	function applyLargeRectanglePlotOrder(): void {
+		updateRegisteredPlotOrder( 'largeRectangle' );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Applies a large polygon plot-order edit.
+	 */
+	function applyLargePolygonPlotOrder(): void {
+		updateRegisteredPlotOrder( 'largePolygon' );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Applies a large circle plot-order edit.
+	 */
+	function applyLargeCirclePlotOrder(): void {
+		updateRegisteredPlotOrder( 'largeCircle' );
 		applyGroundDebugSettings();
 	}
 
@@ -897,6 +1311,39 @@ export function runGroundDemo(): void {
 	}
 
 	/**
+	 * Rebuilds only the large rectangle primitive.
+	 */
+	function rebuildLargeGroundRectangle(): void {
+		scene.remove( largeGroundRectangle.classification.group );
+		largeGroundRectangle.dispose();
+		largeGroundRectangle = createLargeGroundRectangle();
+		scene.add( largeGroundRectangle.classification.group );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Rebuilds only the large polygon primitive.
+	 */
+	function rebuildLargeGroundPolygon(): void {
+		scene.remove( largeGroundPolygon.classification.group );
+		largeGroundPolygon.dispose();
+		largeGroundPolygon = createLargeGroundPolygon();
+		scene.add( largeGroundPolygon.classification.group );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Rebuilds only the large circle primitive.
+	 */
+	function rebuildLargeGroundCircle(): void {
+		scene.remove( largeGroundCircle.classification.group );
+		largeGroundCircle.dispose();
+		largeGroundCircle = createLargeGroundCircle();
+		scene.add( largeGroundCircle.classification.group );
+		applyGroundDebugSettings();
+	}
+
+	/**
 	 * Creates the lil-gui control surface for render-pass diagnosis.
 	 */
 	function createGroundDebugGui(): GUI {
@@ -904,10 +1351,22 @@ export function runGroundDemo(): void {
 		gui.domElement.style.right = '16px';
 		gui.domElement.style.top = '16px';
 
+		// "Camera" folder at the top of the GUI hosts navigation shortcuts.
+		// Right now there's only the "fly to plot" button — wraps a no-arg
+		// function inside an object literal because lil-gui renders any
+		// `gui.add(obj, key)` whose value is a function as a clickable
+		// button. Useful because the default 720km altitude view shows
+		// nothing of the ~10 m primitives, and scrolling all the way down
+		// with the mouse wheel takes dozens of seconds.
+		const cameraFolder = gui.addFolder( 'Camera' );
+		cameraFolder.add( {
+			flyToPlot: () => flyToPlot(),
+		}, 'flyToPlot' ).name( 'fly to plot (1:1)' );
+
 		const rectangleFolder = gui.addFolder( 'Rectangle' );
 		rectangleFolder.add( rectangleGuiModel, 'points' ).name( 'points' ).onFinishChange( rebuildRectangleFromPointsText ).listen();
 		rectangleFolder.addColor( debugSettings, 'strokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
-		rectangleFolder.add( debugSettings, 'strokeWidth', 0.0, 100000.0, 100.0 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundRectangle );
+		rectangleFolder.add( debugSettings, 'strokeWidth', 0.0, 20.0, 0.5 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundRectangle );
 		rectangleFolder.add( debugSettings, 'strokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
 		rectangleFolder.addColor( debugSettings, 'fillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		rectangleFolder.add( debugSettings, 'fillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
@@ -920,7 +1379,7 @@ export function runGroundDemo(): void {
 		polygonFolder.add( debugSettings, 'polygonVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
 		polygonFolder.add( debugSettings, 'polygonPlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyPolygonPlotOrder ).listen();
 		polygonFolder.addColor( debugSettings, 'polygonStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
-		polygonFolder.add( debugSettings, 'polygonStrokeWidth', 0.0, 100000.0, 100.0 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundPolygon );
+		polygonFolder.add( debugSettings, 'polygonStrokeWidth', 0.0, 20.0, 0.5 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundPolygon );
 		polygonFolder.add( debugSettings, 'polygonStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
 		polygonFolder.addColor( debugSettings, 'polygonFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		polygonFolder.add( debugSettings, 'polygonFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
@@ -932,7 +1391,7 @@ export function runGroundDemo(): void {
 		circleFolder.add( debugSettings, 'circlePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyCirclePlotOrder ).listen();
 		circleFolder.add( debugSettings, 'circleCenterLon', - 180.0, 180.0, 0.0001 ).name( 'center lon' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleCenterLat', - 90.0, 90.0, 0.0001 ).name( 'center lat' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
-		circleFolder.add( debugSettings, 'circleRadius', 1.0, 1000000.0, 1.0 ).name( 'radius m' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleRadius', 1.0, 20.0, 0.5 ).name( 'radius m' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleHeight', - 10000.0, 10000.0, 1.0 ).name( 'height m' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleExtrudedHeight', - 10000.0, 10000.0, 1.0 ).name( 'extrudedHeight m' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleMinimumHeight', - 200000.0, 200000.0, 100.0 ).name( 'minHeight fn' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
@@ -946,14 +1405,50 @@ export function runGroundDemo(): void {
 		).name( 'granularity rad' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleStRotationRadians', - Math.PI, Math.PI, 0.001 ).name( 'stRotation rad' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleRingCount', 1, 12, 1 ).name( 'ring count' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
-		circleFolder.add( debugSettings, 'circleRingGapMeters', 0.0, 1000000.0, 1.0 ).name( 'ring gap m' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
+		circleFolder.add( debugSettings, 'circleRingGapMeters', 0.0, 20.0, 0.5 ).name( 'ring gap m' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleSectorStartDegrees', - 360.0, 360.0, 1.0 ).name( 'sector start deg' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.add( debugSettings, 'circleSectorAngleDegrees', - 360.0, 360.0, 1.0 ).name( 'sector angle deg' ).onFinishChange( rebuildGroundCircleFromGui ).listen();
 		circleFolder.addColor( debugSettings, 'circleStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
-		circleFolder.add( debugSettings, 'circleStrokeWidth', 0.0, 100000.0, 100.0 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundCircle );
+		circleFolder.add( debugSettings, 'circleStrokeWidth', 0.0, 20.0, 0.5 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundCircle );
 		circleFolder.add( debugSettings, 'circleStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
 		circleFolder.addColor( debugSettings, 'circleFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		circleFolder.add( debugSettings, 'circleFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
+
+		const largeFolder = gui.addFolder( 'Large Scale' );
+		const largeRectangleFolder = largeFolder.addFolder( 'Rectangle 10km x 5km' );
+		largeRectangleFolder.add( debugSettings, 'largeRectangleVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		largeRectangleFolder.add( debugSettings, 'largeRectanglePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyLargeRectanglePlotOrder ).listen();
+		largeRectangleFolder.add( debugSettings, 'largeRectangleWidthMeters', 1000.0, 20000.0, 100.0 ).name( 'width m' ).onFinishChange( rebuildLargeGroundRectangle ).listen();
+		largeRectangleFolder.add( debugSettings, 'largeRectangleHeightMeters', 1000.0, 20000.0, 100.0 ).name( 'height m' ).onFinishChange( rebuildLargeGroundRectangle ).listen();
+		largeRectangleFolder.addColor( debugSettings, 'largeRectangleStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		largeRectangleFolder.add( debugSettings, 'largeRectangleStrokeWidth', 0.0, 1000.0, 25.0 ).name( 'strokeWidth' ).onFinishChange( rebuildLargeGroundRectangle );
+		largeRectangleFolder.add( debugSettings, 'largeRectangleStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		largeRectangleFolder.addColor( debugSettings, 'largeRectangleFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
+		largeRectangleFolder.add( debugSettings, 'largeRectangleFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
+		largeRectangleFolder.close();
+
+		const largePolygonFolder = largeFolder.addFolder( 'Polygon 10km' );
+		largePolygonFolder.add( debugSettings, 'largePolygonVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		largePolygonFolder.add( debugSettings, 'largePolygonPlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyLargePolygonPlotOrder ).listen();
+		largePolygonFolder.add( debugSettings, 'largePolygonRotationDegrees', - 180.0, 180.0, 1.0 ).name( 'rotation deg' ).onFinishChange( rebuildLargeGroundPolygon ).listen();
+		largePolygonFolder.addColor( debugSettings, 'largePolygonStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		largePolygonFolder.add( debugSettings, 'largePolygonStrokeWidth', 0.0, 1000.0, 25.0 ).name( 'strokeWidth' ).onFinishChange( rebuildLargeGroundPolygon );
+		largePolygonFolder.add( debugSettings, 'largePolygonStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		largePolygonFolder.addColor( debugSettings, 'largePolygonFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
+		largePolygonFolder.add( debugSettings, 'largePolygonFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
+		largePolygonFolder.close();
+
+		const largeCircleFolder = largeFolder.addFolder( 'Circle 5km' );
+		largeCircleFolder.add( debugSettings, 'largeCircleVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		largeCircleFolder.add( debugSettings, 'largeCirclePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyLargeCirclePlotOrder ).listen();
+		largeCircleFolder.add( debugSettings, 'largeCircleRadius', 1000.0, 10000.0, 100.0 ).name( 'radius m' ).onFinishChange( rebuildLargeGroundCircle ).listen();
+		largeCircleFolder.addColor( debugSettings, 'largeCircleStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		largeCircleFolder.add( debugSettings, 'largeCircleStrokeWidth', 0.0, 1000.0, 25.0 ).name( 'strokeWidth' ).onFinishChange( rebuildLargeGroundCircle );
+		largeCircleFolder.add( debugSettings, 'largeCircleStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		largeCircleFolder.addColor( debugSettings, 'largeCircleFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
+		largeCircleFolder.add( debugSettings, 'largeCircleFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
+		largeCircleFolder.close();
+		largeFolder.close();
 
 		const passesFolder = gui.addFolder( 'Passes' );
 		passesFolder.add( debugSettings, 'showFrontStencil' ).name( 'front stencil' ).onChange( applyGroundDebugSettings );
@@ -984,6 +1479,41 @@ export function runGroundDemo(): void {
 
 	applyGroundDebugSettings();
 	const debugGui = createGroundDebugGui();
+
+	// ── Arrow subsystem ─────────────────────────────────────────────────
+	// The 5 special-shape arrows (fine / assault direction / attack /
+	// swallowtail / curved) live in their own subsystem so this file does
+	// not need to know any arrow geometry. Construction happens after
+	// debugGui so the arrows can attach their folder to the same GUI; it
+	// also shares the demo's PlotOrderRegistry, so the arrows participate
+	// in the same global render-order pool as the rectangle / polygon /
+	// circle primitives above.
+	//
+	// Currently gated by `ENABLE_ARROW_SUBSYSTEM` for an isolation test: if
+	// the curved-band fill cut reproduces with this flag false (i.e. only
+	// rectangle + polygon + circle in the scene, each at distinct lon/lat),
+	// the bug is intrinsic to the ground primitive pipeline and not
+	// something arrow-side code introduced.
+	if ( ENABLE_ARROW_SUBSYSTEM ) {
+		arrowSubsystem = new ArrowSubsystem( {
+			scene,
+			parentGui: debugGui,
+			plotOrderRegistry,
+			centerLongitude: RECTANGLE_CENTER_LON,
+			centerLatitude: RECTANGLE_CENTER_LAT,
+			fragmentCull: debugSettings.fragmentCull,
+			passVisibility: {
+				frontStencil: debugSettings.showFrontStencil,
+				backStencil: debugSettings.showBackStencil,
+				color: debugSettings.showColorPass,
+			},
+		} );
+		// Run apply once more so the subsystem picks up the host's current
+		// fragmentCull + pass-visibility flags via the new arrowSubsystem !== null
+		// branch (the first applyGroundDebugSettings() above ran before the
+		// subsystem existed and intentionally skipped that branch).
+		applyGroundDebugSettings();
+	}
 
 	let tileLoadError = '';
 	tilesRenderer.addEventListener( 'load-error', event => {
@@ -1047,6 +1577,34 @@ export function runGroundDemo(): void {
 			height: renderer.domElement.height,
 			camera,
 		} );
+		largeGroundRectangle.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
+		largeGroundPolygon.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
+		largeGroundCircle.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
+
+		// Forward the host's frame state to every arrow primitive so the
+		// arrows participate in the same depth + viewport classification path
+		// the rectangle / polygon / circle primitives use above.
+		arrowSubsystem?.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
 
 		renderer.render( scene, camera );
 
@@ -1061,6 +1619,11 @@ export function runGroundDemo(): void {
 
 		const assetIdReported = readStringEnv( 'VITE_CESIUM_ION_ASSET_ID', '96188' );
 		const assetIdLabel = assetIdReported === '1' ? '96188' : assetIdReported;
+		// Arrow info lines, one per arrow type. Joined with `\n` so the
+		// fixed info panel stays a single flat text block.
+		const arrowInfoBlock = arrowSubsystem
+			? arrowSubsystem.getInfoLines().map( ( line ) => `${ line }\n` ).join( '' )
+			: '';
 		infoBody.textContent =
 			`Ground adapter: Cesium-free rectangle + polygon (math/ + rectangle/ + polygon/)\n` +
 			`Tiles: 3d-tiles-renderer + Cesium Ion asset ${ assetIdLabel }\n` +
@@ -1071,6 +1634,10 @@ export function runGroundDemo(): void {
 			`Polygon: ${ debugSettings.polygonVisible ? 'on' : 'off' } / order ${ debugSettings.polygonPlotOrder } / points ${ debugSettings.polygonPoints.length } / holes ${ debugSettings.polygonHoles.length } / rotation ${ debugSettings.polygonRotationDegrees.toFixed( 1 ) } deg / hole ${ debugSettings.polygonHole ? 'on' : 'off' }\n` +
 			`Circle: ${ debugSettings.circleVisible ? 'on' : 'off' } / order ${ debugSettings.circlePlotOrder } / center ${ debugSettings.circleCenterLon.toFixed( 5 ) }, ${ debugSettings.circleCenterLat.toFixed( 5 ) } / radius ${ debugSettings.circleRadius.toFixed( 1 ) } m / rings ${ debugSettings.circleRingCount } / gap ${ debugSettings.circleRingGapMeters.toFixed( 1 ) } m / sector ${ debugSettings.circleSectorStartDegrees.toFixed( 0 ) } deg + ${ debugSettings.circleSectorAngleDegrees.toFixed( 0 ) } deg / granularity ${ debugSettings.circleGranularityRadians.toFixed( 5 ) } rad\n` +
 			`Circle shadow heights: ${ debugSettings.circleMinimumHeight.toFixed( 1 ) } m -> ${ debugSettings.circleMaximumHeight.toFixed( 1 ) } m\n` +
+			`Large Rectangle: ${ debugSettings.largeRectangleVisible ? 'on' : 'off' } / order ${ debugSettings.largeRectanglePlotOrder } / ${ ( debugSettings.largeRectangleWidthMeters / 1000.0 ).toFixed( 1 ) } km x ${ ( debugSettings.largeRectangleHeightMeters / 1000.0 ).toFixed( 1 ) } km\n` +
+			`Large Polygon: ${ debugSettings.largePolygonVisible ? 'on' : 'off' } / order ${ debugSettings.largePolygonPlotOrder } / points ${ debugSettings.largePolygonPoints.length } / rotation ${ debugSettings.largePolygonRotationDegrees.toFixed( 1 ) } deg\n` +
+			`Large Circle: ${ debugSettings.largeCircleVisible ? 'on' : 'off' } / order ${ debugSettings.largeCirclePlotOrder } / radius ${ ( debugSettings.largeCircleRadius / 1000.0 ).toFixed( 1 ) } km\n` +
+			arrowInfoBlock +
 			`Debug surface: ${ debugSettings.showDebugSurface ? 'on' : 'off' }\n` +
 			`Rectangle stroke: ${ debugSettings.strokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.strokeOpacity.toFixed( 0 ) }%\n` +
 			`Polygon stroke: ${ debugSettings.polygonStrokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.polygonStrokeOpacity.toFixed( 0 ) }%\n` +
@@ -1106,6 +1673,18 @@ export function runGroundDemo(): void {
 		},
 		get groundCircle() {
 			return groundCircle;
+		},
+		get largeGroundRectangle() {
+			return largeGroundRectangle;
+		},
+		get largeGroundPolygon() {
+			return largeGroundPolygon;
+		},
+		get largeGroundCircle() {
+			return largeGroundCircle;
+		},
+		get arrowSubsystem() {
+			return arrowSubsystem;
 		},
 	};
 

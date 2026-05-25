@@ -26,6 +26,7 @@ import {
 
 import {
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
+	CESIUM_GROUND_NON_PICKABLE_LAYER,
 	CESIUM_MAXIMUM_SCREEN_SPACE_ERROR,
 	MAX_POLYGON_STYLE_VERTICES,
 	SCENE_MODE_3D,
@@ -67,6 +68,11 @@ function createViewportTransformation( width: number, height: number ): Matrix4 
 const viewRotationFloat64 = new Float64Array( 16 );
 const projectionFloat64 = new Float64Array( 16 );
 const mvpFloat64 = new Float64Array( 16 );
+const cpuPlaneScratch = {
+	swEye: new Float64Array( 3 ),
+	eastEye: new Float64Array( 3 ),
+	northEye: new Float64Array( 3 ),
+};
 
 /**
  * Builds the column-major rotation-only view matrix from `camera.quaternion`
@@ -239,6 +245,103 @@ function writeMatrix3FromFloat64Mat4( source: Float64Array, destination: Matrix3
 }
 
 /**
+ * Multiplies a world-space direction by the Float64 view rotation matrix.
+ *
+ * @param source Direction vector in ECEF/world coordinates.
+ * @param out Float64Array(3) receiver in eye coordinates.
+ */
+function writeEyeDirectionFloat64( source: Vector3, out: Float64Array ): void {
+	const x = source.x;
+	const y = source.y;
+	const z = source.z;
+
+	out[ 0 ] = viewRotationFloat64[ 0 ] * x + viewRotationFloat64[ 4 ] * y + viewRotationFloat64[ 8 ] * z;
+	out[ 1 ] = viewRotationFloat64[ 1 ] * x + viewRotationFloat64[ 5 ] * y + viewRotationFloat64[ 9 ] * z;
+	out[ 2 ] = viewRotationFloat64[ 2 ] * x + viewRotationFloat64[ 6 ] * y + viewRotationFloat64[ 10 ] * z;
+}
+
+/**
+ * Writes eye-space planar classification planes from CPU Float64 math.
+ *
+ * The Cesium shader normally derives these planes in the vertex shader from
+ * RTE uniforms. That is fine for broad classification, but small 1:1 meter
+ * circles expose float-axis drift in the procedural ring/circle styling. We
+ * therefore compute the exact eye-space west/south planes on the CPU and let
+ * the fragment shader consume them directly for local meter coordinates.
+ *
+ * @param frameState Current Three-side frame state.
+ * @param uniforms Shared material uniforms updated in place.
+ */
+function updateCpuPlanarUniforms(
+	frameState: CesiumGroundFrameState,
+	uniforms: SharedUniforms,
+): void {
+	const swHigh = uniforms.u_southWest_HIGH.value;
+	const swLow = uniforms.u_southWest_LOW.value;
+	const eastward = uniforms.u_eastward.value;
+	const northward = uniforms.u_northward.value;
+	const cameraPosition = frameState.camera.position;
+	const scratch = cpuPlaneScratch;
+
+	const swRelativeX = swHigh.x + swLow.x - cameraPosition.x;
+	const swRelativeY = swHigh.y + swLow.y - cameraPosition.y;
+	const swRelativeZ = swHigh.z + swLow.z - cameraPosition.z;
+
+	scratch.swEye[ 0 ] =
+		viewRotationFloat64[ 0 ] * swRelativeX +
+		viewRotationFloat64[ 4 ] * swRelativeY +
+		viewRotationFloat64[ 8 ] * swRelativeZ;
+	scratch.swEye[ 1 ] =
+		viewRotationFloat64[ 1 ] * swRelativeX +
+		viewRotationFloat64[ 5 ] * swRelativeY +
+		viewRotationFloat64[ 9 ] * swRelativeZ;
+	scratch.swEye[ 2 ] =
+		viewRotationFloat64[ 2 ] * swRelativeX +
+		viewRotationFloat64[ 6 ] * swRelativeY +
+		viewRotationFloat64[ 10 ] * swRelativeZ;
+
+	writeEyeDirectionFloat64( eastward, scratch.eastEye );
+	writeEyeDirectionFloat64( northward, scratch.northEye );
+
+	const eastLength = Math.max(
+		Math.hypot( scratch.eastEye[ 0 ], scratch.eastEye[ 1 ], scratch.eastEye[ 2 ] ),
+		1.0e-12,
+	);
+	const northLength = Math.max(
+		Math.hypot( scratch.northEye[ 0 ], scratch.northEye[ 1 ], scratch.northEye[ 2 ] ),
+		1.0e-12,
+	);
+
+	const eastX = scratch.eastEye[ 0 ] / eastLength;
+	const eastY = scratch.eastEye[ 1 ] / eastLength;
+	const eastZ = scratch.eastEye[ 2 ] / eastLength;
+	const northX = scratch.northEye[ 0 ] / northLength;
+	const northY = scratch.northEye[ 1 ] / northLength;
+	const northZ = scratch.northEye[ 2 ] / northLength;
+
+	uniforms.u_cpuWestPlane.value.set(
+		eastX,
+		eastY,
+		eastZ,
+		- (
+			eastX * scratch.swEye[ 0 ] +
+			eastY * scratch.swEye[ 1 ] +
+			eastZ * scratch.swEye[ 2 ]
+		),
+	);
+	uniforms.u_cpuSouthPlane.value.set(
+		northX,
+		northY,
+		northZ,
+		- (
+			northX * scratch.swEye[ 0 ] +
+			northY * scratch.swEye[ 1 ] +
+			northZ * scratch.swEye[ 2 ]
+		),
+	);
+}
+
+/**
  * Updates Cesium automatic uniforms for this frame, including the LOG_DEPTH
  * uniforms required by the shadow-volume vertex and fragment shaders.
  *
@@ -272,6 +375,7 @@ function updateFrameStateUniforms( frameState: CesiumGroundFrameState, uniforms:
 	uniforms.czm_modelViewRelativeToEye.value.fromArray( viewRotationFloat64 );
 	uniforms.czm_modelViewProjectionRelativeToEye.value.fromArray( mvpFloat64 );
 	writeMatrix3FromFloat64Mat4( viewRotationFloat64, uniforms.czm_normal.value );
+	updateCpuPlanarUniforms( frameState, uniforms );
 
 	uniforms.czm_globeDepthTexture.value = frameState.depthTexture;
 	uniforms.czm_viewport.value.set( 0.0, 0.0, frameState.width, frameState.height );
@@ -362,6 +466,8 @@ export class CesiumClassificationPrimitive {
 			u_borderEnabled: { value: 0.0 },
 			u_borderWidthMeters: { value: 0.0 },
 			u_innerMetersRect: { value: extents.innerMetersRect },
+			u_cpuWestPlane: { value: new Vector4( 1.0, 0.0, 0.0, 0.0 ) },
+			u_cpuSouthPlane: { value: new Vector4( 0.0, 1.0, 0.0, 0.0 ) },
 			// Polygon-stroke uniforms (additive feature, point-in-polygon test
 			// inside the existing color command — no impact on the LOG_DEPTH
 			// / Float64 / LessEqualDepth precision paths).
@@ -420,6 +526,33 @@ export class CesiumClassificationPrimitive {
 		this.colorMesh = new Mesh( geometry, colorMaterial );
 		this.colorMesh.name = 'CesiumClassificationColorCommand';
 		this.colorMesh.frustumCulled = false;
+
+		// Move the three shadow-volume meshes to the non-pickable layer so
+		// scene raycasts (e.g. GlobeControls' adjustHeight + zoomPoint
+		// resolution via `EnvironmentControls._raycast` →
+		// `raycaster.intersectObject(scene)`) silently skip them.
+		//
+		// Why this matters: these meshes are extruded multi-km boxes
+		// (terrainMinHeight → terrainMaxHeight) used purely to drive the
+		// stencil + colour passes; they're not "real geometry" a user
+		// should be able to click or have the camera collide with. Their
+		// auto-computed boundingSphere is empty (the geometry uses
+		// RTE-encoded `position3DHigh` / `position3DLow` instead of a
+		// standard `position` attribute), so in practice today they don't
+		// produce raycast hits anyway. Marking the layer explicitly is a
+		// defensive belt-and-suspenders so any future change adding a
+		// standard `position` attribute doesn't suddenly start pinning the
+		// camera.
+		//
+		// Three.js Raycaster.intersect is gated by `object.layers.test(
+		// raycaster.layers )` and does NOT check `object.visible`, so this
+		// gives us the right semantics even when the host briefly hides
+		// the group via `group.visible = false`. The host camera must
+		// `camera.layers.enable( CESIUM_GROUND_NON_PICKABLE_LAYER )` to
+		// keep these meshes in the render path — see ground-demo.ts.
+		this.stencilMesh.layers.set( CESIUM_GROUND_NON_PICKABLE_LAYER );
+		this.backStencilMesh.layers.set( CESIUM_GROUND_NON_PICKABLE_LAYER );
+		this.colorMesh.layers.set( CESIUM_GROUND_NON_PICKABLE_LAYER );
 
 		this.setRenderOrder( renderOrder );
 		this.group.add( this.stencilMesh, this.backStencilMesh, this.colorMesh );

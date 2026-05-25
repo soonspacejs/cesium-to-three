@@ -216,6 +216,8 @@ export interface SharedUniforms {
 	u_borderEnabled: { value: number };
 	u_borderWidthMeters: { value: number };
 	u_innerMetersRect: { value: Vector4 };
+	u_cpuWestPlane: { value: Vector4 };
+	u_cpuSouthPlane: { value: Vector4 };
 	u_polygonBorderMode: { value: number };
 	u_polygonPointCount: { value: number };
 	u_polygonPoints: { value: Vector2[] };

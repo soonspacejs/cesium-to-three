@@ -30,13 +30,12 @@ import { computeCirclePlanarExtents } from './circle/circle-extents';
 import { buildCircleShadowVolumeGeometry } from './circle/circle-shadow-volume';
 import {
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
+	CESIUM_GROUND_NON_PICKABLE_LAYER,
 	MAX_CIRCLE_GRANULARITY_RADIANS,
 	MIN_CIRCLE_GRANULARITY_RADIANS,
 } from './constants';
 import { computePolygonPlanarExtents } from './polygon/polygon-extents';
-import {
-	expandPolygonPointsThroughMeters,
-} from './polygon/polygon-helpers';
+import { polygonRenderBoundsThroughMeters } from './polygon/polygon-offset';
 import {
 	normalizePolygonPoints,
 	polygonHierarchyFromLonLatPoints,
@@ -55,7 +54,6 @@ import {
 } from './rectangle/rectangle-helpers';
 import { rectangleRadiansFromDegrees } from './rectangle/rectangle-radians';
 import { buildRectangleShadowVolumeGeometry } from './rectangle/rectangle-shadow-volume';
-import { getTerrainMinMaxHeightsForRectangle } from './terrain-heights';
 import type {
 	CartesianLike,
 	CesiumGroundCirclePrimitiveOptions,
@@ -64,7 +62,6 @@ import type {
 	CesiumGroundRectanglePrimitiveOptions,
 	LonLatPoint,
 	PolygonHierarchyDegrees,
-	RectangleDegrees,
 	RectangleRadians,
 } from './types';
 
@@ -77,73 +74,6 @@ import type {
 function normalizePercentOpacity( opacity: number ): number {
 	const safeOpacity = Number.isFinite( opacity ) ? opacity : 100.0;
 	return Math.min( Math.max( safeOpacity, 0.0 ), 100.0 ) / 100.0;
-}
-
-/**
- * Resolves the minimum and maximum extrusion heights used by the local
- * shadow-volume builder.
- *
- * Caller overrides win, otherwise ApproximateTerrainHeights queries the
- * rectangle for tile-accurate min/max so the shadow volume stays just thick
- * enough to enclose the rendered terrain (one of the precision fixes — kept).
- *
- * @param rectangleDegrees Plot rectangle in WGS84 degrees.
- * @param minimumHeightOverride Optional explicit minimum height.
- * @param maximumHeightOverride Optional explicit maximum height.
- * @returns Resolved min/max heights for buildShadowVolumeGeometry.
- */
-function resolveShadowVolumeHeights(
-	rectangleDegrees: RectangleDegrees,
-	minimumHeightOverride: number | undefined,
-	maximumHeightOverride: number | undefined,
-): { minimumHeight: number; maximumHeight: number } {
-	const terrainHeights = getTerrainMinMaxHeightsForRectangle( rectangleDegrees );
-	const minimumHeight = Number.isFinite( minimumHeightOverride )
-		? ( minimumHeightOverride as number )
-		: terrainHeights.minimumTerrainHeight;
-	let maximumHeight = Number.isFinite( maximumHeightOverride )
-		? ( maximumHeightOverride as number )
-		: terrainHeights.maximumTerrainHeight;
-	if ( maximumHeight <= minimumHeight ) {
-		maximumHeight = minimumHeight + 1.0;
-	}
-	return { minimumHeight, maximumHeight };
-}
-
-/**
- * Computes the outer-ring axis-aligned WGS84 rectangle (degrees) from a flat
- * lon/lat point list. Used both to query ApproximateTerrainHeights and as the
- * polygon stroke planar reference rectangle.
- */
-function rectangleDegreesFromLonLatPointList(
-	points: readonly LonLatPoint[],
-): RectangleDegrees {
-	let west = Number.POSITIVE_INFINITY;
-	let south = Number.POSITIVE_INFINITY;
-	let east = Number.NEGATIVE_INFINITY;
-	let north = Number.NEGATIVE_INFINITY;
-
-	for ( const point of points ) {
-		const lon = point[ 0 ];
-		const lat = point[ 1 ];
-		if ( ! Number.isFinite( lon ) || ! Number.isFinite( lat ) ) {
-			continue;
-		}
-		west = Math.min( west, lon );
-		east = Math.max( east, lon );
-		south = Math.min( south, lat );
-		north = Math.max( north, lat );
-	}
-
-	if (
-		! Number.isFinite( west ) || ! Number.isFinite( east ) ||
-		! Number.isFinite( south ) || ! Number.isFinite( north ) ||
-		east <= west || north <= south
-	) {
-		throw new Error( 'Polygon points must contain at least three finite lon/lat values forming a non-degenerate ring.' );
-	}
-
-	return { west, south, east, north };
 }
 
 /**
@@ -267,11 +197,23 @@ export class CesiumGroundRectanglePrimitive {
 
 		const granularity = options.granularityRadians ?? ( Math.PI / 180.0 / 32.0 );
 
-		const { minimumHeight, maximumHeight } = resolveShadowVolumeHeights(
-			renderRectangleDegrees,
-			options.minimumHeight,
-			options.maximumHeight,
-		);
+		// Shadow-volume vertical window. Caller overrides win, otherwise fall
+		// back to the Cesium ±55km altitude window (CESIUM_GLOBE_MINIMUM_ALTITUDE).
+		//
+		// Why a flat ±55km instead of an ApproximateTerrainHeights-tight box:
+		//   The shadow volume must STAY BIGGER than the camera's far frustum
+		//   slice at any altitude the user is going to fly through, otherwise
+		//   the far plane bites into the volume's top/sides and the Z-fail
+		//   stencil count for the affected fragments becomes incoherent (a
+		//   curved band where fill is missing — same artefact circle never
+		//   exhibits because its volume was already on this ±55km scale).
+		//   A 110km vertical extent is enough to keep the box fully outside
+		//   the frustum bounds at every realistic camera altitude.
+		const minimumHeight = options.minimumHeight ?? - CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		let maximumHeight = options.maximumHeight ?? CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		if ( maximumHeight <= minimumHeight ) {
+			maximumHeight = minimumHeight + 1.0;
+		}
 
 		const threeGeometry = buildRectangleShadowVolumeGeometry( {
 			rectangle: renderRectangleRadians,
@@ -283,7 +225,6 @@ export class CesiumGroundRectanglePrimitive {
 		const extents = computeRectanglePlanarExtents(
 			renderRectangleRadians,
 			fillRectangleRadians,
-			maximumHeight,
 		);
 
 		const color = new Color( options.fillColor );
@@ -325,6 +266,35 @@ export class CesiumGroundRectanglePrimitive {
 			this.debugSurface.name = 'CesiumGroundRectangleDebugSurface';
 			this.debugSurface.frustumCulled = false;
 			this.debugSurface.renderOrder = ( options.renderOrder ?? 10 ) + 2;
+
+			// Move the debug surface to the non-pickable layer.
+			//
+			// This is the only Cesium-ground mesh with a regular Three.js
+			// `position` attribute + a real bounding sphere — the shadow
+			// volume meshes use RTE-encoded `position3DHigh` /
+			// `position3DLow` so their boundingSphere is empty and they
+			// don't produce raycast hits in practice. The debug surface
+			// does, which makes GlobeControls (`EnvironmentControls._raycast`
+			// → `Raycaster.intersectObject(scene)`) treat it as terrain:
+			//   - `_updateZoomPoint`: zoomPoint lands on the surface at
+			//     debugSurfaceHeight (default 5000m); mouse-wheel zoom
+			//     asymptotically pulls the camera to that altitude and
+			//     gets stuck.
+			//   - `_getPointBelowCamera` / `adjustHeight = true`: returns
+			//     a hit at debugSurfaceHeight, pinning the camera above
+			//     the real terrain.
+			//
+			// Critically, Three.js's `Raycaster.intersect` does NOT honour
+			// `object.visible = false` — only `object.layers`. So toggling
+			// `debugSurface.visible` from the GUI does not stop raycasting;
+			// only a layer change does. We pin this mesh to
+			// CESIUM_GROUND_NON_PICKABLE_LAYER permanently because it's a
+			// debug-only visualization that should never participate in
+			// scene picking. The host camera must enable that layer
+			// (see ground-demo.ts `camera.layers.enable(...)`) so the
+			// mesh still renders.
+			this.debugSurface.layers.set( CESIUM_GROUND_NON_PICKABLE_LAYER );
+
 			this.classification.group.add( this.debugSurface );
 		}
 	}
@@ -421,7 +391,7 @@ export class CesiumGroundPolygonPrimitive {
 			0.0,
 		);
 		const renderOuter = strokeWidthMeters > 0.0
-			? expandPolygonPointsThroughMeters( rotatedOuter, strokeWidthMeters )
+			? polygonRenderBoundsThroughMeters( rotatedOuter, strokeWidthMeters )
 			: rotatedOuter.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
 
 		// Fill + render hierarchies. The fill ring drives planar style points
@@ -434,13 +404,17 @@ export class CesiumGroundPolygonPrimitive {
 		// Granularity default keeps parity with the prior adapter.
 		const granularity = options.granularityRadians ?? ( Math.PI / 180.0 / 32.0 );
 
-		// Terrain-aware shadow-volume window (precision fix preserved).
-		const rectangleDegrees = rectangleDegreesFromLonLatPointList( renderOuter );
-		const { minimumHeight, maximumHeight } = resolveShadowVolumeHeights(
-			rectangleDegrees,
-			options.minimumHeight,
-			options.maximumHeight,
-		);
+		// Shadow-volume vertical window. Same flat ±55km fallback the
+		// rectangle / circle primitives use (see rectangle constructor for
+		// the full reasoning) — terrain-aware tight boxes get bitten by the
+		// camera's far plane and trigger curved-band fill artefacts, the
+		// ±55km extent stays outside the frustum at every realistic camera
+		// altitude.
+		const minimumHeight = options.minimumHeight ?? - CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		let maximumHeight = options.maximumHeight ?? CESIUM_GLOBE_MINIMUM_ALTITUDE;
+		if ( maximumHeight <= minimumHeight ) {
+			maximumHeight = minimumHeight + 1.0;
+		}
 
 		// One local call replaces the previous 6-step Cesium chain.
 		const threeGeometry = buildPolygonShadowVolumeGeometry( {
@@ -456,7 +430,6 @@ export class CesiumGroundPolygonPrimitive {
 		const extents = computePolygonPlanarExtents(
 			polygonRectangle,
 			renderHierarchy,
-			maximumHeight,
 		);
 
 		// Polygon stroke planar reference points — the fill ring projected into
@@ -465,7 +438,6 @@ export class CesiumGroundPolygonPrimitive {
 			polygonRectangle,
 			renderHierarchy,
 			rotatedOuter,
-			maximumHeight,
 		);
 
 		// Fill color / alpha resolution: new API uses fillColor + fillOpacity
@@ -626,7 +598,6 @@ export class CesiumGroundCirclePrimitive {
 			centerLatitude,
 			fillRadiusMeters,
 			renderRadiusMeters,
-			maximumHeight,
 		);
 
 		const color = new Color( options.fillColor );

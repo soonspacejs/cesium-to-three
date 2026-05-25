@@ -1,7 +1,7 @@
 // ============================================================
 // polygon/polygon-extents.ts — Polygon PlanarExtents 计算
 // 层级:L3(基于 math/* + rectangle/rectangle-radians + polygon-hierarchy)
-// 职责:从 polygon hierarchy(Vector3 ECEF)+ outer ring 外接矩形 + maxHeight,
+// 职责:从 polygon hierarchy(Vector3 ECEF)+ outer ring 外接矩形 + 地面 ENU 样式平面,
 //      产 6 个 PlanarExtents uniform(供 classification.ts 的
 //      ShadowVolumeAppearanceVS 用):
 //        - southWestHigh / southWestLow(RTE 编码的 SW 角点 ECEF)
@@ -55,7 +55,7 @@ const _extentsLow = new Vector3();
  *
  * 对外环 + 每个 hole 的每个顶点:
  *   1. ECEF → cartographic(取出 lon/lat)
- *   2. 把 height 改为 input `height`(典型 maxHeight)
+ *   2. 把 height 固定为 0,让样式坐标落在地面 ENU 平面
  *   3. cartographic → ECEF(在 `height` 上的 ECEF 位置)
  *   4. inverseEnu × ECEF → ENU 局部 (e, n, u)
  *   5. 累计 (e, n) 的 min/max
@@ -63,13 +63,11 @@ const _extentsLow = new Vector3();
  * 注:第 5 步丢弃 z(U 分量),因为我们只关心 ENU 平面的 AABB。
  *
  * @param hierarchy   Polygon hierarchy(Vector3 ECEF,已在椭球面)。
- * @param height      参考高度(米),典型为 maximumHeight。
  * @param inverseEnu  ECEF → ENU 局部坐标系的变换矩阵(已由 caller 算好)。
  * @returns           ENU 平面的 AABB { minX, maxX, minY, maxY }(米)。
  */
 function computePolygonPlanarBounds(
 	hierarchy: PolygonHierarchy,
-	height: number,
 	inverseEnu: Matrix4,
 ): PlanarBounds {
 	let minX = Number.POSITIVE_INFINITY;
@@ -91,7 +89,7 @@ function computePolygonPlanarBounds(
 			}
 
 			// 改高度,转回 ECEF
-			_boundsPointCarto.height = height;
+			_boundsPointCarto.height = 0.0;
 			cartographicToCartesian( _boundsPointCarto, _boundsPointCartesian );
 
 			// ECEF → ENU 局部坐标(原地 cartesian → ENU)
@@ -125,10 +123,10 @@ function computePolygonPlanarBounds(
  * 产 6 个 PlanarExtents uniform。
  *
  * 算法 5 步(与原 geometry.ts:233-298 字节级一致):
- *   Step 1 · 中心点:rectangleCenter(polygonRectangle) → 改 height = maxHeight → ECEF
+ *   Step 1 · 中心点:rectangleCenter(polygonRectangle) → 改 height = 0 → ECEF
  *   Step 2 · ENU 矩阵:eastNorthUpToFixedFrame(centerCartesian)
  *            + ecefToEnu = enuMatrix.invert()
- *   Step 3 · ENU 平面 AABB:computePolygonPlanarBounds(hierarchy, maxHeight, ecefToEnu)
+ *   Step 3 · ENU 平面 AABB:computePolygonPlanarBounds(hierarchy, ecefToEnu)
  *   Step 4 · 三个角点(SW, SE, NW)在 ENU 平面坐标(米),
  *            通过 enuMatrix × (x, y, 0) 变回 ECEF
  *            → eastward = SE - SW,northward = NW - SW
@@ -139,17 +137,15 @@ function computePolygonPlanarBounds(
  *
  * @param polygonRectangle Outer ring 外接 lon/lat 矩形(弧度,由 computePolygonRectangle 产)。
  * @param hierarchy        Polygon hierarchy(Vector3 ECEF,已校验)。
- * @param maximumHeight    顶面高度(米),作为 ENU 平面参考高度。
  * @returns                PlanarExtents(6 个 uniform 字段)。
  */
 export function computePolygonPlanarExtents(
 	polygonRectangle: RectangleRadians,
 	hierarchy: PolygonHierarchy,
-	maximumHeight: number,
 ): PlanarExtents {
-	// Step 1 · center cartographic(矩形几何中心)→ at maxHeight → ECEF
+	// Step 1 · center cartographic(矩形几何中心)→ at ground height → ECEF
 	rectangleCenter( polygonRectangle, _extentsCenterCarto );
-	_extentsCenterCarto.height = maximumHeight;
+	_extentsCenterCarto.height = 0.0;
 	cartographicToCartesian( _extentsCenterCarto, _extentsCenterCartesian );
 
 	// Step 2 · ENU 矩阵 + 逆矩阵
@@ -159,7 +155,6 @@ export function computePolygonPlanarExtents(
 	// Step 3 · ENU 平面 AABB
 	const bounds = computePolygonPlanarBounds(
 		hierarchy,
-		maximumHeight,
 		_extentsInverseEnu,
 	);
 	const eastExtentMeters = Math.max( bounds.maxX - bounds.minX, 1.0 );

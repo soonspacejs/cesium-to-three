@@ -52,22 +52,49 @@ import type { SharedUniforms } from './types';
 const ENABLE_LOG_DEPTH = true;
 
 /**
- * Cesium-equivalent log depth helpers expressed in GLSL3. Two key adaptations
- * vs the stock Cesium snippets:
+ * Cesium-equivalent log-depth helpers expressed in GLSL3. Behaviour matches
+ * the stock Cesium snippets byte-for-byte in the parts that affect the
+ * Z-fail stencil shadow volume pipeline:
  *
- * - `czm_vertexLogDepth()` matches Cesium exactly: it writes the
- *   `v_depthFromNearPlusOne` varying and clamps `gl_Position.z` so a vertex
- *   that landed outside `[-w, w]` due to log-depth precision still reaches
- *   the fragment shader.
+ * - `czm_vertexLogDepth()` writes `v_depthFromNearPlusOne` and clamps
+ *   `gl_Position.z` to `[-w, w]` so a vertex that landed outside that
+ *   range due to log-depth precision still reaches the fragment shader
+ *   (emulates GL_DEPTH_CLAMP for the vertex stage; matches
+ *   {@link czm_updatePositionDepth} in Cesium's vertexLogDepth.glsl).
+ *
  * - `czm_writeLogDepth()` uses Cesium's `log2(depth) /
- *   log2(czm_farDepthFromNearPlusOne)` formula, but **clamps** to the near
- *   plane (`gl_FragDepth = 0.0`) and far plane (`gl_FragDepth = 1.0`)
- *   instead of `discard`ing fragments outside the frustum. Cesium can use
- *   discard because its multifrustum keeps near/far close to the shadow
- *   volume. Three runs a single frustum, so a shadow volume that spans the
- *   near plane must clamp to keep stencil counts (DECR_WRAP / INCR_WRAP)
- *   intact - dropping those fragments would make the final color command
- *   under- or over-fill the plot.
+ *   log2(czm_farDepthFromNearPlusOne)` formula and **discards** fragments
+ *   outside the frustum. This is **the critical bit** for shadow volumes:
+ *   a previous revision of this file clamped to `gl_FragDepth = 0.0` /
+ *   `1.0` instead, with a comment claiming it kept stencil counts intact
+ *   under a single frustum. That reasoning was wrong:
+ *     - A *back* face that crosses the far plane, clamped to
+ *       `gl_FragDepth = 1.0`, **fails** the LessEqual depth test
+ *       (`1.0 > terrain_depth`) and runs `stencilZFail = INCR_WRAP`. That
+ *       contributes an extra +1 to the stencil for the pixel.
+ *     - A *front* face that crosses the far plane gives the symmetric
+ *       extra -1 (DECR_WRAP).
+ *     - The two only cancel when both faces project onto the same pixel.
+ *       For a shadow-volume box clipped asymmetrically by the far plane
+ *       (the far-camera side of the box past the plane, the near-camera
+ *       side still in-frustum), some terrain pixels are only touched by
+ *       the clipped face's stray ±1, while other pixels see only the
+ *       in-frustum face's normal contribution. The mismatch leaves a
+ *       visible curved band where the stencil net flips between
+ *       "inside" and "outside" the volume — exactly the artefact
+ *       observed when the arrow primitives' tall shadow volumes started
+ *       getting clipped by `camera.far = horizonDistance + 0.1`.
+ *
+ *   Cesium's discard avoids this entirely: the clipped face simply
+ *   doesn't write to the stencil at all, so it neither over- nor
+ *   under-counts.
+ *
+ * - **Terrain log-depth** in `terrain-log-depth.ts` still uses the
+ *   clamp-to-0/1 form on purpose: terrain has no stencil pass, and the
+ *   clamp prevents log-depth precision rounding from accidentally
+ *   discarding terrain that *just barely* oversteps the frustum (the
+ *   original justification for clamping). The shadow-volume stencil
+ *   pass has a stricter correctness requirement and must discard.
  */
 const LOG_DEPTH_VERTEX_HELPERS = /* glsl */ `
 #ifdef LOG_DEPTH
@@ -85,13 +112,16 @@ const LOG_DEPTH_FRAGMENT_HELPERS = /* glsl */ `
 in float v_depthFromNearPlusOne;
 
 void czm_writeLogDepth( float depth ) {
-	if ( depth <= 1.0 ) {
-		gl_FragDepth = 0.0;
-	} else if ( depth > czm_farDepthFromNearPlusOne ) {
-		gl_FragDepth = 1.0;
-	} else {
-		gl_FragDepth = log2( depth ) * czm_oneOverLog2FarDepthFromNearPlusOne;
+	// Match Cesium writeLogDepth.glsl exactly: drop the fragment when its
+	// log-depth value sits past the near or far plane. For shadow-volume
+	// stencil correctness we'd rather miss a fragment entirely (= zero
+	// contribution to the +1/-1 stencil tally) than synthesize a
+	// fake-far-plane fragment that always depth-fails and feeds a
+	// phantom DECR_WRAP / INCR_WRAP into the stencil.
+	if ( depth <= 0.9999999 || depth > czm_farDepthFromNearPlusOne ) {
+		discard;
 	}
+	gl_FragDepth = log2( depth ) * czm_oneOverLog2FarDepthFromNearPlusOne;
 }
 
 void czm_writeLogDepth() {
@@ -229,6 +259,8 @@ uniform vec4 u_borderColor;
 uniform float u_borderEnabled;
 uniform float u_borderWidthMeters;
 uniform vec4 u_innerMetersRect;
+uniform vec4 u_cpuWestPlane;
+uniform vec4 u_cpuSouthPlane;
 uniform float u_polygonBorderMode;
 uniform float u_polygonPointCount;
 uniform vec2 u_polygonPoints[${ MAX_POLYGON_STYLE_VERTICES }];
@@ -300,6 +332,30 @@ bool c23_pointInsidePolygon(vec2 point) {
 	return inside;
 }
 
+float c23_distanceToPolygonEdges(vec2 point) {
+	float minDistance = 1.0e20;
+	int count = int(u_polygonPointCount);
+
+	for (int i = 0; i < ${ MAX_POLYGON_STYLE_VERTICES }; i++) {
+		if (i >= count) {
+			break;
+		}
+
+		int nextIndex = i + 1 >= count ? 0 : i + 1;
+		vec2 start = u_polygonPoints[i];
+		vec2 end = u_polygonPoints[nextIndex];
+		vec2 edge = end - start;
+		float edgeLengthSquared = dot(edge, edge);
+		float segmentT = edgeLengthSquared > 1e-12
+			? clamp(dot(point - start, edge) / edgeLengthSquared, 0.0, 1.0)
+			: 0.0;
+		vec2 closest = start + edge * segmentT;
+		minDistance = min(minDistance, distance(point, closest));
+	}
+
+	return minDistance;
+}
+
 ${ cesiumUnpackDepth }
 ${ cesiumWindowToEyeCoordinates }
 ${ cesiumPlaneDistance }
@@ -362,24 +418,41 @@ ${ cesiumPackDepth }
 in float v_depthFromNearPlusOne;
 uniform float czm_farDepthFromNearPlusOne;
 uniform float czm_oneOverLog2FarDepthFromNearPlusOne;
-
-float czm_computeLogDepth() {
-	float depth = v_depthFromNearPlusOne;
-	if ( depth <= 1.0 ) {
-		return 0.0;
-	}
-	if ( depth > czm_farDepthFromNearPlusOne ) {
-		return 1.0;
-	}
-	return log2( depth ) * czm_oneOverLog2FarDepthFromNearPlusOne;
-}
 #endif
 
+// Globe-depth pack pass: discards out-of-frustum terrain fragments so the
+// packed-color render target stays at its cleared sentinel (0,0,0,0)
+// (set in depth.ts via setClearColor(0x000000, 0.0), matching Cesium's
+// GlobeDepth.js:226 Color(0,0,0,0) clear).
+//
+// Why discard instead of clamping to 0.0 / 1.0:
+//   The classification color pass reads this packed depth and reconstructs
+//   the terrain world position via czm_unpackDepth + czm_windowToEye-
+//   Coordinates. The Cesium ShadowVolumeAppearanceFS CULL_FRAGMENTS branch
+//   only honours ONE sentinel (logDepthOrDepth == 0.0) to mean "no terrain
+//   here, skip". Past-far-plane fragments written as 1.0 sneak past that
+//   check and feed czm_windowToEyeCoordinates(fragCoord, 1.0) - a fake
+//   position parked AT the far plane in the camera's view direction. The
+//   shape-specific bounds test then runs on that fake uv:
+//     - Circle's radius test happens to discard for far-away fake positions
+//       (rotationally symmetric, robust)
+//     - Polygon's point-in-polygon and rectangle's axis-aligned-bbox tests
+//       can give either result depending on where camera-forward points,
+//       which produces a wrong fill outline along the camera-far-plane ×
+//       ellipsoid curve.
+//
+//   Cesium-style discard keeps the packed-color at cleared-0 so the same
+//   CULL_FRAGMENTS check catches both "no terrain" AND "terrain past
+//   frustum" with one branch, no shape-specific tuning needed.
 void main() {
 #ifdef LOG_DEPTH
-	float depthForPack = czm_computeLogDepth();
-	gl_FragDepth = depthForPack;
-	out_FragColor = czm_packDepth( depthForPack );
+	float depth = v_depthFromNearPlusOne;
+	if ( depth <= 0.9999999 || depth > czm_farDepthFromNearPlusOne ) {
+		discard;
+	}
+	float logDepth = log2( depth ) * czm_oneOverLog2FarDepthFromNearPlusOne;
+	gl_FragDepth = logDepth;
+	out_FragColor = czm_packDepth( logDepth );
 #else
 	out_FragColor = czm_packDepth( gl_FragCoord.z );
 #endif
@@ -408,7 +481,11 @@ function createColorFragmentBody(): string {
 #ifdef CESIUM_THREE_BORDER
 #ifdef TEXTURE_COORDINATES
 #ifndef SPHERICAL
-    vec2 planarMeters = uv / v_inversePlaneExtents;
+    vec3 cpuPlaneEyeCoordinate = eyeCoordinate.xyz / eyeCoordinate.w;
+    vec2 planarMeters = vec2(
+        czm_planeDistance(u_cpuWestPlane, cpuPlaneEyeCoordinate),
+        czm_planeDistance(u_cpuSouthPlane, cpuPlaneEyeCoordinate)
+    );
     if (u_circleBorderMode > 0.5) {
         // Circle path: ring + sector decoration in the planar meter frame.
         vec2 circleVectorMeters = planarMeters - u_circleCenterMeters;
@@ -473,7 +550,8 @@ function createColorFragmentBody(): string {
         // requested stroke band.
         bool insideFillPolygon = c23_pointInsidePolygon(planarMeters);
         if (!insideFillPolygon) {
-            if (u_borderEnabled < 0.5 || u_borderColor.a <= 0.0) {
+            float outsideDistanceMeters = c23_distanceToPolygonEdges(planarMeters);
+            if (u_borderEnabled < 0.5 || u_borderColor.a <= 0.0 || outsideDistanceMeters > u_borderWidthMeters) {
                 discard;
             }
             color = czm_gammaCorrect(u_borderColor);
