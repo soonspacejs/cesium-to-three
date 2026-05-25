@@ -1,29 +1,29 @@
-# dependencies
+# 依赖目录
 node_modules/
 .pnp
 .pnp.js
 
-# build output
+# 构建产物
 dist/
 dist-ssr/
 *.local
 
-# vite cache
+# Vite 缓存
 .vite/
 
-# environment(本地 token 不能进 git)
+# 环境变量(本地 token 不能进 git)
 .env
 .env.local
 .env.*.local
 
-# logs
+# 日志
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# editor
+# 编辑器本地配置
 .vscode/*
 !.vscode/extensions.json
 .idea/
@@ -34,7 +34,8 @@ lerna-debug.log*
 *.sw?
 .DS_Store
 
-# typescript
+# TypeScript 增量缓存
 *.tsbuildinfo
 
+# 上游 Cesium 完整包快照，仅用于临时比对，不进入仓库
 cesium-packages-source/

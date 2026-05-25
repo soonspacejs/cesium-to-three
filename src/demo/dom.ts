@@ -1,13 +1,13 @@
 // ============================================================
 // dom.ts
-// Layer: demo page DOM utilities.
-// Role: install the page chrome used by the Cesium ground demo.
-// Dependencies: browser DOM APIs.
-// Consumed by: ground-demo.ts.
+// 层级:demo 页面 DOM 工具。
+// 职责:安装 Cesium 贴地 demo 使用的页面样式与信息面板。
+// 依赖:浏览器 DOM API。
+// 被消费:ground-demo.ts。
 // ============================================================
 
 /**
- * Installs a compact page style without relying on a separate stylesheet.
+ * 注入紧凑页面样式，避免 demo 额外依赖独立样式文件。
  */
 export function installPageStyle(): void {
 	const style = document.createElement( 'style' );
@@ -63,9 +63,9 @@ export function installPageStyle(): void {
 }
 
 /**
- * Creates the fixed info panel expected by the demo page.
+ * 创建 demo 页面固定信息面板。
  *
- * @returns The body element whose text is updated per frame.
+ * @returns 每帧更新文本内容的面板主体元素。
  */
 export function createInfoPanel(): HTMLElement {
 	const oldInfoPanel = document.getElementById( 'info-panel' );
@@ -76,7 +76,7 @@ export function createInfoPanel(): HTMLElement {
 	panel.innerHTML = `
 		<div class="title">Cesium GroundPrimitive -> Three + 3D Tiles</div>
 		<div class="body" id="info-body"></div>
-		<div class="hint">drag: globe controls / wheel: zoom / right drag: pan</div>
+		<div class="hint">左键拖拽:旋转 / 滚轮:缩放 / 右键拖拽:平移</div>
 	`;
 	document.body.appendChild( panel );
 

@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "description": "GPU Z-fail Stencil Shadow Volume 贴地算法 — 从 Cesium 移植到 Three.js + 3d-tiles-renderer 的最小可运行 demo",
+  "description": "GPU Z-fail Stencil Shadow Volume 贴地算法，从 Cesium 移植到 Three.js + 3d-tiles-renderer 的最小可运行 demo",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "type-check": "tsc -b --noEmit"
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "3d-tiles-renderer": "^0.4.24",

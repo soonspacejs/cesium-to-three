@@ -1,15 +1,15 @@
 // ============================================================
 // debug-types.ts
-// Layer: demo UI state model.
-// Role: define the mutable lil-gui state objects used by the ground demo.
-// Dependencies: ground adapter shared GIS types.
-// Consumed by: ground-demo.ts.
+// 层级:demo UI 状态模型。
+// 职责:定义贴地 demo 中 lil-gui 使用的可变状态对象。
+// 依赖:贴地适配器共享 GIS 类型。
+// 被消费:ground-demo.ts。
 // ============================================================
 
 import type { LonLatPoint } from '../lib/ground';
 
 export interface GroundDebugSettings {
-	// Rectangle plot
+	// 矩形标绘
 	points: LonLatPoint[];
 	centerLon: number;
 	centerLat: number;
@@ -33,7 +33,7 @@ export interface GroundDebugSettings {
 	showBackStencil: boolean;
 	showColorPass: boolean;
 
-	// Polygon plot
+	// 多边形标绘
 	polygonVisible: boolean;
 	polygonPlotOrder: number;
 	polygonStrokeColor: string;
@@ -46,7 +46,7 @@ export interface GroundDebugSettings {
 	polygonRotationDegrees: number;
 	polygonHole: boolean;
 
-	// Circle plot
+	// 圆形标绘
 	circleVisible: boolean;
 	circlePlotOrder: number;
 	circleCenterLon: number;
@@ -68,7 +68,7 @@ export interface GroundDebugSettings {
 	circleFillColor: string;
 	circleFillOpacity: number;
 
-	// Large-scale companion plots
+	// 大尺度对照标绘
 	largeRectangleVisible: boolean;
 	largeRectanglePlotOrder: number;
 	largeRectangleStrokeColor: string;
@@ -99,7 +99,7 @@ export interface GroundDebugSettings {
 	largeCircleFillColor: string;
 	largeCircleFillOpacity: number;
 
-	// Debug surface
+	// 调试面
 	showDebugSurface: boolean;
 	debugSurfaceHeight: number;
 	debugSurfaceOpacity: number;

@@ -1,17 +1,17 @@
 // ============================================================
 // validation.ts
-// Layer: Cesium-to-Three ground runtime validation.
-// Role: check the WebGL capabilities required by Cesium ground classification.
-// Dependencies: Three.js renderer capabilities.
-// Consumed by: public ground adapter and demos.
+// 层级:Cesium-to-Three 贴地运行时校验。
+// 职责:检查 Cesium ground classification 需要的 WebGL 能力。
+// 依赖:Three.js renderer capabilities。
+// 被消费:公开贴地适配器与 demo。
 // ============================================================
 
 import type { WebGLRenderer } from 'three';
 
 /**
- * Checks the WebGL features Cesium classification needs.
+ * 检查 Cesium classification 需要的 WebGL 特性。
  *
- * @param renderer Active Three WebGL renderer.
+ * @param renderer 当前使用的 Three WebGL renderer。
  */
 export function validateCesiumGroundRenderer( renderer: WebGLRenderer ): void {
 	const gl = renderer.getContext();

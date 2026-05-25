@@ -1,13 +1,10 @@
 // ============================================================
 // ground-demo.ts
-// Layer: runnable Three.js host for the Cesium-free ground adapter.
-// Role:  drives 3d-tiles-renderer terrain, feeds its depth into our
-//        shadow-volume classification pipeline, and exposes a lil-gui surface
-//        that mirrors the reference project's rectangle + polygon GUI
-//        layout (the project does not ship circle / point primitives, so
-//        those sections are intentionally omitted).
-// Dependencies: demo helpers, src/lib/ground, Three.js, 3d-tiles-renderer.
-// Consumed by: main.ts.
+// 层级:Cesium-free 贴地适配器的 Three.js 可运行宿主。
+// 职责:驱动 3d-tiles-renderer 地形，把地形深度喂给 shadow-volume classification
+//      管线，并暴露 lil-gui 调试面板，用于矩形、多边形、圆形和箭头标绘。
+// 依赖:demo helpers、src/lib/ground、Three.js、3d-tiles-renderer。
+// 被消费:main.ts。
 // ============================================================
 
 import {
@@ -60,34 +57,27 @@ import { ArrowSubsystem, type ArrowPlotId } from './arrow-demo';
 
 const RECTANGLE_CENTER_LON = readNumberEnv( 'VITE_PLOT_LON', 86.9250 );
 const RECTANGLE_CENTER_LAT = readNumberEnv( 'VITE_PLOT_LAT', 27.9881 );
-// 1:1 scale test mode: each primitive is ~10 m so a typical close camera
-// puts ~1 px per meter on screen. Half-side ≈ 5 m at lat 28° ≈ 4.5e-5 deg.
+// 1:1 比例测试:每个图元约 10 m；近景相机下约 1 px/m，便于观察贴地误差。
+// 在纬度 28° 附近，半边长约 5 m ≈ 4.5e-5 度。
 const RECTANGLE_HALF_WIDTH_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_WIDTH_DEGREES', 5.0e-5 );
 const RECTANGLE_HALF_HEIGHT_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_HEIGHT_DEGREES', 5.0e-5 );
 const DEBUG_GROUND_SURFACE = readStringEnv( 'VITE_DEBUG_GROUND_SURFACE', 'false' ).toLowerCase() === 'true';
 
-// Arrow subsystem toggle. Kept as a const so it stays easy to flip during
-// debugging. Originally introduced to isolate the (now-fixed) curved fill
-// cut artefact: with arrows off we proved the artefact was intrinsic to the
-// ground primitive pipeline (terrain-aware shadow volume too short) rather
-// than something the arrow code introduced — fix lives in primitives.ts
-// where rectangle / polygon now use the same ±55km flat shadow volume as
-// the circle primitive.
+// 箭头子系统开关。保留为常量，便于调试时快速隔离。
+// 最初用于定位曲线填充被切断的问题:关闭箭头后仍可复现，说明问题来自贴地
+// 图元管线本身，而不是箭头代码。对应修复在 primitives.ts 中，矩形 / 多边形
+// 现在与圆形一样使用 ±55km 的 flat shadow volume。
 const ENABLE_ARROW_SUBSYSTEM = true;
 
-// 1:1 scale test: each primitive ~10 m. Spread the 3 ground primitives so
-// they sit at distinct lon AND lat slots (not just on a line), making it
-// easier to tell them apart at close zoom. ~50-80 m separation in both axes
-// at lat 28° (1 m ≈ 1.02e-5 deg lon ≈ 9.01e-6 deg lat).
+// 1:1 比例测试:三个贴地图元都约 10 m，并放在不同经纬度槽位，
+// 近景下更容易区分。纬度 28° 附近，1 m ≈ 1.02e-5 经度 ≈ 9.01e-6 纬度。
 //
-// Layout (centre = rectangle):
-//      [polygon]          ← NE, ~50 m east + ~30 m north
-//   [rectangle]            ← centre
-//                 [circle] ← SE, ~60 m east + ~50 m south... no wait
+// 布局(中心 = rectangle):
+//      [polygon]          -> 东北，约向东 50 m + 向北 30 m
+//   [rectangle]            -> 中心
+//                 [circle] -> 西南，避免与箭头初始位置重叠
 //
-// Picked positions: polygon NE, circle SW, so neither overlaps the arrows
-// that arrow-demo.ts spawns around the rectangle's N / E / S / SW / NW
-// quadrants (see arrow-demo.ts buildInitialControlPoints layout comment).
+// polygon 放东北、circle 放西南，避免和 arrow-demo.ts 在矩形周围生成的箭头重叠。
 const POLYGON_OFFSET_LON = 70.0 * 1.02e-5;   // ~70 m east of rectangle
 const POLYGON_OFFSET_LAT = 18.0 * 9.01e-6;   // ~18 m north of rectangle
 const CIRCLE_OFFSET_LON = -65.0 * 1.02e-5;   // ~65 m west of rectangle
@@ -112,12 +102,12 @@ interface PolygonGuiModel {
 }
 
 /**
- * Converts local ENU meter offsets around one WGS84 anchor into lon/lat pairs.
+ * 将 WGS84 锚点周围的局部 ENU 米制偏移转换为 lon/lat 点。
  *
- * @param centerLongitude Longitude of the ENU anchor in degrees.
- * @param centerLatitude Latitude of the ENU anchor in degrees.
- * @param offsets Local east/north offsets in meters.
- * @returns WGS84 lon/lat pairs in the same order as offsets.
+ * @param centerLongitude ENU 锚点经度，单位为度。
+ * @param centerLatitude ENU 锚点纬度，单位为度。
+ * @param offsets 局部 east/north 偏移，单位为米。
+ * @returns 与 offsets 顺序一致的 WGS84 lon/lat 点。
  */
 function lonLatPointsFromMeterOffsets(
 	centerLongitude: number,
@@ -132,16 +122,15 @@ function lonLatPointsFromMeterOffsets(
 }
 
 /**
- * Boots the Three scene and executes the Cesium-free ground pipeline every frame.
+ * 启动 Three 场景，并在每帧执行 Cesium-free 贴地管线。
  */
 export function runGroundDemo(): void {
 	installPageStyle();
 	const infoBody = createInfoPanel();
 
-	// Inject the bundled Cesium ApproximateTerrainHeights.json synchronously so
-	// every CesiumGroundRectanglePrimitive / CesiumGroundPolygonPrimitive
-	// created below pulls a tile-accurate min/max terrain height window —
-	// one of the precision fixes we explicitly preserve.
+	// 同步注入随包携带的 Cesium ApproximateTerrainHeights.json，使下面创建的
+	// CesiumGroundRectanglePrimitive / CesiumGroundPolygonPrimitive 能拿到按瓦片
+	// 对齐的 terrain min/max 高度窗口，这是必须保留的精度修复之一。
 	initializeApproximateTerrainHeights();
 
 	const app = document.getElementById( 'app' );
@@ -178,14 +167,11 @@ export function runGroundDemo(): void {
 		40000000.0,
 	);
 	camera.up.set( 0.0, 0.0, 1.0 );
-	// Enable the Cesium-ground non-pickable layer so shadow-volume meshes
-	// and the rectangle debug-surface still render. Those meshes were moved
-	// off layer 0 in classification.ts / primitives.ts so the default
-	// raycaster (used by GlobeControls for adjustHeight + zoomPoint
-	// resolution) silently skips them — otherwise the multi-km shadow
-	// volume box top / 5 km debug surface would pin the camera at altitude.
-	// Three.js cameras default to `layers.set(0)`; we explicitly enable the
-	// non-pickable layer here to keep both layers in the render path.
+	// 启用 Cesium-ground 的不可拾取图层，让 shadow-volume mesh 和矩形调试面仍参与渲染。
+	// 这些 mesh 已在 classification.ts / primitives.ts 中移出 layer 0，使默认 raycaster
+	// 在 GlobeControls 的 adjustHeight / zoomPoint 计算中跳过它们；否则多公里高的
+	// shadow volume 顶面或 5km 调试面会把相机高度错误地钉住。
+	// Three.js 相机默认只启用 layer 0，因此这里显式启用不可拾取图层。
 	camera.layers.enable( CESIUM_GROUND_NON_PICKABLE_LAYER );
 
 	const target = wgs84PositionFromDegrees( RECTANGLE_CENTER_LON, RECTANGLE_CENTER_LAT, 0.0 );
@@ -198,19 +184,16 @@ export function runGroundDemo(): void {
 	camera.lookAt( target );
 	camera.updateMatrixWorld();
 
-	// Camera preset for the 1:1 scale test. ~150 m altitude + a small east
-	// bias so the rectangle/polygon/circle and the surrounding arrows all
-	// sit comfortably inside the camera frustum at close zoom. Triggered by
-	// the "fly to plot" GUI button below.
+	// 1:1 比例测试的相机预设:约 150 m 高度，并稍微向东偏移，
+	// 让矩形 / 多边形 / 圆形和周围箭头在近景视锥内完整可见。
+	// 由下面 GUI 的 "fly to plot" 按钮触发。
 	const FLY_TO_ALTITUDE_METERS = 150.0;
 	const FLY_TO_EAST_OFFSET_METERS = 40.0;
 
 	/**
-	 * Snaps the camera to the rectangle-centre preset so the user can stop
-	 * mouse-wheel-scrolling from 720km down to the 10m primitives.
-	 * `controls.update()` runs on the next frame anyway, so we only need to
-	 * write camera.position + orientation here; GlobeControls picks up the
-	 * new state without any explicit reset call.
+	 * 将相机吸附到矩形中心预设，避免用户从 720km 高度一路滚轮缩放到 10m 图元。
+	 * `controls.update()` 会在下一帧运行，因此这里只需要写入 camera.position 和朝向；
+	 * GlobeControls 会自动接收新状态，不需要显式 reset。
 	 */
 	function flyToPlot(): void {
 		camera.position
@@ -251,8 +234,8 @@ export function runGroundDemo(): void {
 		north: RECTANGLE_CENTER_LAT + RECTANGLE_HALF_HEIGHT_DEGREES,
 	};
 	const initialRectangleMeterSize = rectangleMeterSizeFromDegrees( initialRectangleDegrees );
-	// 1:1 scale test: fix the circle radius at 5 m (10 m diameter) regardless
-	// of how the rectangle size scales — so the size sliders stay independent.
+	// 1:1 比例测试:圆半径固定为 5 m(直径 10 m)，不随矩形尺寸缩放，
+	// 这样各自的尺寸滑块互不影响。
 	const initialCircleRadiusMeters = 5.0;
 	const initialRectanglePoints: LonLatPoint[] = [
 		[ initialRectangleDegrees.west, initialRectangleDegrees.south ],

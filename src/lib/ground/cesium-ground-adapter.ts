@@ -1,17 +1,16 @@
 // ============================================================
 // cesium-ground-adapter.ts
-// Layer: compatibility facade for the Cesium-to-Three ground adapter.
-// Role: keep the historical public surface while the rectangle / polygon
-//       geometry pipeline is now Cesium-free. Internal sub-modules:
-//         - validation.ts / depth.ts / classification.ts / materials.ts
-//           (precision-critical, untouched by the refactor)
-//         - terrain-heights.ts / terrain-log-depth.ts (precision-critical)
-//         - primitives.ts (rewritten — calls native rectangle / polygon
-//           builders instead of Cesium geometry)
-//         - rectangle/* and polygon/* (native geometry submodules)
-//         - math/* (native ECEF / ENU / RTE helpers)
-// Dependencies: local ground adapter modules.
-// Consumed by: src/lib/ground/index.ts and legacy src/cesium-three-ground.ts.
+// 层级:Cesium-to-Three 贴地适配器兼容门面。
+// 职责:在矩形 / 多边形几何管线迁移为无 Cesium 依赖实现后，保留历史公开接口。
+//      内部子模块:
+//        - validation.ts / depth.ts / classification.ts / materials.ts
+//          是精度关键路径，重构时保持行为不变。
+//        - terrain-heights.ts / terrain-log-depth.ts 是精度关键路径。
+//        - primitives.ts 调用原生 rectangle / polygon / circle 构造器。
+//        - rectangle/*、polygon/*、circle/* 是原生几何子模块。
+//        - math/* 提供原生 ECEF / ENU / RTE 辅助函数。
+// 依赖:本地 ground adapter 模块。
+// 被消费:src/lib/ground/index.ts 与旧版 src/cesium-three-ground.ts。
 // ============================================================
 
 export { validateCesiumGroundRenderer } from './validation';
@@ -23,7 +22,7 @@ export {
 	CesiumGroundRectanglePrimitive,
 } from './primitives';
 
-// Rectangle helpers (formerly re-exported from geometry.ts).
+// 矩形辅助函数，历史上曾从 geometry.ts 重新导出。
 export {
 	longitudeLatitudeFromCenterOffsetsMeters,
 	rectangleDegreesFromCenterSizeMeters,
@@ -31,7 +30,7 @@ export {
 	rectangleMeterSizeFromDegrees,
 } from './rectangle/rectangle-helpers';
 
-// WGS84 helpers (formerly re-exported from geometry.ts).
+// WGS84 辅助函数，历史上曾从 geometry.ts 重新导出。
 export {
 	wgs84NormalFromDegrees,
 	wgs84PositionFromDegrees,

@@ -1,10 +1,9 @@
 // ============================================================
 // types.ts
-// Layer: Cesium-to-Three ground adapter shared contracts.
-// Role: keep public primitive options and internal geometry/uniform shapes
-//       out of the rendering implementation file.
-// Dependencies: Three.js type declarations only.
-// Consumed by: cesium-ground-adapter.ts and public ground entry points.
+// 层级:Cesium-to-Three 贴地适配器共享契约。
+// 职责:把公开图元选项与内部几何 / uniform 结构从渲染实现文件中拆出。
+// 依赖:仅 Three.js 类型声明。
+// 被消费:cesium-ground-adapter.ts 与公开 ground 入口。
 // ============================================================
 
 import type {
@@ -97,11 +96,10 @@ export interface CesiumGroundRectanglePrimitiveOptions extends CesiumGroundRecta
 }
 
 /**
- * Public-facing polygon options that mirror the rectangle plot-spec contract
- * (lon/lat point ring + stroke / fill + visible flag + optional holes
- * + optional in-plane rotation). The legacy adapter's
- * `polygonHierarchyDegrees` form is also accepted; the constructor branches
- * on whichever field is present so existing callers keep working.
+ * 公开 polygon 选项，语义与矩形 plot-spec 契约保持一致:
+ * lon/lat 点环、描边 / 填充、可见性、可选洞环和可选平面内旋转。
+ * 旧适配器的 `polygonHierarchyDegrees` 形式也继续接受；构造器会按实际字段分支，
+ * 保证既有调用方仍可工作。
  */
 export interface CesiumGroundPolygonOptions {
 	points?: LonLatPoint[];
@@ -125,11 +123,9 @@ export interface CesiumGroundPolygonOptions {
 }
 
 /**
- * Plot-spec contract for a ground circle: center lon/lat, radius (meters),
- * stroke/fill style, optional ring / sector decoration, optional in-plane
- * texture rotation, optional shadow-volume height window. Matches the
- * reference project's `CesiumGroundCircleOptions` shape so demos using the
- * same JSON keys keep working.
+ * 贴地圆形的 plot-spec 契约:中心 lon/lat、半径(米)、描边 / 填充样式、
+ * 可选环线 / 扇区装饰、可选平面内纹理旋转、可选 shadow-volume 高度窗口。
+ * 字段形状与参考项目的 `CesiumGroundCircleOptions` 保持一致，方便复用同名 JSON。
  */
 export interface CesiumGroundCircleOptions {
 	center: LonLatPoint;

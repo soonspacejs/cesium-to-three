@@ -1,9 +1,9 @@
 // ============================================================
 // index.ts
-// Layer: public ground adapter entry point.
-// Role: re-export Cesium-to-Three ground classification primitives.
-// Dependencies: cesium-ground-adapter.ts.
-// Consumed by: demos and legacy src/cesium-three-ground.ts entry point.
+// 层级:公开贴地适配器入口。
+// 职责:统一导出 Cesium-to-Three 贴地 classification 图元。
+// 依赖:cesium-ground-adapter.ts。
+// 被消费:demo 与旧版 src/cesium-three-ground.ts 入口。
 // ============================================================
 
 export * from './cesium-ground-adapter';

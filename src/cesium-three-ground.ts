@@ -1,10 +1,9 @@
 // ============================================================
 // cesium-three-ground.ts
-// Layer: legacy compatibility entry point.
-// Role: preserve existing imports while the ground adapter lives under
-//       src/lib/ground.
-// Dependencies: src/lib/ground.
-// Consumed by: external code that still imports ./cesium-three-ground.
+// 层级:旧版兼容入口。
+// 职责:贴地适配器迁移到 src/lib/ground 后，继续保留原导入路径。
+// 依赖:src/lib/ground。
+// 被消费:仍然从 ./cesium-three-ground 导入的外部代码。
 // ============================================================
 
 export * from './lib/ground';

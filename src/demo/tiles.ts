@@ -1,12 +1,11 @@
 // ============================================================
 // tiles.ts
-// Layer: 3d-tiles-renderer demo integration.
-// Role: configure Cesium Ion terrain, normalize loaded tile materials, and
-//       inject Cesium-compatible log depth into every terrain shader so the
-//       main framebuffer depth values are coherent with the ground
-//       classification shadow-volume color pass.
-// Dependencies: Three.js, 3d-tiles-renderer, demo env helpers, ground adapter.
-// Consumed by: ground-demo.ts.
+// 层级:3d-tiles-renderer demo 集成。
+// 职责:配置 Cesium Ion 地形、统一已加载瓦片材质，并给每个地形 shader 注入
+//      Cesium 兼容的对数深度，使主帧缓冲深度与贴地 classification 的
+//      shadow-volume color pass 保持一致。
+// 依赖:Three.js、3d-tiles-renderer、demo env helpers、ground adapter。
+// 被消费:ground-demo.ts。
 // ============================================================
 
 import {
@@ -40,9 +39,9 @@ export interface TileRuntimeCounters {
 }
 
 /**
- * Applies stable render state to every model that 3d-tiles-renderer loads.
+ * 为 3d-tiles-renderer 加载的每个模型设置稳定渲染状态。
  *
- * @param modelScene Root object created for a loaded tile.
+ * @param modelScene 已加载瓦片创建的根对象。
  */
 export function configureLoadedTileScene( modelScene: Object3D ): void {
 	modelScene.traverse( object => {
@@ -86,10 +85,10 @@ export function configureLoadedTileScene( modelScene: Object3D ): void {
 }
 
 /**
- * Creates a Cesium Ion backed 3D Tiles renderer. Terrain assets are handled by
- * QuantizedMeshPlugin so the surface is real terrain geometry, not an ellipsoid.
+ * 创建由 Cesium Ion 驱动的 3D Tiles 渲染器。地形资产由 QuantizedMeshPlugin 处理，
+ * 因此表面是真实地形几何，而不是椭球体。
  *
- * @returns Configured TilesRenderer instance.
+ * @returns 配置完成的 TilesRenderer 实例。
  */
 export function createCesiumTilesRenderer(): TilesRenderer {
 	const apiToken = readStringEnv( 'VITE_CESIUM_ION_TOKEN' );

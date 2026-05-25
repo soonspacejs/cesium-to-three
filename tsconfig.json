@@ -6,7 +6,7 @@
     "module": "ESNext",
     "skipLibCheck": true,
 
-    /* Bundler mode */
+    /* 打包器模式 */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
@@ -14,7 +14,7 @@
     "moduleDetection": "force",
     "noEmit": true,
 
-    /* Linting */
+    /* 静态检查 */
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
@@ -22,7 +22,7 @@
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": false,
 
-    /* 允许 GLSL 作为 .glsl 文件 raw 导入(vite-plugin-string 等价物) */
+    /* 允许 GLSL 作为 .glsl 文件 raw 导入，等价于 Vite 的 ?raw 资源。 */
     "types": ["vite/client"]
   },
   "include": ["src"],

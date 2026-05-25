@@ -1,9 +1,9 @@
 // ============================================================
 // main.ts
-// Layer: Vite application entry point.
-// Role: start the Cesium GroundPrimitive to Three.js demo.
-// Dependencies: demo/ground-demo.ts.
-// Consumed by: index.html.
+// 层级:Vite 应用入口。
+// 职责:启动 Cesium GroundPrimitive 到 Three.js 的贴地渲染 demo。
+// 依赖:demo/ground-demo.ts。
+// 被消费:index.html。
 // ============================================================
 
 import { runGroundDemo } from './demo/ground-demo';
