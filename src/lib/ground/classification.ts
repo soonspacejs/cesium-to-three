@@ -472,6 +472,7 @@ export class CesiumClassificationPrimitive {
 			// inside the existing color command — no impact on the LOG_DEPTH
 			// / Float64 / LessEqualDepth precision paths).
 			u_polygonBorderMode: { value: 0.0 },
+			u_polygonMiterStrokeMode: { value: 0.0 },
 			u_polygonPointCount: { value: 0.0 },
 			u_polygonPoints: {
 				value: Array.from(
@@ -640,6 +641,20 @@ export class CesiumClassificationPrimitive {
 		// fragment shader never tries to read circle uniforms left over from
 		// a previous primitive setup.
 		this.uniforms.u_circleBorderMode.value = 0.0;
+	}
+
+	/**
+	 * Selects the polygon stroke classifier used by the fragment shader.
+	 *
+	 * Round mode clips the stroke by distance to the fill ring and is robust
+	 * for generic polygons. Miter mode trusts the already-expanded render
+	 * geometry and only tests fill-vs-border, which preserves sharp arrow
+	 * tips and concave notches at meter scale.
+	 *
+	 * @param enabled True when the render ring is a real miter offset shell.
+	 */
+	public setPolygonMiterStrokeMode( enabled: boolean ): void {
+		this.uniforms.u_polygonMiterStrokeMode.value = enabled ? 1.0 : 0.0;
 	}
 
 	/**

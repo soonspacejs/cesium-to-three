@@ -164,11 +164,13 @@ export function polygonRenderBoundsThroughMeters(
  * @param borderWidthMeters Requested outside stroke width in meters.
  * @returns Offset render ring in WGS84 degrees.
  */
-export function offsetPolygonPointsThroughMeters(
+function offsetPolygonRingThroughMeters(
 	points: readonly LonLatPoint[],
 	borderWidthMeters: number,
+	directionSign: number,
 ): LonLatPoint[] {
 	const offsetMeters = Math.max( borderWidthMeters, 0.0 ) *
+		Math.sign( directionSign || 1.0 ) *
 		BORDER_GEOMETRY_EXPANSION_SCALE;
 	if ( offsetMeters === 0.0 || points.length < 3 ) {
 		return clonePoints( points );
@@ -179,8 +181,9 @@ export function offsetPolygonPointsThroughMeters(
 	projectRingToEnu( points, enu );
 
 	const windingSign = signedArea2D( enu ) >= 0.0 ? 1.0 : -1.0;
-	const offset = new Array<number>( n * 2 );
-	const miterLimit = offsetMeters * 4.0;
+	const offset: number[] = [];
+	const absOffsetMeters = Math.abs( offsetMeters );
+	const miterLimit = absOffsetMeters * 4.0;
 
 	for ( let i = 0; i < n; i++ ) {
 		const prev = ( i - 1 + n ) % n;
@@ -200,8 +203,7 @@ export function offsetPolygonPointsThroughMeters(
 		const eNextLen = Math.hypot( eNextX, eNextY );
 
 		if ( ePrevLen < 1e-9 && eNextLen < 1e-9 ) {
-			offset[ 2 * i ] = cx;
-			offset[ 2 * i + 1 ] = cy;
+			offset.push( cx, cy );
 			continue;
 		}
 		if ( ePrevLen >= 1e-9 ) {
@@ -228,6 +230,19 @@ export function offsetPolygonPointsThroughMeters(
 		const line2X = cx + nextNormalX * offsetMeters;
 		const line2Y = cy + nextNormalY * offsetMeters;
 		const cross = ePrevX * eNextY - ePrevY * eNextX;
+		const isOutwardOffset = offsetMeters > 0.0;
+		const isConvexJoin = cross * windingSign > 1e-9;
+
+		if ( isOutwardOffset && ! isConvexJoin ) {
+			// Concave joins cannot be represented by a single miter point:
+			// the intersection of the two outward offset lines lies on the
+			// wrong side of the fill ring and makes the stroke shell cross the
+			// arrow head/neck. Keep both offset edge endpoints and connect
+			// them with a short bevel segment so the render shell still wraps
+			// the fill without inventing a giant triangle.
+			offset.push( line1X, line1Y, line2X, line2Y );
+			continue;
+		}
 
 		let joinedX: number;
 		let joinedY: number;
@@ -253,21 +268,33 @@ export function offsetPolygonPointsThroughMeters(
 		const dy = joinedY - cy;
 		const length = Math.hypot( dx, dy );
 		if ( Number.isFinite( length ) && length > miterLimit && length > 1e-9 ) {
-			offset[ 2 * i ] = cx + dx / length * miterLimit;
-			offset[ 2 * i + 1 ] = cy + dy / length * miterLimit;
+			offset.push( cx + dx / length * miterLimit, cy + dy / length * miterLimit );
 		} else if ( Number.isFinite( joinedX ) && Number.isFinite( joinedY ) ) {
-			offset[ 2 * i ] = joinedX;
-			offset[ 2 * i + 1 ] = joinedY;
+			offset.push( joinedX, joinedY );
 		} else {
-			offset[ 2 * i ] = line1X;
-			offset[ 2 * i + 1 ] = line1Y;
+			offset.push( line1X, line1Y );
 		}
 	}
 
-	const result: LonLatPoint[] = new Array( n );
-	for ( let i = 0; i < n; i++ ) {
+	const resultLength = offset.length / 2;
+	const result: LonLatPoint[] = new Array( resultLength );
+	for ( let i = 0; i < resultLength; i++ ) {
 		result[ i ] = enuPointToLonLat( offset[ 2 * i ], offset[ 2 * i + 1 ] );
 	}
 
 	return result;
+}
+
+export function offsetPolygonPointsThroughMeters(
+	points: readonly LonLatPoint[],
+	borderWidthMeters: number,
+): LonLatPoint[] {
+	return offsetPolygonRingThroughMeters( points, borderWidthMeters, 1.0 );
+}
+
+export function insetPolygonPointsThroughMeters(
+	points: readonly LonLatPoint[],
+	borderWidthMeters: number,
+): LonLatPoint[] {
+	return offsetPolygonRingThroughMeters( points, borderWidthMeters, -1.0 );
 }

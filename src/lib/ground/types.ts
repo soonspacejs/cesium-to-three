@@ -111,6 +111,7 @@ export interface CesiumGroundPolygonOptions {
 	strokeColor?: string;
 	strokeWidth?: number;
 	strokeOpacity?: number;
+	strokeJoin?: 'inner' | 'outer';
 	fillColor?: string;
 	fillOpacity?: number;
 	visible?: boolean;
@@ -219,6 +220,7 @@ export interface SharedUniforms {
 	u_cpuWestPlane: { value: Vector4 };
 	u_cpuSouthPlane: { value: Vector4 };
 	u_polygonBorderMode: { value: number };
+	u_polygonMiterStrokeMode: { value: number };
 	u_polygonPointCount: { value: number };
 	u_polygonPoints: { value: Vector2[] };
 	u_circleBorderMode: { value: number };

@@ -78,11 +78,11 @@ import type {
 import { createFineArrow } from './fine-arrow';
 
 // ── 默认值(与 cesium-plot-js AttackArrow 同名字段保持一致)──
-const DEFAULT_HEAD_HEIGHT_FACTOR = 0.18;
-const DEFAULT_HEAD_WIDTH_FACTOR = 0.30;
+const DEFAULT_HEAD_HEIGHT_FACTOR = 0.28;
+const DEFAULT_HEAD_WIDTH_FACTOR = 0.55;
 const DEFAULT_NECK_HEIGHT_FACTOR = 0.85;
-const DEFAULT_NECK_WIDTH_FACTOR = 0.15;
-const DEFAULT_HEAD_TAIL_FACTOR = 0.80;
+const DEFAULT_NECK_WIDTH_FACTOR = 0.22;
+const DEFAULT_HEAD_TAIL_FACTOR = 1.25;
 // 12:Catmull-Rom 每段采样 12 点。多控制点脊线下采样总数 = (n-1)*12 + 1,
 // 远低于 ARROW_OUTPUT_MAX_VERTICES = 120 的上限。
 const DEFAULT_BODY_SMOOTHING_SEGMENTS = 12;

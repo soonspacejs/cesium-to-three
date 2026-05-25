@@ -147,7 +147,7 @@ const ARROW_FILL_COLORS: Record<ArrowPlotId, string> = {
 // ── Shared default stroke / fill state ──
 const DEFAULT_STROKE_COLOR = '#ffffff';
 const DEFAULT_STROKE_OPACITY = 95.0;
-const DEFAULT_STROKE_WIDTH_METERS = 1.0;
+const DEFAULT_STROKE_WIDTH_METERS = 0.35;
 const DEFAULT_FILL_OPACITY = 70.0;
 
 // ── Initial plot orders ──
@@ -189,27 +189,27 @@ const DEFAULT_ASSAULT_DIRECTION_OPTIONS: Required<AssaultDirectionArrowOptions> 
 };
 
 const DEFAULT_ATTACK_ARROW_OPTIONS: Required<AttackArrowOptions> = {
-	headHeightFactor: 0.18,
-	headWidthFactor: 0.30,
+	headHeightFactor: 0.28,
+	headWidthFactor: 0.55,
 	neckHeightFactor: 0.85,
-	neckWidthFactor: 0.15,
-	headTailFactor: 0.80,
+	neckWidthFactor: 0.22,
+	headTailFactor: 1.25,
 	minBodyHalfAngleRadians: Math.PI / 12.0,
 	bodyWidthMargin: 1.05,
 	bodySmoothingSegments: 12,
 };
 
 const DEFAULT_SWALLOWTAIL_OPTIONS: Required<SwallowtailAttackArrowOptions> = {
-	headHeightFactor: 0.18,
-	headWidthFactor: 0.30,
+	headHeightFactor: 0.28,
+	headWidthFactor: 0.55,
 	neckHeightFactor: 0.85,
-	neckWidthFactor: 0.15,
-	headTailFactor: 0.80,
+	neckWidthFactor: 0.22,
+	headTailFactor: 1.25,
 	minBodyHalfAngleRadians: Math.PI / 12.0,
 	bodyWidthMargin: 1.05,
 	bodySmoothingSegments: 12,
-	swallowtailFactor: 1.0,
-	tailWidthFactor: 0.10,
+	swallowtailFactor: 0.70,
+	tailWidthFactor: 0.08,
 };
 
 const DEFAULT_CURVED_ARROW_OPTIONS: Required<CurvedArrowOptions> = {
@@ -332,20 +332,22 @@ function buildInitialControlPoints(
 			[ centerLon - 25.0 * mLon, centerLat - 55.0 * mLat ],
 			[ centerLon - 37.0 * mLon, centerLat - 55.0 * mLat ],
 		],
-		// 4-point attack arrow, ~14 m total, pointing east, 50 m east of centre
+		// 4-point attack arrow, ~18 m total, pointing east, 50 m east of centre.
+		// Keep the tail narrow at meter scale; otherwise the attack body
+		// degenerates visually into a broad triangle.
 		attackArrow: [
-			[ centerLon + 40.0 * mLon, centerLat + 4.0 * mLat ],
-			[ centerLon + 40.0 * mLon, centerLat - 4.0 * mLat ],
-			[ centerLon + 48.0 * mLon, centerLat + 0.0 * mLat ],
-			[ centerLon + 54.0 * mLon, centerLat + 0.0 * mLat ],
+			[ centerLon + 40.0 * mLon, centerLat + 1.5 * mLat ],
+			[ centerLon + 40.0 * mLon, centerLat - 1.5 * mLat ],
+			[ centerLon + 50.0 * mLon, centerLat + 0.0 * mLat ],
+			[ centerLon + 58.0 * mLon, centerLat + 0.0 * mLat ],
 		],
-		// 4-point swallowtail attack arrow, ~14 m total, pointing east,
+		// 4-point swallowtail attack arrow, ~18 m total, pointing east,
 		// 40 m south of centre
 		swallowtailAttackArrow: [
-			[ centerLon - 4.0 * mLon, centerLat - 36.0 * mLat ],
-			[ centerLon - 4.0 * mLon, centerLat - 44.0 * mLat ],
-			[ centerLon + 4.0 * mLon, centerLat - 40.0 * mLat ],
-			[ centerLon + 10.0 * mLon, centerLat - 40.0 * mLat ],
+			[ centerLon - 4.0 * mLon, centerLat - 38.5 * mLat ],
+			[ centerLon - 4.0 * mLon, centerLat - 41.5 * mLat ],
+			[ centerLon + 6.0 * mLon, centerLat - 40.0 * mLat ],
+			[ centerLon + 14.0 * mLon, centerLat - 40.0 * mLat ],
 		],
 		// 4-point curved arrow, ~30 m S-curve, NW of centre
 		curvedArrow: [
@@ -604,7 +606,7 @@ export class ArrowSubsystem {
 				initialPoints.largeFineArrow,
 				reservedPlotOrders.largeFineArrow,
 				DEFAULT_FINE_ARROW_OPTIONS,
-				150.0,
+				100.0,
 			) as FineArrowEntry,
 			largeAssaultDirection: this.createEntry(
 				'largeAssaultDirection',
@@ -612,7 +614,7 @@ export class ArrowSubsystem {
 				initialPoints.largeAssaultDirection,
 				reservedPlotOrders.largeAssaultDirection,
 				DEFAULT_ASSAULT_DIRECTION_OPTIONS,
-				150.0,
+				100.0,
 			) as AssaultDirectionEntry,
 			largeAttackArrow: this.createEntry(
 				'largeAttackArrow',
@@ -620,7 +622,7 @@ export class ArrowSubsystem {
 				initialPoints.largeAttackArrow,
 				reservedPlotOrders.largeAttackArrow,
 				DEFAULT_ATTACK_ARROW_OPTIONS,
-				150.0,
+				100.0,
 			) as AttackArrowEntry,
 			largeSwallowtailAttackArrow: this.createEntry(
 				'largeSwallowtailAttackArrow',
@@ -628,7 +630,7 @@ export class ArrowSubsystem {
 				initialPoints.largeSwallowtailAttackArrow,
 				reservedPlotOrders.largeSwallowtailAttackArrow,
 				DEFAULT_SWALLOWTAIL_OPTIONS,
-				150.0,
+				100.0,
 			) as SwallowtailAttackEntry,
 			largeCurvedArrow: this.createEntry(
 				'largeCurvedArrow',
@@ -636,7 +638,7 @@ export class ArrowSubsystem {
 				initialPoints.largeCurvedArrow,
 				reservedPlotOrders.largeCurvedArrow,
 				DEFAULT_CURVED_ARROW_OPTIONS,
-				150.0,
+				100.0,
 			) as CurvedArrowEntry,
 		};
 

@@ -262,6 +262,7 @@ uniform vec4 u_innerMetersRect;
 uniform vec4 u_cpuWestPlane;
 uniform vec4 u_cpuSouthPlane;
 uniform float u_polygonBorderMode;
+uniform float u_polygonMiterStrokeMode;
 uniform float u_polygonPointCount;
 uniform vec2 u_polygonPoints[${ MAX_POLYGON_STYLE_VERTICES }];
 uniform float u_circleBorderMode;
@@ -543,15 +544,20 @@ function createColorFragmentBody(): string {
             return;
         }
     } else if (u_polygonBorderMode > 0.5) {
-        // Polygon stroke path: planar-meter point-in-polygon test against the
-        // original fill ring. Fragments outside the fill ring become the
-        // border colour up to u_borderWidthMeters away from the edge, then
-        // discard so the extruded shadow volume does not paint past the
-        // requested stroke band.
-        bool insideFillPolygon = c23_pointInsidePolygon(planarMeters);
-        if (!insideFillPolygon) {
-            float outsideDistanceMeters = c23_distanceToPolygonEdges(planarMeters);
-            if (u_borderEnabled < 0.5 || u_borderColor.a <= 0.0 || outsideDistanceMeters > u_borderWidthMeters) {
+        // Polygon path: the supplied point ring is the final face boundary.
+        // In the default inner-stroke mode, fragments stay inside this face;
+        // the shader classifies the stroke by distance to that same boundary.
+        bool insidePolygon = c23_pointInsidePolygon(planarMeters);
+        float edgeDistanceMeters = c23_distanceToPolygonEdges(planarMeters);
+        if (u_polygonMiterStrokeMode > 0.5) {
+            if (!insidePolygon) {
+                discard;
+            }
+            if (u_borderEnabled > 0.5 && u_borderColor.a > 0.0 && edgeDistanceMeters <= u_borderWidthMeters) {
+                color = czm_gammaCorrect(u_borderColor);
+            }
+        } else if (!insidePolygon) {
+            if (u_borderEnabled < 0.5 || u_borderColor.a <= 0.0 || edgeDistanceMeters > u_borderWidthMeters) {
                 discard;
             }
             color = czm_gammaCorrect(u_borderColor);

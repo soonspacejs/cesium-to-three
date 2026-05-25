@@ -394,9 +394,10 @@ export class CesiumGroundPolygonPrimitive {
 			? polygonRenderBoundsThroughMeters( rotatedOuter, strokeWidthMeters )
 			: rotatedOuter.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
 
-		// Fill + render hierarchies. The fill ring drives planar style points
-		// for the shader's point-in-polygon test; the render ring drives the
-		// shadow-volume geometry plus the planar extents.
+		// The input polygon is the fill face. Stroke is classified outside this
+		// fill ring in the fragment shader by measuring distance to the same
+		// boundary. The render ring is only a conservative shell so the shader
+		// has fragments available for the outside stroke band.
 		const fillHierarchy = polygonHierarchyFromLonLatPoints( rotatedOuter, rotatedHoles );
 		const renderHierarchy = polygonHierarchyFromLonLatPoints( renderOuter, rotatedHoles );
 		this.polygonHierarchy = polygonHierarchyToCartesianLike( fillHierarchy );
@@ -476,6 +477,7 @@ export class CesiumGroundPolygonPrimitive {
 		// meter coordinates. Three or more points enable polygon-border mode,
 		// fewer fall back to the rectangle axis-aligned border.
 		this.classification.setPolygonBorderPoints( stylePoints );
+		this.classification.setPolygonMiterStrokeMode( false );
 	}
 
 	/**

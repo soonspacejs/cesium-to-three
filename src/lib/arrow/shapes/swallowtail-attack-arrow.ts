@@ -58,8 +58,8 @@ import { createFineArrow } from './fine-arrow';
 // tailWidthFactor 0.10:燕尾长度的基准比例(基准长度 × 此值 × swallowtailFactor)。
 // swallowtailFactor 1.0:燕尾凸出深度倍率,1.0 即标准深度,>1 凸出更深,
 //                       0 时凸点与 midTail 重合 → 视觉上等价 AttackArrow。
-const DEFAULT_TAIL_WIDTH_FACTOR = 0.10;
-const DEFAULT_SWALLOWTAIL_FACTOR = 1.0;
+const DEFAULT_TAIL_WIDTH_FACTOR = 0.08;
+const DEFAULT_SWALLOWTAIL_FACTOR = 0.70;
 
 /**
  * 构造燕尾攻击箭头(Frenet 带状 + 尾部 V 形凹口)。
