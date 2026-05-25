@@ -373,57 +373,6 @@ export function expandRectangleDegreesThroughMeters(
 }
 
 /**
- * 把度矩形沿四边向内收缩指定米数,用于“描边占据面内部”的 fill 区。
- *
- * @param rectangle         外轮廓度矩形。
- * @param borderWidthMeters 内描边宽度,米。
- * @returns                 内缩后的 fill 度矩形;过大的描边会钳制到最小 1mm 尺寸。
- */
-export function insetRectangleDegreesThroughMeters(
-	rectangle: RectangleDegrees,
-	borderWidthMeters: number,
-): RectangleDegrees {
-	const safeWidth = Math.max( borderWidthMeters, 0.0 );
-	if ( safeWidth === 0.0 ) {
-		return { ...rectangle };
-	}
-
-	const rect: RectangleRadians = {
-		west: rectangle.west * DEG_TO_RAD,
-		south: rectangle.south * DEG_TO_RAD,
-		east: rectangle.east * DEG_TO_RAD,
-		north: rectangle.north * DEG_TO_RAD,
-	};
-
-	const centerLon = ( rect.west + rect.east ) * 0.5;
-	const centerLat = ( rect.south + rect.north ) * 0.5;
-	_helperCenterCarto.longitude = centerLon;
-	_helperCenterCarto.latitude = centerLat;
-	_helperCenterCarto.height = 0.0;
-	cartographicToCartesian( _helperCenterCarto, _helperCenterEcef );
-	eastNorthUpToFixedFrame( _helperCenterEcef, _helperEnuMatrix );
-	_helperInverseEnu.copy( _helperEnuMatrix ).invert();
-
-	const outerBounds = sampleRectangleEnuBounds( rect, 0.0, _helperInverseEnu );
-	const widthMeters = Math.max( outerBounds.maxX - outerBounds.minX, 0.001 );
-	const heightMeters = Math.max( outerBounds.maxY - outerBounds.minY, 0.001 );
-	const inset = Math.min(
-		safeWidth * BORDER_GEOMETRY_EXPANSION_SCALE,
-		Math.max( ( widthMeters - 0.001 ) * 0.5, 0.0 ),
-		Math.max( ( heightMeters - 0.001 ) * 0.5, 0.0 ),
-	);
-
-	return rectangleDegreesFromEnuBounds(
-		centerLon * RAD_TO_DEG,
-		centerLat * RAD_TO_DEG,
-		outerBounds.minX + inset,
-		outerBounds.maxX - inset,
-		outerBounds.minY + inset,
-		outerBounds.maxY - inset,
-	);
-}
-
-/**
  * 把(lon°, lat°)度矩形投到 ENU 平面,8 点采样取包围盒。
  *
  * 私有 helper,被 `rectangleMeterSizeFromDegrees` 与

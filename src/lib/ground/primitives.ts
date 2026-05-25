@@ -176,6 +176,8 @@ export class CesiumGroundRectanglePrimitive {
 			Number.isFinite( options.strokeWidth ) ? options.strokeWidth : 0.0,
 			0.0,
 		);
+		// Rectangle follows the face contract: input points describe the fill
+		// rectangle, and strokeWidth grows the rendered face outward.
 		const renderRectangleDegrees = expandRectangleDegreesThroughMeters(
 			rectangleDegrees,
 			strokeWidthMeters,
@@ -544,6 +546,8 @@ export class CesiumGroundCirclePrimitive {
 			Number.isFinite( options.strokeWidth ) ? options.strokeWidth : 0.0,
 			0.0,
 		);
+		// Circle follows the same face contract: options.radius is the fill
+		// radius; the rendered shadow volume radius includes the outside stroke.
 		const renderRadiusMeters = fillRadiusMeters + strokeWidthMeters;
 
 		const requestedRingCount = options.ringCount ?? 1.0;

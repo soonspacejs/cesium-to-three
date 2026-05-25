@@ -291,10 +291,3 @@ export function offsetPolygonPointsThroughMeters(
 ): LonLatPoint[] {
 	return offsetPolygonRingThroughMeters( points, borderWidthMeters, 1.0 );
 }
-
-export function insetPolygonPointsThroughMeters(
-	points: readonly LonLatPoint[],
-	borderWidthMeters: number,
-): LonLatPoint[] {
-	return offsetPolygonRingThroughMeters( points, borderWidthMeters, -1.0 );
-}

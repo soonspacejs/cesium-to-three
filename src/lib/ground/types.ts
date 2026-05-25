@@ -111,7 +111,6 @@ export interface CesiumGroundPolygonOptions {
 	strokeColor?: string;
 	strokeWidth?: number;
 	strokeOpacity?: number;
-	strokeJoin?: 'inner' | 'outer';
 	fillColor?: string;
 	fillOpacity?: number;
 	visible?: boolean;
