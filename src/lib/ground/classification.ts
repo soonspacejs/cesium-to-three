@@ -22,6 +22,7 @@ import {
 	Vector3,
 	Vector4,
 	type Material,
+	type RawShaderMaterial,
 } from 'three';
 
 import {
@@ -415,6 +416,19 @@ function updateFrameStateUniforms( frameState: CesiumGroundFrameState, uniforms:
 }
 
 /**
+ * Optional injection used by callers that need a non-default color material
+ * (e.g. ground text needs a texture sampler in place of the per-instance fill
+ * color). Other callers omit this argument and the primitive falls back to
+ * `createColorMaterial` so circle / rectangle / polygon behaviour is unchanged.
+ */
+export interface ClassificationColorInjection {
+	/** Custom color material factory. Unset → default `createColorMaterial`. */
+	colorMaterialFactory?: ( uniforms: SharedUniforms, fragmentCull: boolean ) => RawShaderMaterial;
+	/** Extra uniforms merged into the shared uniforms map before material build. */
+	extraUniforms?: Record<string, { value: unknown }>;
+}
+
+/**
  * Three execution of Cesium ClassificationPrimitive's two stencil commands and
  * one color command.
  */
@@ -427,6 +441,8 @@ export class CesiumClassificationPrimitive {
 	private readonly uniforms: SharedUniforms;
 	private readonly cameraHigh = new Vector3();
 	private readonly cameraLow = new Vector3();
+	private readonly colorMaterialFactory:
+		( uniforms: SharedUniforms, fragmentCull: boolean ) => RawShaderMaterial;
 	private colorFragmentCull: boolean;
 
 	public constructor(
@@ -436,6 +452,7 @@ export class CesiumClassificationPrimitive {
 		alpha: number,
 		renderOrder: number,
 		fragmentCull: boolean,
+		injection?: ClassificationColorInjection,
 	) {
 		this.group = new Group();
 		this.group.name = 'CesiumClassificationPrimitive';
@@ -500,7 +517,28 @@ export class CesiumClassificationPrimitive {
 			czm_farDepthFromNearPlusOne: { value: 1.0 },
 			czm_log2FarDepthFromNearPlusOne: { value: 1.0 },
 			czm_oneOverLog2FarDepthFromNearPlusOne: { value: 1.0 },
+			// Ground text texture slot. Default null; overwritten when caller
+			// passes `extraUniforms.u_textTexture`. GLSL declaration is guarded
+			// by `#ifdef CESIUM_THREE_TEXT`, so non-text materials never read it.
+			u_textTexture: { value: null },
 		};
+
+		// Merge caller-supplied uniforms (e.g. `u_textTexture`) before any
+		// material is built so all three commands share the same map.
+		if ( injection !== undefined && injection.extraUniforms !== undefined ) {
+			for ( const key in injection.extraUniforms ) {
+				if ( Object.prototype.hasOwnProperty.call( injection.extraUniforms, key ) ) {
+					this.uniforms[ key ] = injection.extraUniforms[ key ];
+				}
+			}
+		}
+
+		// Persist the color material factory so `setFragmentCulling` can rebuild
+		// the color mesh later without losing the text-color injection.
+		this.colorMaterialFactory =
+			injection !== undefined && injection.colorMaterialFactory !== undefined
+				? injection.colorMaterialFactory
+				: createColorMaterial;
 
 		const frontStencilMaterial = createStencilMaterial(
 			this.uniforms,
@@ -514,7 +552,7 @@ export class CesiumClassificationPrimitive {
 			IncrementWrapStencilOp,
 			'CesiumClassificationBackStencilDepthMaterial',
 		);
-		const colorMaterial = createColorMaterial( this.uniforms, fragmentCull );
+		const colorMaterial = this.colorMaterialFactory( this.uniforms, fragmentCull );
 
 		this.stencilMesh = new Mesh( geometry, frontStencilMaterial );
 		this.stencilMesh.name = 'CesiumClassificationFrontStencilDepthCommand';
@@ -720,7 +758,7 @@ export class CesiumClassificationPrimitive {
 
 		this.colorFragmentCull = enabled;
 		const oldMaterial = this.colorMesh.material as Material;
-		this.colorMesh.material = createColorMaterial( this.uniforms, enabled );
+		this.colorMesh.material = this.colorMaterialFactory( this.uniforms, enabled );
 		oldMaterial.dispose();
 	}
 

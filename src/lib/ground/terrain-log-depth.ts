@@ -164,9 +164,15 @@ export function applyCesiumLogDepthToMaterial( material: Material ): void {
 			'vertex log-depth write',
 		);
 
+		// 注:不能用字面串 'void main() {'。3d-tiles-renderer 的 ImageOverlayPlugin
+		// 在 processTileModel 阶段先跑 wrapOverlaysMaterial(在 load-model 事件 / 我们
+		// 的 configureLoadedTileScene 之前),它的 fragment 替换正则只匹配 `void main(`,
+		// 然后用 template literal 在尾部 `${ value }` 之后插了换行 + 缩进,导致最终
+		// fragment shader 中出现 `void main(\n\n    ) {` 的形态——`(` 与 `)` 之间被
+		// 插入了空白,字面串 'void main() {' 不再匹配。改用正则容忍这两段空白。
 		shader.fragmentShader = replaceOnce(
 			shader.fragmentShader,
-			'void main() {',
+			/void main\s*\(\s*\)\s*\{/,
 			`${ TERRAIN_FRAGMENT_DECLARATION }\nvoid main() {`,
 			'fragment declaration',
 		);

@@ -11,6 +11,7 @@ import type {
 	Matrix3,
 	Matrix4,
 	PerspectiveCamera,
+	Texture,
 	Vector2,
 	Vector3,
 	Vector4,
@@ -235,4 +236,10 @@ export interface SharedUniforms {
 	czm_farDepthFromNearPlusOne: { value: number };
 	czm_log2FarDepthFromNearPlusOne: { value: number };
 	czm_oneOverLog2FarDepthFromNearPlusOne: { value: number };
+	/**
+	 * 贴地文本内容纹理。CesiumGroundTextPrimitive 经 classification 的
+	 * extraUniforms 注入真实纹理；其它图元保持 `{ value: null }`。GLSL 端用
+	 * `#ifdef CESIUM_THREE_TEXT` 守住声明，不污染其它材质编译。
+	 */
+	u_textTexture: { value: Texture | null };
 }

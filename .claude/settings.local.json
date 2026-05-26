@@ -19,7 +19,13 @@
       "Bash(cp \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files_extracted\\\\arrow-curves.ts\" \"D:\\\\my\\\\code\\\\cesium-to-three\\\\src\\\\lib\\\\arrow\\\\arrow-curves.ts\")",
       "Bash(npm run *)",
       "Bash(echo \"EXIT=$?\")",
-      "Bash(xargs grep -l \"writeLogDepth\\\\|czm_writeLogDepth\\\\|czm_vertexLogDepth\")"
+      "Bash(xargs grep -l \"writeLogDepth\\\\|czm_writeLogDepth\\\\|czm_vertexLogDepth\")",
+      "Bash(ls \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files.zip\" 2>&1; ls \"D:\\\\my\\\\code\\\\cesium-to-three\")",
+      "Bash(unzip -l \"/c/Users/WIN11/Downloads/files.zip\")",
+      "Bash(mkdir -p \"/tmp/cesium-docs\")",
+      "Bash(unzip -o \"/c/Users/WIN11/Downloads/files.zip\" -d \"/tmp/cesium-docs\")",
+      "Bash(npx vite *)",
+      "Bash(cd \"/d/my/code/cesium-to-three\" && cat package.json | head -30)"
     ]
   }
 }

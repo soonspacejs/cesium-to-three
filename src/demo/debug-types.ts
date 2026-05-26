@@ -6,7 +6,14 @@
 // 被消费:ground-demo.ts。
 // ============================================================
 
-import type { LonLatPoint } from '../lib/ground';
+import type {
+	LonLatPoint,
+	PlotTextAlign,
+	PlotTextAnchorX,
+	PlotTextAnchorY,
+	PlotTextLayoutDirection,
+	PlotTextVerticalAlign,
+} from '../lib/ground';
 
 export interface GroundDebugSettings {
 	// 矩形标绘
@@ -98,6 +105,54 @@ export interface GroundDebugSettings {
 	largeCircleStrokeWidth: number;
 	largeCircleFillColor: string;
 	largeCircleFillOpacity: number;
+
+	// 文字标绘（1:1 比例尺）
+	textVisible: boolean;
+	textPlotOrder: number;
+	textCenterLon: number;
+	textCenterLat: number;
+	textContent: string;
+	textFontSize: number;
+	textMetersPerPixel: number;
+	textRotationDegrees: number;
+	textFontColor: string;
+	textFontStrokeColor: string;
+	textFontStrokeWidth: number;
+	textFillColor: string;
+	textFillOpacity: number;
+	textStrokeColor: string;
+	textStrokeOpacity: number;
+	textStrokeWidth: number;
+	textCornerRadius: number;
+	textTextAlign: PlotTextAlign;
+	textVerticalAlign: PlotTextVerticalAlign;
+	textAnchorX: PlotTextAnchorX;
+	textAnchorY: PlotTextAnchorY;
+	textLayoutDirection: PlotTextLayoutDirection;
+
+	// 文字标绘（5km 大比例尺）
+	largeTextVisible: boolean;
+	largeTextPlotOrder: number;
+	largeTextCenterLon: number;
+	largeTextCenterLat: number;
+	largeTextContent: string;
+	largeTextFontSize: number;
+	largeTextMetersPerPixel: number;
+	largeTextRotationDegrees: number;
+	largeTextFontColor: string;
+	largeTextFontStrokeColor: string;
+	largeTextFontStrokeWidth: number;
+	largeTextFillColor: string;
+	largeTextFillOpacity: number;
+	largeTextStrokeColor: string;
+	largeTextStrokeOpacity: number;
+	largeTextStrokeWidth: number;
+	largeTextCornerRadius: number;
+	largeTextTextAlign: PlotTextAlign;
+	largeTextVerticalAlign: PlotTextVerticalAlign;
+	largeTextAnchorX: PlotTextAnchorX;
+	largeTextAnchorY: PlotTextAnchorY;
+	largeTextLayoutDirection: PlotTextLayoutDirection;
 
 	// 调试面
 	showDebugSurface: boolean;

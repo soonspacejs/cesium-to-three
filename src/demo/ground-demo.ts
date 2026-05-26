@@ -25,6 +25,7 @@ import {
 	CesiumGroundCirclePrimitive,
 	CesiumGroundPolygonPrimitive,
 	CesiumGroundRectanglePrimitive,
+	CesiumGroundTextPrimitive,
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
 	CESIUM_GROUND_NON_PICKABLE_LAYER,
 	MAX_CIRCLE_GRANULARITY_RADIANS,
@@ -82,14 +83,94 @@ const POLYGON_OFFSET_LON = 70.0 * 1.02e-5;   // ~70 m east of rectangle
 const POLYGON_OFFSET_LAT = 18.0 * 9.01e-6;   // ~18 m north of rectangle
 const CIRCLE_OFFSET_LON = -65.0 * 1.02e-5;   // ~65 m west of rectangle
 const CIRCLE_OFFSET_LAT = -18.0 * 9.01e-6;   // ~18 m south of rectangle
+// 文字标绘 1:1 比例尺锚点：放在矩形正上方约 30 m。content 用 fontSize=16 +
+// metersPerPixel=1.0 时，按比例尺名义「1 纹素 ≈ 1 米」绘制，地面足迹与图元同量级。
+const TEXT_OFFSET_LON = 0.0;
+const TEXT_OFFSET_LAT = 30.0 * 9.01e-6;
+
+/**
+ * lil-gui 的 string controller 默认是 `<input type="text">` 单行，按 Enter 直接
+ * 失焦提交，无法输入 `\n`。但 text-layout.ts 已经按 `content.split('\n')` 支持
+ * 横排换行 / 竖排换列——也就是说渲染层早就准备好了多行，缺的是 GUI 的输入手段。
+ *
+ * **关键陷阱**：`HTMLInputElement.value` setter 按 HTML 规范会剥掉所有换行符
+ * (`\n` / `\r`)，再读 `.value` 拿到的是单行。早期把 textarea 内容回写隐藏
+ * input 再 dispatch 事件的方案就栽在这里——lil-gui 的监听器执行
+ * `this.setValue(this.$input.value)` 时读到的已经是被剥掉换行的字符串。
+ *
+ * 正确做法：直接 **替换** 原 input 节点为 `<textarea>`，并把
+ * `controller.$input` 指向它（lil-gui `updateDisplay()` 会写 `this.$input.value
+ * = getValue()`，textarea 接住换行不变）；监听 textarea 自己的 input / blur，
+ * 走 controller 的公开 `setValue` 与底层 `_callOnFinishChange` 触发外部回调链。
+ *
+ * @param controller lil-gui 的 string controller。
+ * @param rows       textarea 行数，默认 3。
+ */
+function convertControllerToTextarea(
+	controller: { getValue: () => unknown; setValue: ( v: unknown ) => unknown },
+	rows = 3,
+): void {
+	// lil-gui 的公共 Controller 类型不含 `$input` / `$disable` / `_callOnFinishChange`，
+	// 但实现里都有；走 unknown → object 单步 cast 拿引用，运行期判空兜底。
+	const internal = controller as unknown as {
+		$input?: HTMLInputElement;
+		$disable?: HTMLElement;
+		_callOnFinishChange?: () => void;
+	};
+	const input = internal.$input;
+	if ( input === undefined || input === null || input.parentNode === null ) {
+		return;
+	}
+
+	const textarea = document.createElement( 'textarea' );
+	textarea.rows = rows;
+	textarea.value = String( controller.getValue() ?? '' );
+	textarea.spellcheck = false;
+	textarea.style.width = '100%';
+	textarea.style.minHeight = `${ rows * 18 }px`;
+	textarea.style.resize = 'vertical';
+	textarea.style.fontFamily = 'inherit';
+	textarea.style.fontSize = 'inherit';
+	textarea.style.lineHeight = '1.4';
+	// 沿用 lil-gui 既有视觉变量，跟随主题切换不需要手动维护。
+	textarea.style.background = 'var(--widget-color)';
+	textarea.style.color = 'var(--text-color)';
+	textarea.style.border = '1px solid var(--widget-color)';
+	textarea.style.borderRadius = 'var(--widget-border-radius, 2px)';
+	textarea.style.padding = '0 var(--padding, 4px)';
+	textarea.style.boxSizing = 'border-box';
+
+	// 用 textarea 替换原 input。原 input 失去 parentNode 即从 DOM 摘出，
+	// 它注册的 input/blur/keydown 监听器不会再被触发——这正是我们想要的，
+	// 不然 Enter 会触发 blur → onFinishChange，用户没法换行。
+	input.parentNode.replaceChild( textarea, input );
+
+	// 同步 controller 的两个内部 DOM 引用到 textarea：updateDisplay() 会写
+	// `$input.value = getValue()`，让 textarea 接住换行；$disable 控启用态。
+	internal.$input = textarea as unknown as HTMLInputElement;
+	internal.$disable = textarea;
+
+	textarea.addEventListener( 'input', () => {
+		// setValue 内部会调 updateDisplay() → textarea.value = newValue，幂等。
+		controller.setValue( textarea.value );
+	} );
+	textarea.addEventListener( 'blur', () => {
+		// 私有 _callOnFinishChange 触发外部 .onFinishChange 回调 → rebuild。
+		if ( typeof internal._callOnFinishChange === 'function' ) {
+			internal._callOnFinishChange.call( controller );
+		}
+	} );
+}
 
 type DemoPlotId =
 	| 'rectangle'
 	| 'polygon'
 	| 'circle'
+	| 'text'
 	| 'largeRectangle'
 	| 'largePolygon'
 	| 'largeCircle'
+	| 'largeText'
 	| ArrowPlotId;
 
 interface RectangleGuiModel {
@@ -163,7 +244,7 @@ export function runGroundDemo(): void {
 	const camera = new PerspectiveCamera(
 		55,
 		window.innerWidth / window.innerHeight,
-		1.0,
+		0.1,
 		40000000.0,
 	);
 	camera.up.set( 0.0, 0.0, 1.0 );
@@ -179,8 +260,7 @@ export function runGroundDemo(): void {
 	const eastBias = new Vector3( - up.y, up.x, 0.0 ).normalize();
 	camera.position
 		.copy( target )
-		.addScaledVector( up, 720000.0 )
-		.addScaledVector( eastBias, 260000.0 );
+		.addScaledVector( up, 720000.0 );
 	camera.lookAt( target );
 	camera.updateMatrixWorld();
 
@@ -204,7 +284,7 @@ export function runGroundDemo(): void {
 		camera.updateMatrixWorld();
 	}
 
-	const tilesRenderer = createCesiumTilesRenderer();
+	const tilesRenderer = createCesiumTilesRenderer( renderer );
 	const tileCounters: TileRuntimeCounters = {
 		modelsLoaded: 0,
 		modelsVisible: 0,
@@ -219,7 +299,7 @@ export function runGroundDemo(): void {
 	controls.setEllipsoid( tilesRenderer.ellipsoid, tilesRenderer.group );
 	controls.enableDamping = true;
 	controls.dampingFactor = 0.14;
-	controls.minDistance = 10.0;
+	controls.minDistance = 0.1;
 	controls.maxDistance = 30000000.0;
 	controls.adjustHeight = true;
 
@@ -300,11 +380,15 @@ export function runGroundDemo(): void {
 			{ eastMeters: - 14000.0, northMeters: 11500.0 },
 			{ eastMeters: 1000.0, northMeters: 14500.0 },
 			{ eastMeters: 15000.0, northMeters: 11500.0 },
+			// largeText：放在 large 系列下方 ~5 km，content 用 metersPerPixel
+			// 较大时与 5 km 圆 / 矩形 / 多边形等量级。
+			{ eastMeters: 0.0, northMeters: 4500.0 },
 		],
 	);
 	const largeRectangleCenter = largePlotAnchors[ 0 ];
 	const largePolygonCenter = largePlotAnchors[ 1 ];
 	const largeCircleCenter = largePlotAnchors[ 2 ];
+	const largeTextCenter = largePlotAnchors[ 3 ];
 	const initialLargeRectangleWidthMeters = 10000.0;
 	const initialLargeRectangleHeightMeters = 5000.0;
 	const initialLargeRectanglePoints = lonLatPointsFromMeterOffsets(
@@ -415,6 +499,54 @@ export function runGroundDemo(): void {
 		largeCircleStrokeWidth: 150.0,
 		largeCircleFillColor: '#66ff66',
 		largeCircleFillOpacity: 42,
+		// 文字标绘 1:1：metersPerPixel=1.0 即「1 纹素 = 1 米」字面意义比例尺。
+		// 默认 content 含 \n 演示横排换行；anchor 放在矩形正北 ~30 m。
+		textVisible: true,
+		textPlotOrder: 3,
+		textCenterLon: RECTANGLE_CENTER_LON + TEXT_OFFSET_LON,
+		textCenterLat: RECTANGLE_CENTER_LAT + TEXT_OFFSET_LAT,
+		textContent: '1:1\n比例尺',
+		textFontSize: 16,
+		textMetersPerPixel: 1.0,
+		textRotationDegrees: 0.0,
+		textFontColor: '#ffffff',
+		textFontStrokeColor: '#000000',
+		textFontStrokeWidth: 2,
+		textFillColor: '#ff5500',
+		textFillOpacity: 70,
+		textStrokeColor: '#ffffff',
+		textStrokeOpacity: 100,
+		textStrokeWidth: 1,
+		textCornerRadius: 4,
+		textTextAlign: 'center',
+		textVerticalAlign: 'middle',
+		textAnchorX: 'center',
+		textAnchorY: 'middle',
+		textLayoutDirection: 'horizontal',
+		// 文字标绘 5 km：fontSize 64 + metersPerPixel 25 ≈ 5 km 宽度量级，
+		// 与 largeCircle（5 km 半径）等量级，放在 large 系列中部下方。
+		largeTextVisible: true,
+		largeTextPlotOrder: 11,
+		largeTextCenterLon: largeTextCenter[ 0 ],
+		largeTextCenterLat: largeTextCenter[ 1 ],
+		largeTextContent: '5 km\n大比例尺',
+		largeTextFontSize: 64,
+		largeTextMetersPerPixel: 25.0,
+		largeTextRotationDegrees: 0.0,
+		largeTextFontColor: '#ffffff',
+		largeTextFontStrokeColor: '#000000',
+		largeTextFontStrokeWidth: 6,
+		largeTextFillColor: '#1f6feb',
+		largeTextFillOpacity: 60,
+		largeTextStrokeColor: '#ffffff',
+		largeTextStrokeOpacity: 100,
+		largeTextStrokeWidth: 4,
+		largeTextCornerRadius: 24,
+		largeTextTextAlign: 'center',
+		largeTextVerticalAlign: 'middle',
+		largeTextAnchorX: 'center',
+		largeTextAnchorY: 'middle',
+		largeTextLayoutDirection: 'horizontal',
 		showDebugSurface: DEBUG_GROUND_SURFACE,
 		debugSurfaceHeight: 5000.0,
 		debugSurfaceOpacity: 0.55,
@@ -440,9 +572,11 @@ export function runGroundDemo(): void {
 	debugSettings.rectanglePlotOrder = plotOrderRegistry.register( 'rectangle', debugSettings.rectanglePlotOrder );
 	debugSettings.polygonPlotOrder = plotOrderRegistry.register( 'polygon', debugSettings.polygonPlotOrder );
 	debugSettings.circlePlotOrder = plotOrderRegistry.register( 'circle', debugSettings.circlePlotOrder );
+	debugSettings.textPlotOrder = plotOrderRegistry.register( 'text', debugSettings.textPlotOrder );
 	debugSettings.largeRectanglePlotOrder = plotOrderRegistry.register( 'largeRectangle', debugSettings.largeRectanglePlotOrder );
 	debugSettings.largePolygonPlotOrder = plotOrderRegistry.register( 'largePolygon', debugSettings.largePolygonPlotOrder );
 	debugSettings.largeCirclePlotOrder = plotOrderRegistry.register( 'largeCircle', debugSettings.largeCirclePlotOrder );
+	debugSettings.largeTextPlotOrder = plotOrderRegistry.register( 'largeText', debugSettings.largeTextPlotOrder );
 
 	/**
 	 * Returns the current fill rectangle derived from the public points field.
@@ -722,6 +856,22 @@ export function runGroundDemo(): void {
 			return;
 		}
 
+		if ( target === 'text' ) {
+			debugSettings.textPlotOrder = plotOrderRegistry.update(
+				'text',
+				debugSettings.textPlotOrder,
+			);
+			return;
+		}
+
+		if ( target === 'largeText' ) {
+			debugSettings.largeTextPlotOrder = plotOrderRegistry.update(
+				'largeText',
+				debugSettings.largeTextPlotOrder,
+			);
+			return;
+		}
+
 		debugSettings.polygonPlotOrder = plotOrderRegistry.update(
 			'polygon',
 			debugSettings.polygonPlotOrder,
@@ -995,18 +1145,95 @@ export function runGroundDemo(): void {
 		} );
 	}
 
+	/**
+	 * 创建 1:1 比例尺文字标绘。anchor 用 textCenterLon/Lat（已带矩形上方偏移），
+	 * metersPerPixel=1.0 时纹素 px 与地面米直接对应——这是「1:1 比例尺」的字面
+	 * 意义：canvas 上 1 像素 = 地面 1 米。fontSize 决定纹理清晰度（更高 → 纹理更
+	 * 大但视觉同样大小，因为足迹尺寸由 boxWidth × MPP 推得，而 boxWidth 又随
+	 * fontSize 增大）。
+	 *
+	 * @returns 配置好的贴地文字图元。
+	 */
+	function createGroundText(): CesiumGroundTextPrimitive {
+		return new CesiumGroundTextPrimitive( {
+			points: [ [ debugSettings.textCenterLon, debugSettings.textCenterLat ] ],
+			content: debugSettings.textContent,
+			fontSize: debugSettings.textFontSize,
+			fontFamily: 'sans-serif',
+			fontWeight: 'bold',
+			fontColor: debugSettings.textFontColor,
+			fontStrokeColor: debugSettings.textFontStrokeColor,
+			fontStrokeWidth: debugSettings.textFontStrokeWidth,
+			fillColor: debugSettings.textFillColor,
+			fillOpacity: debugSettings.textFillOpacity,
+			strokeColor: debugSettings.textStrokeColor,
+			strokeOpacity: debugSettings.textStrokeOpacity,
+			strokeWidth: debugSettings.textStrokeWidth,
+			cornerRadius: debugSettings.textCornerRadius,
+			padding: 4,
+			textAlign: debugSettings.textTextAlign,
+			verticalAlign: debugSettings.textVerticalAlign,
+			layoutDirection: debugSettings.textLayoutDirection,
+			metersPerPixel: debugSettings.textMetersPerPixel,
+			anchorX: debugSettings.textAnchorX,
+			anchorY: debugSettings.textAnchorY,
+			rotation: debugSettings.textRotationDegrees,
+			visible: debugSettings.textVisible,
+			renderOrder: plotOrderToRenderOrder( debugSettings.textPlotOrder ),
+		} );
+	}
+
+	/**
+	 * 创建 5 km 大比例尺文字标绘。fontSize 64 + metersPerPixel 25 时单字符约
+	 * 1.6 km，"5 km" 三字符 + padding 总宽 ~5 km，匹配 5 km 圆 / 矩形规模。
+	 *
+	 * @returns 配置好的贴地文字图元。
+	 */
+	function createLargeGroundText(): CesiumGroundTextPrimitive {
+		return new CesiumGroundTextPrimitive( {
+			points: [ [ debugSettings.largeTextCenterLon, debugSettings.largeTextCenterLat ] ],
+			content: debugSettings.largeTextContent,
+			fontSize: debugSettings.largeTextFontSize,
+			fontFamily: 'sans-serif',
+			fontWeight: 'bold',
+			fontColor: debugSettings.largeTextFontColor,
+			fontStrokeColor: debugSettings.largeTextFontStrokeColor,
+			fontStrokeWidth: debugSettings.largeTextFontStrokeWidth,
+			fillColor: debugSettings.largeTextFillColor,
+			fillOpacity: debugSettings.largeTextFillOpacity,
+			strokeColor: debugSettings.largeTextStrokeColor,
+			strokeOpacity: debugSettings.largeTextStrokeOpacity,
+			strokeWidth: debugSettings.largeTextStrokeWidth,
+			cornerRadius: debugSettings.largeTextCornerRadius,
+			padding: [ 16, 28, 16, 28 ],
+			textAlign: debugSettings.largeTextTextAlign,
+			verticalAlign: debugSettings.largeTextVerticalAlign,
+			layoutDirection: debugSettings.largeTextLayoutDirection,
+			metersPerPixel: debugSettings.largeTextMetersPerPixel,
+			anchorX: debugSettings.largeTextAnchorX,
+			anchorY: debugSettings.largeTextAnchorY,
+			rotation: debugSettings.largeTextRotationDegrees,
+			visible: debugSettings.largeTextVisible,
+			renderOrder: plotOrderToRenderOrder( debugSettings.largeTextPlotOrder ),
+		} );
+	}
+
 	let groundRectangle = createGroundRectangle();
 	let groundPolygon = createGroundPolygon();
 	let groundCircle = createGroundCircle();
+	let groundText = createGroundText();
 	let largeGroundRectangle = createLargeGroundRectangle();
 	let largeGroundPolygon = createLargeGroundPolygon();
 	let largeGroundCircle = createLargeGroundCircle();
+	let largeGroundText = createLargeGroundText();
 	scene.add( groundRectangle.classification.group );
 	scene.add( groundPolygon.classification.group );
 	scene.add( groundCircle.classification.group );
+	scene.add( groundText.group );
 	scene.add( largeGroundRectangle.classification.group );
 	scene.add( largeGroundPolygon.classification.group );
 	scene.add( largeGroundCircle.classification.group );
+	scene.add( largeGroundText.group );
 
 	// Lazily set after createGroundDebugGui() so we can attach to its GUI root.
 	// Forwarded settings (fragmentCull + pass visibility) are applied via the
@@ -1142,6 +1369,24 @@ export function runGroundDemo(): void {
 			debugSettings.largeCircleStrokeOpacity / 100.0,
 			debugSettings.largeCircleStrokeWidth,
 		);
+
+		// 文字标绘：颜色 / 描边写在纹理里，所以这里只调整 visible / renderOrder
+		// + 三命令显隐（与 rectangle 等保持一致）。纹理重绘走 rebuild 路径。
+		groundText.setVisible( debugSettings.textVisible );
+		groundText.setRenderOrder( plotOrderToRenderOrder( debugSettings.textPlotOrder ) );
+		groundText.classification.setCommandVisibility( {
+			frontStencil: debugSettings.showFrontStencil,
+			backStencil: debugSettings.showBackStencil,
+			color: debugSettings.showColorPass,
+		} );
+
+		largeGroundText.setVisible( debugSettings.largeTextVisible );
+		largeGroundText.setRenderOrder( plotOrderToRenderOrder( debugSettings.largeTextPlotOrder ) );
+		largeGroundText.classification.setCommandVisibility( {
+			frontStencil: debugSettings.showFrontStencil,
+			backStencil: debugSettings.showBackStencil,
+			color: debugSettings.showColorPass,
+		} );
 
 		// Shared render-state knobs (fragment culling + 3-pass visibility) must
 		// reach every arrow primitive too; defer until the subsystem exists so
@@ -1327,6 +1572,45 @@ export function runGroundDemo(): void {
 	}
 
 	/**
+	 * Rebuilds the 1:1 ground text primitive. Required when content / fontSize /
+	 * MPP / rotation / fill / stroke change (texture re-paint + footprint redo).
+	 */
+	function rebuildGroundText(): void {
+		scene.remove( groundText.group );
+		groundText.dispose();
+		groundText = createGroundText();
+		scene.add( groundText.group );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Rebuilds the 5 km large ground text primitive.
+	 */
+	function rebuildLargeGroundText(): void {
+		scene.remove( largeGroundText.group );
+		largeGroundText.dispose();
+		largeGroundText = createLargeGroundText();
+		scene.add( largeGroundText.group );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Plot-order edit for the 1:1 text.
+	 */
+	function applyTextPlotOrder(): void {
+		updateRegisteredPlotOrder( 'text' );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * Plot-order edit for the 5 km text.
+	 */
+	function applyLargeTextPlotOrder(): void {
+		updateRegisteredPlotOrder( 'largeText' );
+		applyGroundDebugSettings();
+	}
+
+	/**
 	 * Creates the lil-gui control surface for render-pass diagnosis.
 	 */
 	function createGroundDebugGui(): GUI {
@@ -1397,6 +1681,36 @@ export function runGroundDemo(): void {
 		circleFolder.addColor( debugSettings, 'circleFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		circleFolder.add( debugSettings, 'circleFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
 
+		// 文字标绘 1:1：fontSize 调整纹理清晰度（足迹 = boxWidthCssPx × MPP），
+		// metersPerPixel 调整地面足迹的米/纹素换算。content 用 textarea 支持
+		// 多行（\n 横排换行 / 竖排换列）；对齐控件覆盖框内 textAlign/verticalAlign
+		// 以及框相对锚点 anchorX/anchorY 两套。变化都走 rebuild（重画纹理 +
+		// 重算足迹 + 重建几何）。
+		const textFolder = gui.addFolder( 'Text 1:1' );
+		textFolder.add( debugSettings, 'textVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		textFolder.add( debugSettings, 'textPlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyTextPlotOrder ).listen();
+		const textContentController = textFolder
+			.add( debugSettings, 'textContent' ).name( 'content' )
+			.onFinishChange( rebuildGroundText ).listen();
+		convertControllerToTextarea( textContentController, 3 );
+		textFolder.add( debugSettings, 'textFontSize', 8, 128, 1 ).name( 'fontSize px' ).onFinishChange( rebuildGroundText ).listen();
+		textFolder.add( debugSettings, 'textMetersPerPixel', 0.1, 10.0, 0.1 ).name( 'metersPerPixel' ).onFinishChange( rebuildGroundText ).listen();
+		textFolder.add( debugSettings, 'textRotationDegrees', - 180.0, 180.0, 1.0 ).name( 'rotation deg' ).onFinishChange( rebuildGroundText ).listen();
+		textFolder.add( debugSettings, 'textLayoutDirection', [ 'horizontal', 'vertical-rl', 'vertical-lr' ] ).name( 'layout direction' ).onChange( rebuildGroundText );
+		textFolder.add( debugSettings, 'textTextAlign', [ 'left', 'center', 'right' ] ).name( 'textAlign (字↔框)' ).onChange( rebuildGroundText );
+		textFolder.add( debugSettings, 'textVerticalAlign', [ 'top', 'middle', 'bottom' ] ).name( 'verticalAlign (字↔框)' ).onChange( rebuildGroundText );
+		textFolder.add( debugSettings, 'textAnchorX', [ 'left', 'center', 'right' ] ).name( 'anchorX (框↔锚点)' ).onChange( rebuildGroundText );
+		textFolder.add( debugSettings, 'textAnchorY', [ 'top', 'middle', 'bottom' ] ).name( 'anchorY (框↔锚点)' ).onChange( rebuildGroundText );
+		textFolder.addColor( debugSettings, 'textFontColor' ).name( 'font color' ).onChange( rebuildGroundText );
+		textFolder.addColor( debugSettings, 'textFontStrokeColor' ).name( 'font stroke' ).onChange( rebuildGroundText );
+		textFolder.add( debugSettings, 'textFontStrokeWidth', 0, 8, 0.5 ).name( 'font strokeWidth' ).onFinishChange( rebuildGroundText );
+		textFolder.addColor( debugSettings, 'textFillColor' ).name( 'fillColor' ).onChange( rebuildGroundText );
+		textFolder.add( debugSettings, 'textFillOpacity', 0, 100, 1 ).name( 'fillOpacity' ).onChange( rebuildGroundText );
+		textFolder.addColor( debugSettings, 'textStrokeColor' ).name( 'strokeColor' ).onChange( rebuildGroundText );
+		textFolder.add( debugSettings, 'textStrokeOpacity', 0, 100, 1 ).name( 'strokeOpacity' ).onChange( rebuildGroundText );
+		textFolder.add( debugSettings, 'textStrokeWidth', 0, 8, 0.5 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundText );
+		textFolder.add( debugSettings, 'textCornerRadius', 0, 32, 1 ).name( 'cornerRadius' ).onFinishChange( rebuildGroundText );
+
 		const largeFolder = gui.addFolder( 'Large Scale' );
 		const largeRectangleFolder = largeFolder.addFolder( 'Rectangle 10km x 5km' );
 		largeRectangleFolder.add( debugSettings, 'largeRectangleVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
@@ -1431,6 +1745,37 @@ export function runGroundDemo(): void {
 		largeCircleFolder.addColor( debugSettings, 'largeCircleFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		largeCircleFolder.add( debugSettings, 'largeCircleFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
 		largeCircleFolder.close();
+
+		// 文字标绘 5 km：与 largeCircle 同量级。content 短文 "5 km\n大比例尺"
+		// 配 fontSize=64 / metersPerPixel=25 时足迹宽 ≈ 5 km；下调 MPP 即整段
+		// 缩小，但 fontSize 不变 → 纹理保持锐利。同样用 textarea 支持换行 +
+		// 对齐 / 锚点下拉。
+		const largeTextFolder = largeFolder.addFolder( 'Text 5km' );
+		largeTextFolder.add( debugSettings, 'largeTextVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		largeTextFolder.add( debugSettings, 'largeTextPlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyLargeTextPlotOrder ).listen();
+		const largeTextContentController = largeTextFolder
+			.add( debugSettings, 'largeTextContent' ).name( 'content' )
+			.onFinishChange( rebuildLargeGroundText ).listen();
+		convertControllerToTextarea( largeTextContentController, 3 );
+		largeTextFolder.add( debugSettings, 'largeTextFontSize', 16, 128, 1 ).name( 'fontSize px' ).onFinishChange( rebuildLargeGroundText ).listen();
+		largeTextFolder.add( debugSettings, 'largeTextMetersPerPixel', 5.0, 100.0, 1.0 ).name( 'metersPerPixel' ).onFinishChange( rebuildLargeGroundText ).listen();
+		largeTextFolder.add( debugSettings, 'largeTextRotationDegrees', - 180.0, 180.0, 1.0 ).name( 'rotation deg' ).onFinishChange( rebuildLargeGroundText ).listen();
+		largeTextFolder.add( debugSettings, 'largeTextLayoutDirection', [ 'horizontal', 'vertical-rl', 'vertical-lr' ] ).name( 'layout direction' ).onChange( rebuildLargeGroundText );
+		largeTextFolder.add( debugSettings, 'largeTextTextAlign', [ 'left', 'center', 'right' ] ).name( 'textAlign (字↔框)' ).onChange( rebuildLargeGroundText );
+		largeTextFolder.add( debugSettings, 'largeTextVerticalAlign', [ 'top', 'middle', 'bottom' ] ).name( 'verticalAlign (字↔框)' ).onChange( rebuildLargeGroundText );
+		largeTextFolder.add( debugSettings, 'largeTextAnchorX', [ 'left', 'center', 'right' ] ).name( 'anchorX (框↔锚点)' ).onChange( rebuildLargeGroundText );
+		largeTextFolder.add( debugSettings, 'largeTextAnchorY', [ 'top', 'middle', 'bottom' ] ).name( 'anchorY (框↔锚点)' ).onChange( rebuildLargeGroundText );
+		largeTextFolder.addColor( debugSettings, 'largeTextFontColor' ).name( 'font color' ).onChange( rebuildLargeGroundText );
+		largeTextFolder.addColor( debugSettings, 'largeTextFontStrokeColor' ).name( 'font stroke' ).onChange( rebuildLargeGroundText );
+		largeTextFolder.add( debugSettings, 'largeTextFontStrokeWidth', 0, 16, 1 ).name( 'font strokeWidth' ).onFinishChange( rebuildLargeGroundText );
+		largeTextFolder.addColor( debugSettings, 'largeTextFillColor' ).name( 'fillColor' ).onChange( rebuildLargeGroundText );
+		largeTextFolder.add( debugSettings, 'largeTextFillOpacity', 0, 100, 1 ).name( 'fillOpacity' ).onChange( rebuildLargeGroundText );
+		largeTextFolder.addColor( debugSettings, 'largeTextStrokeColor' ).name( 'strokeColor' ).onChange( rebuildLargeGroundText );
+		largeTextFolder.add( debugSettings, 'largeTextStrokeOpacity', 0, 100, 1 ).name( 'strokeOpacity' ).onChange( rebuildLargeGroundText );
+		largeTextFolder.add( debugSettings, 'largeTextStrokeWidth', 0, 16, 1 ).name( 'strokeWidth' ).onFinishChange( rebuildLargeGroundText );
+		largeTextFolder.add( debugSettings, 'largeTextCornerRadius', 0, 64, 1 ).name( 'cornerRadius' ).onFinishChange( rebuildLargeGroundText );
+		largeTextFolder.close();
+
 		largeFolder.close();
 
 		const passesFolder = gui.addFolder( 'Passes' );
@@ -1578,6 +1923,18 @@ export function runGroundDemo(): void {
 			height: renderer.domElement.height,
 			camera,
 		} );
+		groundText.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
+		largeGroundText.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
 
 		// Forward the host's frame state to every arrow primitive so the
 		// arrows participate in the same depth + viewport classification path
@@ -1620,6 +1977,8 @@ export function runGroundDemo(): void {
 			`Large Rectangle: ${ debugSettings.largeRectangleVisible ? 'on' : 'off' } / order ${ debugSettings.largeRectanglePlotOrder } / ${ ( debugSettings.largeRectangleWidthMeters / 1000.0 ).toFixed( 1 ) } km x ${ ( debugSettings.largeRectangleHeightMeters / 1000.0 ).toFixed( 1 ) } km\n` +
 			`Large Polygon: ${ debugSettings.largePolygonVisible ? 'on' : 'off' } / order ${ debugSettings.largePolygonPlotOrder } / points ${ debugSettings.largePolygonPoints.length } / rotation ${ debugSettings.largePolygonRotationDegrees.toFixed( 1 ) } deg\n` +
 			`Large Circle: ${ debugSettings.largeCircleVisible ? 'on' : 'off' } / order ${ debugSettings.largeCirclePlotOrder } / radius ${ ( debugSettings.largeCircleRadius / 1000.0 ).toFixed( 1 ) } km\n` +
+			`Text 1:1: ${ debugSettings.textVisible ? 'on' : 'off' } / order ${ debugSettings.textPlotOrder } / "${ debugSettings.textContent }" / ${ debugSettings.textFontSize } px × ${ debugSettings.textMetersPerPixel.toFixed( 2 ) } m/px / rotation ${ debugSettings.textRotationDegrees.toFixed( 0 ) } deg\n` +
+			`Text 5km: ${ debugSettings.largeTextVisible ? 'on' : 'off' } / order ${ debugSettings.largeTextPlotOrder } / "${ debugSettings.largeTextContent }" / ${ debugSettings.largeTextFontSize } px × ${ debugSettings.largeTextMetersPerPixel.toFixed( 1 ) } m/px / rotation ${ debugSettings.largeTextRotationDegrees.toFixed( 0 ) } deg\n` +
 			arrowInfoBlock +
 			`Debug surface: ${ debugSettings.showDebugSurface ? 'on' : 'off' }\n` +
 			`Rectangle stroke: ${ debugSettings.strokeWidth.toFixed( 0 ) } m / opacity ${ debugSettings.strokeOpacity.toFixed( 0 ) }%\n` +
@@ -1665,6 +2024,12 @@ export function runGroundDemo(): void {
 		},
 		get largeGroundCircle() {
 			return largeGroundCircle;
+		},
+		get groundText() {
+			return groundText;
+		},
+		get largeGroundText() {
+			return largeGroundText;
 		},
 		get arrowSubsystem() {
 			return arrowSubsystem;

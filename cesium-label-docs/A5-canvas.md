@@ -1,0 +1,272 @@
+# A5 · `text-canvas.ts` —— Canvas2D 绘制（产纹理）
+
+> [← A4-layout](./A4-layout.md) | [B1-placement →](./B1-placement.md)
+
+## 职责
+
+把 `ResolvedPlotTextOptions` 画到 `HTMLCanvasElement`，4 层：① 框背景 → ② 框边框 → ③ 字描边 → ④ 字主体。该 canvas 即贴地纹理（C 层 `CanvasTexture` 的源）。
+
+与 Sprite 版差别：贴地纹理的"超采样倍率"不再是屏幕 DPR，而是固定的**纹素超采样系数**（`TEXEL_SUPERSAMPLE`），因为贴地纹理的清晰度由 `fontSize`(纹素) + `metersPerPixel`(地面密度) + 相机距离共同决定，与屏幕 DPR 无直接关系。这里用固定 2× 超采样改善纹理被斜视 / 拉近时的边缘锐度，配合 C 层各向异性过滤。
+
+## 完整源码
+
+```typescript
+// ============================================================
+// text-canvas.ts
+// 层级：L2（依赖 text-color / text-layout）
+// 职责：把 ResolvedPlotTextOptions 画到 canvas，4 层：框背景 → 框边框 →
+//       字描边 → 字主体。该 canvas 作为贴地纹理源（CanvasTexture）。
+//       超采样系数固定（非屏幕 DPR），改善贴地纹理斜视锐度。
+// 依赖：text-types / text-color / text-layout。
+// 被消费：text-primitive（建 / 更新纹理）。
+// ============================================================
+
+import { composeRgba } from './text-color';
+import { layoutText, type MeasureCharWidth } from './text-layout';
+import type { ResolvedPlotTextOptions, TextLayoutResult } from './text-types';
+
+// 纹素超采样系数：物理 canvas = 逻辑纹素 × 此系数。
+// 贴地纹理会被相机以各种距离 / 角度观察，2× 超采样 + C 层各向异性过滤
+// 能显著减少斜视模糊；超过 2× 收益递减而显存翻倍。
+const TEXEL_SUPERSAMPLE = 2.0;
+// 单张标牌纹理边长上限（物理像素），防止超长内容撑爆显存 / 超过 GL 纹理上限。
+const MAX_TEXTURE_DIMENSION = 4096;
+
+/** paint 输出。 */
+export interface PaintedTextCanvas {
+	/** 已绘制的 canvas（物理像素 = 逻辑纹素 × supersample）。 */
+	canvas: HTMLCanvasElement;
+	/** 布局结果（box 尺寸单位为逻辑纹素，供足迹换算）。 */
+	layout: TextLayoutResult;
+	/** 实际超采样系数（可能因 MAX_TEXTURE_DIMENSION 被下调）。 */
+	supersample: number;
+}
+
+/**
+ * 把已解析配置渲染到 canvas。可传 reuseCanvas 复用句柄（setText 时不重建 texture）。
+ *
+ * 流程：先建 ctx 设字体 → 布局测量 → 定物理尺寸（含超采样、夹纹理上限）→
+ * resize → scale → 重设字体 → 4 层绘制。
+ *
+ * @param options     已解析配置。
+ * @param reuseCanvas 可选复用 canvas。
+ * @returns           canvas + layout + 实际超采样系数。
+ */
+export function paintTextToCanvas(
+	options: ResolvedPlotTextOptions,
+	reuseCanvas?: HTMLCanvasElement | null,
+): PaintedTextCanvas {
+	if ( typeof document === 'undefined' ) {
+		throw new Error( 'PlotText paint requires browser `document`.' );
+	}
+	const canvas = reuseCanvas ?? document.createElement( 'canvas' );
+
+	// 步骤 A：先拿 ctx 设字体用于测量（measureText 必须在已设 font 的 ctx 上）
+	const measureCtx = canvas.getContext( '2d' );
+	if ( measureCtx === null ) {
+		throw new Error( 'PlotText paint: failed to acquire 2D context.' );
+	}
+	applyFontToContext( measureCtx, options );
+	const measureChar: MeasureCharWidth = ( ch ) => measureCtx.measureText( ch ).width;
+	const layout = layoutText( options, measureChar );
+
+	// 步骤 B：物理尺寸 = 逻辑纹素 × 超采样，且不超过纹理上限（必要时下调系数）
+	let supersample = TEXEL_SUPERSAMPLE;
+	const maxLogicalDim = Math.max( layout.boxWidthCssPx, layout.boxHeightCssPx, 1.0 );
+	if ( maxLogicalDim * supersample > MAX_TEXTURE_DIMENSION ) {
+		supersample = MAX_TEXTURE_DIMENSION / maxLogicalDim;
+	}
+	const physicalWidth = Math.max( Math.ceil( layout.boxWidthCssPx * supersample ), 1 );
+	const physicalHeight = Math.max( Math.ceil( layout.boxHeightCssPx * supersample ), 1 );
+	if ( canvas.width !== physicalWidth ) {
+		canvas.width = physicalWidth;
+	}
+	if ( canvas.height !== physicalHeight ) {
+		canvas.height = physicalHeight;
+	}
+
+	const ctx = canvas.getContext( '2d' );
+	if ( ctx === null ) {
+		throw new Error( 'PlotText paint: failed to re-acquire 2D context after resize.' );
+	}
+	// resize 会清空 ctx 状态；显式复位变换 + 清屏
+	ctx.setTransform( 1, 0, 0, 1, 0, 0 );
+	ctx.clearRect( 0, 0, canvas.width, canvas.height );
+	// 把逻辑纹素坐标映射到物理像素：后续按逻辑纹素绘制，实际写入超采样密度
+	ctx.scale( supersample, supersample );
+	applyFontToContext( ctx, options );
+
+	// 步骤 C：4 层绘制
+	paintBoxBackground( ctx, options, layout );
+	paintBoxBorder( ctx, options, layout );
+	paintTextStroke( ctx, options, layout );
+	paintTextFill( ctx, options, layout );
+
+	return { canvas, layout, supersample };
+}
+
+// ────────────────────────────────────────────────────────────
+// 4 层
+// ────────────────────────────────────────────────────────────
+
+/** 绘制框背景（圆角）。 */
+function paintBoxBackground(
+	ctx: CanvasRenderingContext2D,
+	options: ResolvedPlotTextOptions,
+	layout: TextLayoutResult,
+): void {
+	if ( options.fillOpacity <= 0.0 ) {
+		return;
+	}
+	ctx.beginPath();
+	traceRoundedRect( ctx, 0.0, 0.0, layout.boxWidthCssPx, layout.boxHeightCssPx, options.cornerRadius );
+	ctx.fillStyle = composeRgba( options.fillColor, options.fillOpacity );
+	ctx.fill();
+}
+
+/** 绘制框边框（圆角，内缩 strokeWidth/2 使边框完全在框内）。 */
+function paintBoxBorder(
+	ctx: CanvasRenderingContext2D,
+	options: ResolvedPlotTextOptions,
+	layout: TextLayoutResult,
+): void {
+	if ( ! options.showBorder || options.strokeWidth <= 0.0 || options.strokeOpacity <= 0.0 ) {
+		return;
+	}
+	// Canvas2D stroke 沿路径中心线，内缩 strokeWidth/2 让边框不溢出框外缘
+	const half = options.strokeWidth / 2.0;
+	ctx.beginPath();
+	traceRoundedRect(
+		ctx, half, half,
+		layout.boxWidthCssPx - options.strokeWidth,
+		layout.boxHeightCssPx - options.strokeWidth,
+		Math.max( options.cornerRadius - half, 0.0 ),
+	);
+	ctx.lineWidth = options.strokeWidth;
+	ctx.strokeStyle = composeRgba( options.strokeColor, options.strokeOpacity );
+	ctx.stroke();
+}
+
+/** 绘制字描边（每字符 strokeText；先描后填使描边在外、字宽不变）。 */
+function paintTextStroke(
+	ctx: CanvasRenderingContext2D,
+	options: ResolvedPlotTextOptions,
+	layout: TextLayoutResult,
+): void {
+	if ( options.fontStrokeColor === null || options.fontStrokeWidth <= 0.0 || options.fontStrokeOpacity <= 0.0 ) {
+		return;
+	}
+	// strokeText 也是中心线，× 2 得到对外可见的外描边宽度
+	ctx.lineWidth = options.fontStrokeWidth * 2.0;
+	ctx.lineJoin = 'round';
+	ctx.lineCap = 'round';
+	ctx.miterLimit = 2.0;
+	ctx.strokeStyle = composeRgba( options.fontStrokeColor, options.fontStrokeOpacity );
+	withClipIfNeeded( ctx, options, layout, () => {
+		for ( const c of layout.chars ) {
+			ctx.strokeText( c.char, c.x, c.baselineY );
+		}
+	} );
+}
+
+/** 绘制字主体（每字符 fillText）。 */
+function paintTextFill(
+	ctx: CanvasRenderingContext2D,
+	options: ResolvedPlotTextOptions,
+	layout: TextLayoutResult,
+): void {
+	ctx.fillStyle = composeRgba( options.fontColor, 100.0 );
+	withClipIfNeeded( ctx, options, layout, () => {
+		for ( const c of layout.chars ) {
+			ctx.fillText( c.char, c.x, c.baselineY );
+		}
+	} );
+}
+
+/** boxOverflow==='clip' 时把绘制限制在框内（save/restore 包裹避免污染外层）。 */
+function withClipIfNeeded(
+	ctx: CanvasRenderingContext2D,
+	options: ResolvedPlotTextOptions,
+	layout: TextLayoutResult,
+	paint: () => void,
+): void {
+	if ( options.boxOverflow === 'visible' ) {
+		paint();
+		return;
+	}
+	ctx.save();
+	ctx.beginPath();
+	traceRoundedRect( ctx, 0.0, 0.0, layout.boxWidthCssPx, layout.boxHeightCssPx, options.cornerRadius );
+	ctx.clip();
+	paint();
+	ctx.restore();
+}
+
+// ────────────────────────────────────────────────────────────
+// 工具
+// ────────────────────────────────────────────────────────────
+
+/**
+ * 在当前路径勾画圆角矩形（不 fill/stroke）。手写 arcTo 兜底老内核无 roundRect。
+ *
+ * @param ctx    上下文。
+ * @param x      左上 x。
+ * @param y      左上 y。
+ * @param w      宽。
+ * @param h      高。
+ * @param radius 圆角半径（钳到 min(w,h)/2）。
+ */
+function traceRoundedRect(
+	ctx: CanvasRenderingContext2D,
+	x: number, y: number, w: number, h: number, radius: number,
+): void {
+	if ( w <= 0.0 || h <= 0.0 ) {
+		return; // 退化尺寸：空 path，避免 arcTo 异常
+	}
+	const r = Math.min( Math.max( radius, 0.0 ), Math.min( w, h ) / 2.0 );
+	if ( r === 0.0 ) {
+		ctx.rect( x, y, w, h );
+		return;
+	}
+	ctx.moveTo( x + r, y );
+	ctx.lineTo( x + w - r, y );
+	ctx.arcTo( x + w, y, x + w, y + r, r );
+	ctx.lineTo( x + w, y + h - r );
+	ctx.arcTo( x + w, y + h, x + w - r, y + h, r );
+	ctx.lineTo( x + r, y + h );
+	ctx.arcTo( x, y + h, x, y + h - r, r );
+	ctx.lineTo( x, y + r );
+	ctx.arcTo( x, y, x + r, y, r );
+	ctx.closePath();
+}
+
+/**
+ * 设 ctx.font + baseline。baseline 固定 'alphabetic' 与布局 ASCENT_RATIO 配合。
+ *
+ * @param ctx     上下文。
+ * @param options 已解析配置。
+ */
+function applyFontToContext(
+	ctx: CanvasRenderingContext2D,
+	options: ResolvedPlotTextOptions,
+): void {
+	const weight = typeof options.fontWeight === 'number'
+		? String( options.fontWeight )
+		: options.fontWeight;
+	ctx.font = `${ weight } ${ options.fontSize }px ${ options.fontFamily }`;
+	ctx.textBaseline = 'alphabetic';
+	ctx.textAlign = 'left';
+}
+```
+
+## 视觉冒烟清单
+
+纯填充无边框；圆角+边框平滑；胶囊形（cornerRadius=高/2）；白描边黑字高对比；半透明背景透出地形；clip 裁切超长内容；竖排 rl 列序；旋转后（贴地，由 C 层验证）纹理不歪。
+
+## 边界
+
+字体加载：调用方应在构造前 `await document.fonts.load(...)`，否则首帧用 fallback 字体测量出错。`ctx.measureText` 性能 ms 级；大量动态文本可在 caller 按 content 哈希复用 `PaintedTextCanvas`。
+
+---
+
+[← A4-layout](./A4-layout.md) | [B1-placement →](./B1-placement.md)

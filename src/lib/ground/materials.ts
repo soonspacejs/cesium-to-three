@@ -273,6 +273,9 @@ uniform float u_circleRingCount;
 uniform float u_circleRingGapMeters;
 uniform float u_circleSectorStartRadians;
 uniform float u_circleSectorAngleRadians;
+#ifdef CESIUM_THREE_TEXT
+uniform sampler2D u_textTexture;
+#endif
 
 const float czm_pi = 3.141592653589793;
 const float czm_twoPi = 6.283185307179586;
@@ -754,6 +757,140 @@ export function createColorMaterial( uniforms: SharedUniforms, fragmentCull: boo
 	} );
 
 	material.name = 'CesiumClassificationColorMaterial';
+	return material;
+}
+
+/**
+ * Injects the ground-text fragment branch into Cesium's per-instance color
+ * shader. Uses the same `vec4 color = czm_gammaCorrect(v_color);` anchor as
+ * `createColorFragmentBody()` so the only difference between rectangle/circle
+ * fill and text is the inner branch. The text branch reuses the CPU-plane
+ * `planarMeters` path (same precision pipeline as the border path), normalizes
+ * to `[0,1]` uv using the footprint meters stored in `u_innerMetersRect.zw`,
+ * then samples `u_textTexture` with the V axis flipped (canvas origin is
+ * top-left, uv origin is SW).
+ *
+ * @returns ShadowVolumeAppearanceFS with the text sampling branch inserted.
+ * @throws  When the Cesium anchor line is missing (upstream shader churn).
+ */
+function createTextColorFragmentBody(): string {
+	const colorDeclaration = '    vec4 color = czm_gammaCorrect(v_color);';
+	const textInjection = /* glsl */ `    vec4 color = czm_gammaCorrect(v_color);
+#ifdef CESIUM_THREE_TEXT
+#ifdef TEXTURE_COORDINATES
+#ifndef SPHERICAL
+    // CPU-plane 抖动免疫 planarMeters（与 border 路径同源，Float64 CPU 算出
+    // u_cpuWestPlane / u_cpuSouthPlane，避免 v_westPlane 的远视角插值抖动）
+    vec3 textEyeCoordinate = eyeCoordinate.xyz / eyeCoordinate.w;
+    vec2 textPlanarMeters = vec2(
+        czm_planeDistance(u_cpuWestPlane, textEyeCoordinate),
+        czm_planeDistance(u_cpuSouthPlane, textEyeCoordinate)
+    );
+    // 归一化到 [0,1]：足迹米宽/高存于 u_innerMetersRect.zw（见 text-extents）
+    vec2 textUv = vec2(
+        textPlanarMeters.x / max(u_innerMetersRect.z, 1e-6),
+        textPlanarMeters.y / max(u_innerMetersRect.w, 1e-6)
+    );
+    // 足迹外丢弃（CPU-plane 精度的足迹裁剪）
+    if (textUv.x < 0.0 || textUv.x > 1.0 || textUv.y < 0.0 || textUv.y > 1.0) {
+        discard;
+    }
+    // canvas 原点左上、Y 向下；uv 原点 SW、Y 向上 → 翻转 V
+    vec4 texel = texture(u_textTexture, vec2(textUv.x, 1.0 - textUv.y));
+    // 全透明像素丢弃，避免覆盖底下地形 / 其它贴地图元
+    if (texel.a <= 0.0) {
+        discard;
+    }
+    // 颜色空间：CanvasTexture 取样得 sRGB 编码值，直接输出与 fill 路径一致。
+    out_FragColor = texel;
+    // 预乘 alpha：classification 在半透明地球上的混合约定（与 fill/border 一致）
+    out_FragColor.rgb *= out_FragColor.a;
+    return;
+#endif
+#endif
+#endif`;
+
+	const shader = cesiumShadowVolumeAppearanceFS.replace( colorDeclaration, textInjection );
+	if ( shader === cesiumShadowVolumeAppearanceFS ) {
+		throw new Error( 'Cesium shader patch failed: text color hook was not found.' );
+	}
+	return shader;
+}
+
+/**
+ * Wraps the text color fragment body with the LOG_DEPTH `main()` postlude so
+ * `czm_writeLogDepth()` runs after the texture sampling early-return path.
+ *
+ * @returns LOG_DEPTH 包装后的文字片元源。
+ */
+function buildTextColorFragmentShader(): string {
+	const innerName = 'czm_shadow_volume_text_main_fs';
+	const append = ENABLE_LOG_DEPTH ? 'czm_writeLogDepth();' : '';
+	const body = createTextColorFragmentBody();
+
+	return ENABLE_LOG_DEPTH
+		? wrapShaderMain( body, innerName, append )
+		: body;
+}
+
+/**
+ * Creates the ground-text color material. Render state matches
+ * `createColorMaterial` byte-for-byte so the front-stencil / back-stencil /
+ * color command block keeps the same render-order contract; the only delta is
+ * the `CESIUM_THREE_TEXT` define and a fragment branch that samples
+ * `u_textTexture`. Caller is expected to inject the texture uniform via the
+ * shared `extraUniforms` path so the LOG_DEPTH + CPU-plane + Float64-RTE
+ * precision pipeline stays unchanged.
+ *
+ * @param uniforms     Shared uniforms (must include `u_textTexture` value).
+ * @param fragmentCull Whether Cesium's `CULL_FRAGMENTS` define is active.
+ * @returns            RawShaderMaterial for the text color command.
+ */
+export function createTextColorMaterial(
+	uniforms: SharedUniforms,
+	fragmentCull: boolean,
+): RawShaderMaterial {
+	const defines = combineDefines( [
+		'EXTRUDED_GEOMETRY',
+		'TEXTURE_COORDINATES',
+		fragmentCull ? 'CULL_FRAGMENTS' : '',
+		'PER_INSTANCE_COLOR',
+		'FLAT',
+		'REQUIRES_EC',
+		'CESIUM_THREE_TEXT',
+	] );
+
+	const vertexShader = buildColorVertexShader();         // 复用 fill 的顶点包装
+	const fragmentShader = buildTextColorFragmentShader(); // 文字专属片元
+
+	const material = new RawShaderMaterial( {
+		glslVersion: GLSL3,
+		uniforms,
+		vertexShader: `${ createVertexPrefix( defines ) }\n${ vertexShader }`,
+		fragmentShader: `${ createFragmentPrefix( defines ) }\n${ fragmentShader }`,
+		side: DoubleSide,
+		colorWrite: true,
+		depthWrite: false,
+		depthTest: false,
+		stencilWrite: true,
+		stencilFunc: NotEqualStencilFunc,
+		stencilRef: 0,
+		stencilFuncMask: CLASSIFICATION_MASK,
+		stencilWriteMask: CLASSIFICATION_MASK,
+		stencilFail: ZeroStencilOp,
+		stencilZFail: ZeroStencilOp,
+		stencilZPass: ZeroStencilOp,
+		transparent: false,
+		blending: CustomBlending,
+		blendEquation: AddEquation,
+		blendSrc: OneFactor,
+		blendDst: OneMinusSrcAlphaFactor,
+		blendSrcAlpha: OneFactor,
+		blendDstAlpha: OneMinusSrcAlphaFactor,
+		toneMapped: false,
+	} );
+
+	material.name = 'CesiumGroundTextColorMaterial';
 	return material;
 }
 

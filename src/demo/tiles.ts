@@ -13,10 +13,15 @@ import {
 	FrontSide,
 	type Material,
 	type Object3D,
+	type WebGLRenderer,
 } from 'three';
 import { TilesRenderer } from '3d-tiles-renderer';
 import { CesiumIonAuthPlugin } from '3d-tiles-renderer/core/plugins';
-import { QuantizedMeshPlugin } from '3d-tiles-renderer/three/plugins';
+import {
+	CesiumIonOverlay,
+	ImageOverlayPlugin,
+	QuantizedMeshPlugin,
+} from '3d-tiles-renderer/three/plugins';
 
 import { applyCesiumLogDepthToMaterial } from '../lib/ground';
 import { readStringEnv } from './env';
@@ -86,11 +91,16 @@ export function configureLoadedTileScene( modelScene: Object3D ): void {
 
 /**
  * 创建由 Cesium Ion 驱动的 3D Tiles 渲染器。地形资产由 QuantizedMeshPlugin 处理，
- * 因此表面是真实地形几何，而不是椭球体。
+ * 表面是真实地形几何而非椭球体。同时通过 ImageOverlayPlugin + CesiumIonOverlay
+ * 把 Cesium 世界影像服务(asset id = 2)叠加到地形之上,瓦片表面才有真实影像而不是
+ * 纯色着色。
  *
+ * 参考实现:3DTilesRendererJS/example/three/plot/touchGround.js 的 reinstantiateTiles。
+ *
+ * @param renderer 主 WebGLRenderer,ImageOverlayPlugin 用它把瓦片纹理渲染到 RT。
  * @returns 配置完成的 TilesRenderer 实例。
  */
-export function createCesiumTilesRenderer(): TilesRenderer {
+export function createCesiumTilesRenderer( renderer: WebGLRenderer ): TilesRenderer {
 	const apiToken = readStringEnv( 'VITE_CESIUM_ION_TOKEN' );
 	const configuredAssetId = readStringEnv( 'VITE_CESIUM_ION_ASSET_ID', '1' );
 	const assetId = configuredAssetId;
@@ -121,6 +131,21 @@ export function createCesiumTilesRenderer(): TilesRenderer {
 
 			console.warn( `Unhandled Cesium Ion asset type: ${ type }` );
 		},
+	} ) );
+
+	// Cesium 世界影像服务(Cesium World Imagery,asset id = 2)。和 touchGround.js
+	// 一样通过 ImageOverlayPlugin 注入,renderer 必填,resolution 沿用 512 保证近景清晰。
+	const worldImageryOverlay = new CesiumIonOverlay( {
+		assetId: 2,
+		apiToken,
+		opacity: 1.0,
+		color: 0xffffff,
+	} );
+
+	tilesRenderer.registerPlugin( new ImageOverlayPlugin( {
+		renderer,
+		overlays: [ worldImageryOverlay ],
+		resolution: 512,
 	} ) );
 
 	if ( configuredAssetId === '1' ) {

@@ -7,6 +7,16 @@
 // ============================================================
 
 export * from './cesium-ground-adapter';
+export { CesiumGroundTextPrimitive } from './text';
+export type {
+	PlotTextOptions,
+	PlotTextAlign,
+	PlotTextVerticalAlign,
+	PlotTextAnchorX,
+	PlotTextAnchorY,
+	PlotTextLayoutDirection,
+	PlotTextBoxOverflow,
+} from './text';
 export {
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
 	CESIUM_GROUND_NON_PICKABLE_LAYER,
