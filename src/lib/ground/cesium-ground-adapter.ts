@@ -18,6 +18,7 @@ export { CesiumGlobeDepth, createCesiumEllipsoidDepthMeshes } from './depth';
 export { CesiumClassificationPrimitive } from './classification';
 export {
 	CesiumGroundCirclePrimitive,
+	CesiumGroundPointPrimitive,
 	CesiumGroundPolygonPrimitive,
 	CesiumGroundRectanglePrimitive,
 } from './primitives';

@@ -7,6 +7,7 @@
 // ============================================================
 
 import type {
+	CesiumGroundPointShape,
 	LonLatPoint,
 	PlotTextAlign,
 	PlotTextAnchorX,
@@ -75,6 +76,30 @@ export interface GroundDebugSettings {
 	circleFillColor: string;
 	circleFillOpacity: number;
 
+	// 点标绘（圆形 / 正方形，分别走圆形 / 矩形渲染路径）
+	pointCircleVisible: boolean;
+	pointCirclePlotOrder: number;
+	pointCircleCenterLon: number;
+	pointCircleCenterLat: number;
+	pointCircleShape: CesiumGroundPointShape;
+	pointCircleSize: number;
+	pointCircleStrokeColor: string;
+	pointCircleStrokeOpacity: number;
+	pointCircleStrokeWidth: number;
+	pointCircleFillColor: string;
+	pointCircleFillOpacity: number;
+	pointSquareVisible: boolean;
+	pointSquarePlotOrder: number;
+	pointSquareCenterLon: number;
+	pointSquareCenterLat: number;
+	pointSquareShape: CesiumGroundPointShape;
+	pointSquareSize: number;
+	pointSquareStrokeColor: string;
+	pointSquareStrokeOpacity: number;
+	pointSquareStrokeWidth: number;
+	pointSquareFillColor: string;
+	pointSquareFillOpacity: number;
+
 	// 大尺度对照标绘
 	largeRectangleVisible: boolean;
 	largeRectanglePlotOrder: number;
@@ -105,6 +130,28 @@ export interface GroundDebugSettings {
 	largeCircleStrokeWidth: number;
 	largeCircleFillColor: string;
 	largeCircleFillOpacity: number;
+	largePointCircleVisible: boolean;
+	largePointCirclePlotOrder: number;
+	largePointCircleCenterLon: number;
+	largePointCircleCenterLat: number;
+	largePointCircleShape: CesiumGroundPointShape;
+	largePointCircleSize: number;
+	largePointCircleStrokeColor: string;
+	largePointCircleStrokeOpacity: number;
+	largePointCircleStrokeWidth: number;
+	largePointCircleFillColor: string;
+	largePointCircleFillOpacity: number;
+	largePointSquareVisible: boolean;
+	largePointSquarePlotOrder: number;
+	largePointSquareCenterLon: number;
+	largePointSquareCenterLat: number;
+	largePointSquareShape: CesiumGroundPointShape;
+	largePointSquareSize: number;
+	largePointSquareStrokeColor: string;
+	largePointSquareStrokeOpacity: number;
+	largePointSquareStrokeWidth: number;
+	largePointSquareFillColor: string;
+	largePointSquareFillOpacity: number;
 
 	// 文字标绘（1:1 比例尺）
 	textVisible: boolean;

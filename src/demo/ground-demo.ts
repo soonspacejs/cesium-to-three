@@ -23,6 +23,7 @@ import GUI from 'lil-gui';
 import {
 	CesiumGlobeDepth,
 	CesiumGroundCirclePrimitive,
+	CesiumGroundPointPrimitive,
 	CesiumGroundPolygonPrimitive,
 	CesiumGroundRectanglePrimitive,
 	CesiumGroundTextPrimitive,
@@ -37,6 +38,7 @@ import {
 	validateCesiumGroundRenderer,
 	wgs84NormalFromDegrees,
 	wgs84PositionFromDegrees,
+	type CesiumGroundPointShape,
 	type LonLatPoint,
 } from '../lib/ground';
 import { createInfoPanel, installPageStyle } from './dom';
@@ -87,6 +89,13 @@ const CIRCLE_OFFSET_LAT = -18.0 * 9.01e-6;   // ~18 m south of rectangle
 // metersPerPixel=1.0 时，按比例尺名义「1 纹素 ≈ 1 米」绘制，地面足迹与图元同量级。
 const TEXT_OFFSET_LON = 0.0;
 const TEXT_OFFSET_LAT = 30.0 * 9.01e-6;
+
+// 点标绘锚点：两个点放在矩形东南方向，分别走圆形 / 矩形渲染路径，
+// 避免与 polygon (东北) / circle (西南) / text (正北) 的足迹重叠。
+const POINT_CIRCLE_OFFSET_LON = 25.0 * 1.02e-5;   // ~25 m east of rectangle
+const POINT_CIRCLE_OFFSET_LAT = - 35.0 * 9.01e-6; // ~35 m south of rectangle
+const POINT_SQUARE_OFFSET_LON = - 20.0 * 1.02e-5; // ~20 m west of rectangle
+const POINT_SQUARE_OFFSET_LAT = - 35.0 * 9.01e-6; // ~35 m south of rectangle
 
 /**
  * lil-gui 的 string controller 默认是 `<input type="text">` 单行，按 Enter 直接
@@ -167,10 +176,14 @@ type DemoPlotId =
 	| 'polygon'
 	| 'circle'
 	| 'text'
+	| 'pointCircle'
+	| 'pointSquare'
 	| 'largeRectangle'
 	| 'largePolygon'
 	| 'largeCircle'
 	| 'largeText'
+	| 'largePointCircle'
+	| 'largePointSquare'
 	| ArrowPlotId;
 
 interface RectangleGuiModel {
@@ -383,12 +396,18 @@ export function runGroundDemo(): void {
 			// largeText：放在 large 系列下方 ~5 km，content 用 metersPerPixel
 			// 较大时与 5 km 圆 / 矩形 / 多边形等量级。
 			{ eastMeters: 0.0, northMeters: 4500.0 },
+			// large points：放在 rectangle 中心南侧 ~3 km，与 large 系列 (北侧)
+			// 和 1:1 系列 (中心附近) 都拉开距离；左右各一个，分别 circle / square。
+			{ eastMeters: - 3500.0, northMeters: - 3000.0 },
+			{ eastMeters: 3500.0, northMeters: - 3000.0 },
 		],
 	);
 	const largeRectangleCenter = largePlotAnchors[ 0 ];
 	const largePolygonCenter = largePlotAnchors[ 1 ];
 	const largeCircleCenter = largePlotAnchors[ 2 ];
 	const largeTextCenter = largePlotAnchors[ 3 ];
+	const largePointCircleCenter = largePlotAnchors[ 4 ];
+	const largePointSquareCenter = largePlotAnchors[ 5 ];
 	const initialLargeRectangleWidthMeters = 10000.0;
 	const initialLargeRectangleHeightMeters = 5000.0;
 	const initialLargeRectanglePoints = lonLatPointsFromMeterOffsets(
@@ -470,6 +489,29 @@ export function runGroundDemo(): void {
 		circleStrokeWidth: 1.0,
 		circleFillColor: '#00ff88',
 		circleFillOpacity: 64,
+		// 点标绘默认：圆形点 + 正方形点各放一个，size 6 m 与其他 1:1 比例图元同量级。
+		pointCircleVisible: true,
+		pointCirclePlotOrder: 4,
+		pointCircleCenterLon: RECTANGLE_CENTER_LON + POINT_CIRCLE_OFFSET_LON,
+		pointCircleCenterLat: RECTANGLE_CENTER_LAT + POINT_CIRCLE_OFFSET_LAT,
+		pointCircleShape: 'circle',
+		pointCircleSize: 6.0,
+		pointCircleStrokeColor: '#ffffff',
+		pointCircleStrokeOpacity: 95,
+		pointCircleStrokeWidth: 1.0,
+		pointCircleFillColor: '#ffaa00',
+		pointCircleFillOpacity: 80,
+		pointSquareVisible: true,
+		pointSquarePlotOrder: 5,
+		pointSquareCenterLon: RECTANGLE_CENTER_LON + POINT_SQUARE_OFFSET_LON,
+		pointSquareCenterLat: RECTANGLE_CENTER_LAT + POINT_SQUARE_OFFSET_LAT,
+		pointSquareShape: 'square',
+		pointSquareSize: 6.0,
+		pointSquareStrokeColor: '#ffffff',
+		pointSquareStrokeOpacity: 95,
+		pointSquareStrokeWidth: 1.0,
+		pointSquareFillColor: '#aa66ff',
+		pointSquareFillOpacity: 80,
 		largeRectangleVisible: true,
 		largeRectanglePlotOrder: 8,
 		largeRectangleStrokeColor: '#ffffff',
@@ -499,6 +541,30 @@ export function runGroundDemo(): void {
 		largeCircleStrokeWidth: 150.0,
 		largeCircleFillColor: '#66ff66',
 		largeCircleFillOpacity: 42,
+		// 大比例尺点：size 2 km 与 large 系列同量级，放在 rectangle 中心南侧
+		// 两侧。circle / square 两种 shape 分别走圆形 / 矩形渲染路径。
+		largePointCircleVisible: true,
+		largePointCirclePlotOrder: 12,
+		largePointCircleCenterLon: largePointCircleCenter[ 0 ],
+		largePointCircleCenterLat: largePointCircleCenter[ 1 ],
+		largePointCircleShape: 'circle',
+		largePointCircleSize: 2000.0,
+		largePointCircleStrokeColor: '#ffffff',
+		largePointCircleStrokeOpacity: 92,
+		largePointCircleStrokeWidth: 60.0,
+		largePointCircleFillColor: '#ffaa00',
+		largePointCircleFillOpacity: 55,
+		largePointSquareVisible: true,
+		largePointSquarePlotOrder: 13,
+		largePointSquareCenterLon: largePointSquareCenter[ 0 ],
+		largePointSquareCenterLat: largePointSquareCenter[ 1 ],
+		largePointSquareShape: 'square',
+		largePointSquareSize: 2000.0,
+		largePointSquareStrokeColor: '#ffffff',
+		largePointSquareStrokeOpacity: 92,
+		largePointSquareStrokeWidth: 60.0,
+		largePointSquareFillColor: '#aa66ff',
+		largePointSquareFillOpacity: 55,
 		// 文字标绘 1:1：metersPerPixel=1.0 即「1 纹素 = 1 米」字面意义比例尺。
 		// 默认 content 含 \n 演示横排换行；anchor 放在矩形正北 ~30 m。
 		textVisible: true,
@@ -573,10 +639,14 @@ export function runGroundDemo(): void {
 	debugSettings.polygonPlotOrder = plotOrderRegistry.register( 'polygon', debugSettings.polygonPlotOrder );
 	debugSettings.circlePlotOrder = plotOrderRegistry.register( 'circle', debugSettings.circlePlotOrder );
 	debugSettings.textPlotOrder = plotOrderRegistry.register( 'text', debugSettings.textPlotOrder );
+	debugSettings.pointCirclePlotOrder = plotOrderRegistry.register( 'pointCircle', debugSettings.pointCirclePlotOrder );
+	debugSettings.pointSquarePlotOrder = plotOrderRegistry.register( 'pointSquare', debugSettings.pointSquarePlotOrder );
 	debugSettings.largeRectanglePlotOrder = plotOrderRegistry.register( 'largeRectangle', debugSettings.largeRectanglePlotOrder );
 	debugSettings.largePolygonPlotOrder = plotOrderRegistry.register( 'largePolygon', debugSettings.largePolygonPlotOrder );
 	debugSettings.largeCirclePlotOrder = plotOrderRegistry.register( 'largeCircle', debugSettings.largeCirclePlotOrder );
 	debugSettings.largeTextPlotOrder = plotOrderRegistry.register( 'largeText', debugSettings.largeTextPlotOrder );
+	debugSettings.largePointCirclePlotOrder = plotOrderRegistry.register( 'largePointCircle', debugSettings.largePointCirclePlotOrder );
+	debugSettings.largePointSquarePlotOrder = plotOrderRegistry.register( 'largePointSquare', debugSettings.largePointSquarePlotOrder );
 
 	/**
 	 * Returns the current fill rectangle derived from the public points field.
@@ -868,6 +938,38 @@ export function runGroundDemo(): void {
 			debugSettings.largeTextPlotOrder = plotOrderRegistry.update(
 				'largeText',
 				debugSettings.largeTextPlotOrder,
+			);
+			return;
+		}
+
+		if ( target === 'pointCircle' ) {
+			debugSettings.pointCirclePlotOrder = plotOrderRegistry.update(
+				'pointCircle',
+				debugSettings.pointCirclePlotOrder,
+			);
+			return;
+		}
+
+		if ( target === 'pointSquare' ) {
+			debugSettings.pointSquarePlotOrder = plotOrderRegistry.update(
+				'pointSquare',
+				debugSettings.pointSquarePlotOrder,
+			);
+			return;
+		}
+
+		if ( target === 'largePointCircle' ) {
+			debugSettings.largePointCirclePlotOrder = plotOrderRegistry.update(
+				'largePointCircle',
+				debugSettings.largePointCirclePlotOrder,
+			);
+			return;
+		}
+
+		if ( target === 'largePointSquare' ) {
+			debugSettings.largePointSquarePlotOrder = plotOrderRegistry.update(
+				'largePointSquare',
+				debugSettings.largePointSquarePlotOrder,
 			);
 			return;
 		}
@@ -1218,22 +1320,112 @@ export function runGroundDemo(): void {
 		} );
 	}
 
+	/**
+	 * 创建圆形点：shape='circle' → 走 CesiumGroundCirclePrimitive。
+	 */
+	function createGroundPointCircle(): CesiumGroundPointPrimitive {
+		return new CesiumGroundPointPrimitive( {
+			position: [ debugSettings.pointCircleCenterLon, debugSettings.pointCircleCenterLat ],
+			shape: debugSettings.pointCircleShape,
+			size: debugSettings.pointCircleSize,
+			strokeColor: debugSettings.pointCircleStrokeColor,
+			strokeWidth: debugSettings.pointCircleStrokeWidth,
+			strokeOpacity: debugSettings.pointCircleStrokeOpacity,
+			fillColor: debugSettings.pointCircleFillColor,
+			fillOpacity: debugSettings.pointCircleFillOpacity,
+			visible: debugSettings.pointCircleVisible,
+			renderOrder: plotOrderToRenderOrder( debugSettings.pointCirclePlotOrder ),
+			fragmentCull: debugSettings.fragmentCull,
+		} );
+	}
+
+	/**
+	 * 创建正方形点：shape='square' → 走 CesiumGroundRectanglePrimitive。
+	 */
+	function createGroundPointSquare(): CesiumGroundPointPrimitive {
+		return new CesiumGroundPointPrimitive( {
+			position: [ debugSettings.pointSquareCenterLon, debugSettings.pointSquareCenterLat ],
+			shape: debugSettings.pointSquareShape,
+			size: debugSettings.pointSquareSize,
+			strokeColor: debugSettings.pointSquareStrokeColor,
+			strokeWidth: debugSettings.pointSquareStrokeWidth,
+			strokeOpacity: debugSettings.pointSquareStrokeOpacity,
+			fillColor: debugSettings.pointSquareFillColor,
+			fillOpacity: debugSettings.pointSquareFillOpacity,
+			visible: debugSettings.pointSquareVisible,
+			renderOrder: plotOrderToRenderOrder( debugSettings.pointSquarePlotOrder ),
+			fragmentCull: debugSettings.fragmentCull,
+		} );
+	}
+
+	/**
+	 * 创建大比例尺圆形点。
+	 */
+	function createLargeGroundPointCircle(): CesiumGroundPointPrimitive {
+		return new CesiumGroundPointPrimitive( {
+			position: [
+				debugSettings.largePointCircleCenterLon,
+				debugSettings.largePointCircleCenterLat,
+			],
+			shape: debugSettings.largePointCircleShape,
+			size: debugSettings.largePointCircleSize,
+			strokeColor: debugSettings.largePointCircleStrokeColor,
+			strokeWidth: debugSettings.largePointCircleStrokeWidth,
+			strokeOpacity: debugSettings.largePointCircleStrokeOpacity,
+			fillColor: debugSettings.largePointCircleFillColor,
+			fillOpacity: debugSettings.largePointCircleFillOpacity,
+			visible: debugSettings.largePointCircleVisible,
+			renderOrder: plotOrderToRenderOrder( debugSettings.largePointCirclePlotOrder ),
+			fragmentCull: debugSettings.fragmentCull,
+		} );
+	}
+
+	/**
+	 * 创建大比例尺正方形点。
+	 */
+	function createLargeGroundPointSquare(): CesiumGroundPointPrimitive {
+		return new CesiumGroundPointPrimitive( {
+			position: [
+				debugSettings.largePointSquareCenterLon,
+				debugSettings.largePointSquareCenterLat,
+			],
+			shape: debugSettings.largePointSquareShape,
+			size: debugSettings.largePointSquareSize,
+			strokeColor: debugSettings.largePointSquareStrokeColor,
+			strokeWidth: debugSettings.largePointSquareStrokeWidth,
+			strokeOpacity: debugSettings.largePointSquareStrokeOpacity,
+			fillColor: debugSettings.largePointSquareFillColor,
+			fillOpacity: debugSettings.largePointSquareFillOpacity,
+			visible: debugSettings.largePointSquareVisible,
+			renderOrder: plotOrderToRenderOrder( debugSettings.largePointSquarePlotOrder ),
+			fragmentCull: debugSettings.fragmentCull,
+		} );
+	}
+
 	let groundRectangle = createGroundRectangle();
 	let groundPolygon = createGroundPolygon();
 	let groundCircle = createGroundCircle();
 	let groundText = createGroundText();
+	let groundPointCircle = createGroundPointCircle();
+	let groundPointSquare = createGroundPointSquare();
 	let largeGroundRectangle = createLargeGroundRectangle();
 	let largeGroundPolygon = createLargeGroundPolygon();
 	let largeGroundCircle = createLargeGroundCircle();
 	let largeGroundText = createLargeGroundText();
+	let largeGroundPointCircle = createLargeGroundPointCircle();
+	let largeGroundPointSquare = createLargeGroundPointSquare();
 	scene.add( groundRectangle.classification.group );
 	scene.add( groundPolygon.classification.group );
 	scene.add( groundCircle.classification.group );
 	scene.add( groundText.group );
+	scene.add( groundPointCircle.classification.group );
+	scene.add( groundPointSquare.classification.group );
 	scene.add( largeGroundRectangle.classification.group );
 	scene.add( largeGroundPolygon.classification.group );
 	scene.add( largeGroundCircle.classification.group );
 	scene.add( largeGroundText.group );
+	scene.add( largeGroundPointCircle.classification.group );
+	scene.add( largeGroundPointSquare.classification.group );
 
 	// Lazily set after createGroundDebugGui() so we can attach to its GUI root.
 	// Forwarded settings (fragmentCull + pass visibility) are applied via the
@@ -1387,6 +1579,84 @@ export function runGroundDemo(): void {
 			backStencil: debugSettings.showBackStencil,
 			color: debugSettings.showColorPass,
 		} );
+
+		// 点标绘：颜色 / 描边可在不重建几何的前提下热更新（与圆 / 矩形同路径）。
+		// position / shape / size 变化要走 rebuild 路径（重建底层 circle/rectangle 几何）。
+		groundPointCircle.classification.setColor(
+			new Color( debugSettings.pointCircleFillColor ),
+			debugSettings.pointCircleFillOpacity / 100.0,
+		);
+		groundPointCircle.classification.setFragmentCulling( debugSettings.fragmentCull );
+		groundPointCircle.setRenderOrder( plotOrderToRenderOrder( debugSettings.pointCirclePlotOrder ) );
+		groundPointCircle.classification.group.visible = debugSettings.pointCircleVisible;
+		groundPointCircle.classification.setCommandVisibility( {
+			frontStencil: debugSettings.showFrontStencil,
+			backStencil: debugSettings.showBackStencil,
+			color: debugSettings.showColorPass,
+		} );
+		groundPointCircle.classification.setBorderStyle(
+			debugSettings.pointCircleStrokeWidth > 0.0,
+			new Color( debugSettings.pointCircleStrokeColor ),
+			debugSettings.pointCircleStrokeOpacity / 100.0,
+			debugSettings.pointCircleStrokeWidth,
+		);
+
+		groundPointSquare.classification.setColor(
+			new Color( debugSettings.pointSquareFillColor ),
+			debugSettings.pointSquareFillOpacity / 100.0,
+		);
+		groundPointSquare.classification.setFragmentCulling( debugSettings.fragmentCull );
+		groundPointSquare.setRenderOrder( plotOrderToRenderOrder( debugSettings.pointSquarePlotOrder ) );
+		groundPointSquare.classification.group.visible = debugSettings.pointSquareVisible;
+		groundPointSquare.classification.setCommandVisibility( {
+			frontStencil: debugSettings.showFrontStencil,
+			backStencil: debugSettings.showBackStencil,
+			color: debugSettings.showColorPass,
+		} );
+		groundPointSquare.classification.setBorderStyle(
+			debugSettings.pointSquareStrokeWidth > 0.0,
+			new Color( debugSettings.pointSquareStrokeColor ),
+			debugSettings.pointSquareStrokeOpacity / 100.0,
+			debugSettings.pointSquareStrokeWidth,
+		);
+
+		largeGroundPointCircle.classification.setColor(
+			new Color( debugSettings.largePointCircleFillColor ),
+			debugSettings.largePointCircleFillOpacity / 100.0,
+		);
+		largeGroundPointCircle.classification.setFragmentCulling( debugSettings.fragmentCull );
+		largeGroundPointCircle.setRenderOrder( plotOrderToRenderOrder( debugSettings.largePointCirclePlotOrder ) );
+		largeGroundPointCircle.classification.group.visible = debugSettings.largePointCircleVisible;
+		largeGroundPointCircle.classification.setCommandVisibility( {
+			frontStencil: debugSettings.showFrontStencil,
+			backStencil: debugSettings.showBackStencil,
+			color: debugSettings.showColorPass,
+		} );
+		largeGroundPointCircle.classification.setBorderStyle(
+			debugSettings.largePointCircleStrokeWidth > 0.0,
+			new Color( debugSettings.largePointCircleStrokeColor ),
+			debugSettings.largePointCircleStrokeOpacity / 100.0,
+			debugSettings.largePointCircleStrokeWidth,
+		);
+
+		largeGroundPointSquare.classification.setColor(
+			new Color( debugSettings.largePointSquareFillColor ),
+			debugSettings.largePointSquareFillOpacity / 100.0,
+		);
+		largeGroundPointSquare.classification.setFragmentCulling( debugSettings.fragmentCull );
+		largeGroundPointSquare.setRenderOrder( plotOrderToRenderOrder( debugSettings.largePointSquarePlotOrder ) );
+		largeGroundPointSquare.classification.group.visible = debugSettings.largePointSquareVisible;
+		largeGroundPointSquare.classification.setCommandVisibility( {
+			frontStencil: debugSettings.showFrontStencil,
+			backStencil: debugSettings.showBackStencil,
+			color: debugSettings.showColorPass,
+		} );
+		largeGroundPointSquare.classification.setBorderStyle(
+			debugSettings.largePointSquareStrokeWidth > 0.0,
+			new Color( debugSettings.largePointSquareStrokeColor ),
+			debugSettings.largePointSquareStrokeOpacity / 100.0,
+			debugSettings.largePointSquareStrokeWidth,
+		);
 
 		// Shared render-state knobs (fragment culling + 3-pass visibility) must
 		// reach every arrow primitive too; defer until the subsystem exists so
@@ -1611,6 +1881,82 @@ export function runGroundDemo(): void {
 	}
 
 	/**
+	 * 重建圆形点。position / shape / size 变了必须重建底层 circle/rectangle 实例。
+	 */
+	function rebuildGroundPointCircle(): void {
+		scene.remove( groundPointCircle.classification.group );
+		groundPointCircle.dispose();
+		groundPointCircle = createGroundPointCircle();
+		scene.add( groundPointCircle.classification.group );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * 重建正方形点。
+	 */
+	function rebuildGroundPointSquare(): void {
+		scene.remove( groundPointSquare.classification.group );
+		groundPointSquare.dispose();
+		groundPointSquare = createGroundPointSquare();
+		scene.add( groundPointSquare.classification.group );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * 圆形点 plot-order 编辑。
+	 */
+	function applyPointCirclePlotOrder(): void {
+		updateRegisteredPlotOrder( 'pointCircle' );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * 正方形点 plot-order 编辑。
+	 */
+	function applyPointSquarePlotOrder(): void {
+		updateRegisteredPlotOrder( 'pointSquare' );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * 重建大比例尺圆形点。
+	 */
+	function rebuildLargeGroundPointCircle(): void {
+		scene.remove( largeGroundPointCircle.classification.group );
+		largeGroundPointCircle.dispose();
+		largeGroundPointCircle = createLargeGroundPointCircle();
+		scene.add( largeGroundPointCircle.classification.group );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * 重建大比例尺正方形点。
+	 */
+	function rebuildLargeGroundPointSquare(): void {
+		scene.remove( largeGroundPointSquare.classification.group );
+		largeGroundPointSquare.dispose();
+		largeGroundPointSquare = createLargeGroundPointSquare();
+		scene.add( largeGroundPointSquare.classification.group );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * 大比例尺圆形点 plot-order 编辑。
+	 */
+	function applyLargePointCirclePlotOrder(): void {
+		updateRegisteredPlotOrder( 'largePointCircle' );
+		applyGroundDebugSettings();
+	}
+
+	/**
+	 * 大比例尺正方形点 plot-order 编辑。
+	 */
+	function applyLargePointSquarePlotOrder(): void {
+		updateRegisteredPlotOrder( 'largePointSquare' );
+		applyGroundDebugSettings();
+	}
+
+	/**
 	 * Creates the lil-gui control surface for render-pass diagnosis.
 	 */
 	function createGroundDebugGui(): GUI {
@@ -1711,6 +2057,38 @@ export function runGroundDemo(): void {
 		textFolder.add( debugSettings, 'textStrokeWidth', 0, 8, 0.5 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundText );
 		textFolder.add( debugSettings, 'textCornerRadius', 0, 32, 1 ).name( 'cornerRadius' ).onFinishChange( rebuildGroundText );
 
+		// 点标绘：position / shape / size 需 rebuild（底层 circle/rectangle 重建），
+		// 颜色 / 描边 / visible / plot order 走 applyGroundDebugSettings 热更新。
+		// shape 下拉切换 'circle' ↔ 'square' 时，会丢弃旧 primitive 并按新形状重新
+		// 创建——这正是点标绘"两种渲染路径"的演示入口。
+		const pointShapeOptions: CesiumGroundPointShape[] = [ 'circle', 'square' ];
+
+		const pointCircleFolder = gui.addFolder( 'Point Circle' );
+		pointCircleFolder.add( debugSettings, 'pointCircleVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		pointCircleFolder.add( debugSettings, 'pointCirclePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyPointCirclePlotOrder ).listen();
+		pointCircleFolder.add( debugSettings, 'pointCircleShape', pointShapeOptions ).name( 'shape' ).onChange( rebuildGroundPointCircle );
+		pointCircleFolder.add( debugSettings, 'pointCircleCenterLon', - 180.0, 180.0, 0.0001 ).name( 'center lon' ).onFinishChange( rebuildGroundPointCircle ).listen();
+		pointCircleFolder.add( debugSettings, 'pointCircleCenterLat', - 90.0, 90.0, 0.0001 ).name( 'center lat' ).onFinishChange( rebuildGroundPointCircle ).listen();
+		pointCircleFolder.add( debugSettings, 'pointCircleSize', 1.0, 40.0, 0.5 ).name( 'size m' ).onFinishChange( rebuildGroundPointCircle ).listen();
+		pointCircleFolder.addColor( debugSettings, 'pointCircleStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		pointCircleFolder.add( debugSettings, 'pointCircleStrokeWidth', 0.0, 20.0, 0.5 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundPointCircle );
+		pointCircleFolder.add( debugSettings, 'pointCircleStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		pointCircleFolder.addColor( debugSettings, 'pointCircleFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
+		pointCircleFolder.add( debugSettings, 'pointCircleFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
+
+		const pointSquareFolder = gui.addFolder( 'Point Square' );
+		pointSquareFolder.add( debugSettings, 'pointSquareVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		pointSquareFolder.add( debugSettings, 'pointSquarePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyPointSquarePlotOrder ).listen();
+		pointSquareFolder.add( debugSettings, 'pointSquareShape', pointShapeOptions ).name( 'shape' ).onChange( rebuildGroundPointSquare );
+		pointSquareFolder.add( debugSettings, 'pointSquareCenterLon', - 180.0, 180.0, 0.0001 ).name( 'center lon' ).onFinishChange( rebuildGroundPointSquare ).listen();
+		pointSquareFolder.add( debugSettings, 'pointSquareCenterLat', - 90.0, 90.0, 0.0001 ).name( 'center lat' ).onFinishChange( rebuildGroundPointSquare ).listen();
+		pointSquareFolder.add( debugSettings, 'pointSquareSize', 1.0, 40.0, 0.5 ).name( 'size m' ).onFinishChange( rebuildGroundPointSquare ).listen();
+		pointSquareFolder.addColor( debugSettings, 'pointSquareStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		pointSquareFolder.add( debugSettings, 'pointSquareStrokeWidth', 0.0, 20.0, 0.5 ).name( 'strokeWidth' ).onFinishChange( rebuildGroundPointSquare );
+		pointSquareFolder.add( debugSettings, 'pointSquareStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		pointSquareFolder.addColor( debugSettings, 'pointSquareFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
+		pointSquareFolder.add( debugSettings, 'pointSquareFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
+
 		const largeFolder = gui.addFolder( 'Large Scale' );
 		const largeRectangleFolder = largeFolder.addFolder( 'Rectangle 10km x 5km' );
 		largeRectangleFolder.add( debugSettings, 'largeRectangleVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
@@ -1775,6 +2153,32 @@ export function runGroundDemo(): void {
 		largeTextFolder.add( debugSettings, 'largeTextStrokeWidth', 0, 16, 1 ).name( 'strokeWidth' ).onFinishChange( rebuildLargeGroundText );
 		largeTextFolder.add( debugSettings, 'largeTextCornerRadius', 0, 64, 1 ).name( 'cornerRadius' ).onFinishChange( rebuildLargeGroundText );
 		largeTextFolder.close();
+
+		// 大比例尺点：同样的 shape 下拉切换 circle ↔ square 触发 rebuild，验证两种
+		// 渲染路径在公里级 size + 米级 strokeWidth 下也能正常工作。
+		const largePointCircleFolder = largeFolder.addFolder( 'Point Circle 2km' );
+		largePointCircleFolder.add( debugSettings, 'largePointCircleVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		largePointCircleFolder.add( debugSettings, 'largePointCirclePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyLargePointCirclePlotOrder ).listen();
+		largePointCircleFolder.add( debugSettings, 'largePointCircleShape', pointShapeOptions ).name( 'shape' ).onChange( rebuildLargeGroundPointCircle );
+		largePointCircleFolder.add( debugSettings, 'largePointCircleSize', 200.0, 10000.0, 100.0 ).name( 'size m' ).onFinishChange( rebuildLargeGroundPointCircle ).listen();
+		largePointCircleFolder.addColor( debugSettings, 'largePointCircleStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		largePointCircleFolder.add( debugSettings, 'largePointCircleStrokeWidth', 0.0, 1000.0, 25.0 ).name( 'strokeWidth' ).onFinishChange( rebuildLargeGroundPointCircle );
+		largePointCircleFolder.add( debugSettings, 'largePointCircleStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		largePointCircleFolder.addColor( debugSettings, 'largePointCircleFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
+		largePointCircleFolder.add( debugSettings, 'largePointCircleFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
+		largePointCircleFolder.close();
+
+		const largePointSquareFolder = largeFolder.addFolder( 'Point Square 2km' );
+		largePointSquareFolder.add( debugSettings, 'largePointSquareVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		largePointSquareFolder.add( debugSettings, 'largePointSquarePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyLargePointSquarePlotOrder ).listen();
+		largePointSquareFolder.add( debugSettings, 'largePointSquareShape', pointShapeOptions ).name( 'shape' ).onChange( rebuildLargeGroundPointSquare );
+		largePointSquareFolder.add( debugSettings, 'largePointSquareSize', 200.0, 10000.0, 100.0 ).name( 'size m' ).onFinishChange( rebuildLargeGroundPointSquare ).listen();
+		largePointSquareFolder.addColor( debugSettings, 'largePointSquareStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		largePointSquareFolder.add( debugSettings, 'largePointSquareStrokeWidth', 0.0, 1000.0, 25.0 ).name( 'strokeWidth' ).onFinishChange( rebuildLargeGroundPointSquare );
+		largePointSquareFolder.add( debugSettings, 'largePointSquareStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		largePointSquareFolder.addColor( debugSettings, 'largePointSquareFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
+		largePointSquareFolder.add( debugSettings, 'largePointSquareFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
+		largePointSquareFolder.close();
 
 		largeFolder.close();
 
@@ -1905,6 +2309,18 @@ export function runGroundDemo(): void {
 			height: renderer.domElement.height,
 			camera,
 		} );
+		groundPointCircle.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
+		groundPointSquare.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
 		largeGroundRectangle.update( {
 			depthTexture: globeDepth.target.texture,
 			width: renderer.domElement.width,
@@ -1918,6 +2334,18 @@ export function runGroundDemo(): void {
 			camera,
 		} );
 		largeGroundCircle.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
+		largeGroundPointCircle.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+		} );
+		largeGroundPointSquare.update( {
 			depthTexture: globeDepth.target.texture,
 			width: renderer.domElement.width,
 			height: renderer.domElement.height,

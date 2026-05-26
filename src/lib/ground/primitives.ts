@@ -50,6 +50,7 @@ import { createDebugRectangleSurfaceGeometry } from './rectangle/rectangle-debug
 import { computeRectanglePlanarExtents } from './rectangle/rectangle-extents';
 import {
 	expandRectangleDegreesThroughMeters,
+	longitudeLatitudeFromCenterOffsetsMeters,
 	rectangleDegreesFromLonLatPoints,
 } from './rectangle/rectangle-helpers';
 import { rectangleRadiansFromDegrees } from './rectangle/rectangle-radians';
@@ -58,6 +59,8 @@ import type {
 	CartesianLike,
 	CesiumGroundCirclePrimitiveOptions,
 	CesiumGroundFrameState,
+	CesiumGroundPointPrimitiveOptions,
+	CesiumGroundPointShape,
 	CesiumGroundPolygonOptions,
 	CesiumGroundRectanglePrimitiveOptions,
 	LonLatPoint,
@@ -658,5 +661,123 @@ export class CesiumGroundCirclePrimitive {
 	 */
 	public dispose(): void {
 		this.classification.dispose();
+	}
+}
+
+/**
+ * 贴地点标绘。点本质上是一种"特殊"图元——把 lon/lat 锚点 + 米尺寸映射到既有
+ * 的圆形或矩形 shadow-volume 管线，而不是新增一套渲染路径：
+ *   - shape='circle' → 委托给 CesiumGroundCirclePrimitive，center=position，
+ *     radius=size/2。沿用圆形的扇区 / 环线 / 描边 shader 分支。
+ *   - shape='square' → 委托给 CesiumGroundRectanglePrimitive，4 角点由 ENU 米
+ *     偏移反算（±size/2 east/north），沿用矩形的轴对齐 fill + 描边路径。
+ *
+ * 这样描边 / 填充 / 命令 visibility / fragment culling / classification depth
+ * 等所有精度修复都自动继承，不会引入任何新的着色器分支或几何路径。
+ */
+export class CesiumGroundPointPrimitive {
+	public readonly classification: CesiumClassificationPrimitive;
+	public readonly position: LonLatPoint;
+	public readonly shape: CesiumGroundPointShape;
+	public readonly size: number;
+
+	private readonly delegate:
+		| CesiumGroundCirclePrimitive
+		| CesiumGroundRectanglePrimitive;
+
+	public constructor( options: CesiumGroundPointPrimitiveOptions ) {
+		const longitude = options.position?.[ 0 ];
+		const latitude = options.position?.[ 1 ];
+		if (
+			! Number.isFinite( longitude ) ||
+			! Number.isFinite( latitude ) ||
+			longitude < - 180.0 ||
+			longitude > 180.0 ||
+			latitude < - 90.0 ||
+			latitude > 90.0
+		) {
+			throw new Error( 'Ground point position must be a valid WGS84 [lon, lat] point.' );
+		}
+
+		const sizeMeters = Number.isFinite( options.size )
+			? Math.max( options.size, 1.0 )
+			: 1.0;
+
+		this.position = [ longitude, latitude ];
+		this.shape = options.shape;
+		this.size = sizeMeters;
+
+		if ( options.shape === 'circle' ) {
+			this.delegate = new CesiumGroundCirclePrimitive( {
+				center: this.position,
+				radius: sizeMeters * 0.5,
+				strokeColor: options.strokeColor,
+				strokeWidth: options.strokeWidth,
+				strokeOpacity: options.strokeOpacity,
+				fillColor: options.fillColor,
+				fillOpacity: options.fillOpacity,
+				visible: options.visible,
+				granularityRadians: options.granularityRadians,
+				minimumHeight: options.minimumHeight,
+				maximumHeight: options.maximumHeight,
+				renderOrder: options.renderOrder,
+				fragmentCull: options.fragmentCull,
+			} );
+		} else {
+			const halfSize = sizeMeters * 0.5;
+			// 4 角由 ENU 米偏移反算，沿用矩形 helper 的 cartographic → ECEF
+			// 双精度路径，避免在高纬度退化为均匀 lon/lat 偏移。
+			const cornerLonLat = longitudeLatitudeFromCenterOffsetsMeters(
+				longitude,
+				latitude,
+				[
+					{ eastMeters: - halfSize, northMeters: - halfSize },
+					{ eastMeters: halfSize, northMeters: - halfSize },
+					{ eastMeters: halfSize, northMeters: halfSize },
+					{ eastMeters: - halfSize, northMeters: halfSize },
+				],
+			);
+			const points: LonLatPoint[] = cornerLonLat.map(
+				( c ) => [ c.longitude, c.latitude ] as LonLatPoint,
+			);
+
+			this.delegate = new CesiumGroundRectanglePrimitive( {
+				points,
+				strokeColor: options.strokeColor,
+				strokeWidth: options.strokeWidth,
+				strokeOpacity: options.strokeOpacity,
+				fillColor: options.fillColor,
+				fillOpacity: options.fillOpacity,
+				visible: options.visible,
+				granularityRadians: options.granularityRadians,
+				minimumHeight: options.minimumHeight,
+				maximumHeight: options.maximumHeight,
+				renderOrder: options.renderOrder,
+				fragmentCull: options.fragmentCull,
+			} );
+		}
+
+		this.classification = this.delegate.classification;
+	}
+
+	/**
+	 * Updates per-frame uniforms on the underlying primitive.
+	 */
+	public update( frameState: CesiumGroundFrameState ): void {
+		this.delegate.update( frameState );
+	}
+
+	/**
+	 * Updates this point's command-block render order.
+	 */
+	public setRenderOrder( renderOrder: number ): void {
+		this.delegate.setRenderOrder( renderOrder );
+	}
+
+	/**
+	 * Releases resources.
+	 */
+	public dispose(): void {
+		this.delegate.dispose();
 	}
 }

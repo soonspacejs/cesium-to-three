@@ -154,6 +154,36 @@ export interface CesiumGroundCirclePrimitiveOptions extends CesiumGroundCircleOp
 	fragmentCull?: boolean;
 }
 
+/**
+ * 点标绘的形状类型。圆形走圆形渲染管线（CesiumGroundCirclePrimitive），
+ * 正方形走矩形渲染管线（CesiumGroundRectanglePrimitive）。
+ */
+export type CesiumGroundPointShape = 'circle' | 'square';
+
+/**
+ * 贴地点标绘的 plot-spec 契约：单个 lon/lat 锚点 + 形状 + 米尺寸 +
+ * 描边/填充/可见性。size 在 circle 时解释为直径，square 时解释为边长。
+ */
+export interface CesiumGroundPointOptions {
+	position: LonLatPoint;
+	shape: CesiumGroundPointShape;
+	size: number;
+	strokeColor: string;
+	strokeWidth: number;
+	strokeOpacity: number;
+	fillColor: string;
+	fillOpacity: number;
+	visible: boolean;
+}
+
+export interface CesiumGroundPointPrimitiveOptions extends CesiumGroundPointOptions {
+	granularityRadians?: number;
+	minimumHeight?: number;
+	maximumHeight?: number;
+	renderOrder?: number;
+	fragmentCull?: boolean;
+}
+
 export interface CesiumClassificationCommandVisibility {
 	frontStencil?: boolean;
 	backStencil?: boolean;
