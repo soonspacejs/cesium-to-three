@@ -36,13 +36,27 @@ import cesiumUnpackDepth from '../../../cesium-ground-source/engine/Source/Shade
 import cesiumPackDepth from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/packDepth.glsl?raw';
 import cesiumPlaneDistance from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/planeDistance.glsl?raw';
 import cesiumGammaCorrect from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/gammaCorrect.glsl?raw';
+import cesiumMetersPerPixel from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/metersPerPixel.glsl?raw';
 
+import type { IUniform } from 'three';
 import {
 	CLASSIFICATION_MASK,
 	MAX_POLYGON_STYLE_VERTICES,
 	SCENE_MODE_3D,
 } from './constants';
 import type { SharedUniforms } from './types';
+
+/**
+ * SharedUniforms 含可选字段（贴地线扩展），Three.js RawShaderMaterial
+ * 的 uniforms 字段类型为 `{ [k: string]: IUniform }`（不允许 undefined）。
+ * 两边都是「索引签名」，结构上兼容，只是 TS 不能在 `undefined` 通过性上
+ * 自动让步。把 SharedUniforms 当成 Three 的 uniform 表传入时统一过一次
+ * cast，运行时行为不变（不存在的键就是 undefined，Three 内部把 undefined
+ * 跳过）。
+ */
+function asThreeUniforms( uniforms: SharedUniforms ): { [ k: string ]: IUniform } {
+	return uniforms as unknown as { [ k: string ]: IUniform };
+}
 
 // Three.js's RawShaderMaterial does not run Cesium ShaderSource's automatic
 // LOG_DEPTH wrapping (which adds czm_vertexLogDepth() / czm_writeLogDepth()
@@ -226,6 +240,43 @@ vec4 czm_branchFreeTernary(bool comparison, vec4 trueValue, vec4 falseValue) {
 ${ cesiumTranslateRelativeToEye }
 
 ${ LOG_DEPTH_VERTEX_HELPERS }
+
+// ── 贴地线 VS 专用 czm 量 + 线 uniform（guard by CESIUM_THREE_POLYLINE 仅在
+//    polyline 材质里编译生效；stencil / color / text 编译时这一整段被剔除，
+//    与既有材质字节级一致，零回归）。──
+#ifdef CESIUM_THREE_POLYLINE
+const float czm_sceneMode2D = 2.0;
+#define czm_orthographicIn3D 0.0
+
+uniform mat4 czm_projection;
+uniform vec4 czm_viewport;
+uniform vec4 czm_frustumPlanes;
+uniform float czm_pixelRatio;
+uniform float u_lineWidthPixels;
+uniform float u_lineWidthMode;
+uniform float u_lineWidthMeters;
+#define GLOBE_MINIMUM_ALTITUDE 55000.0
+
+// POLYLINE_VS 在 EC 内用 czm_planeDistance 选「离当前顶点更近的斜接平面」
+// 来推导 normalEC（doc 05 §5），所以 VS 必须引入这一份函数体（FS prefix
+// 也独立引入，两边不冲突）。
+${ cesiumPlaneDistance }
+${ cesiumMetersPerPixel }
+#endif
+
+// ── 线端箭头扩展（guard 在 CESIUM_THREE_POLYLINE_ARROW；仅 arrowhead 材质
+//    编译时生效。这些 uniform 也写进 SharedUniforms，对线材质（无 ARROW
+//    define）是 inactive uniform，与 u_circle*/u_polygon* 同模式零回归）。──
+#ifdef CESIUM_THREE_POLYLINE_ARROW
+uniform float u_arrowWidthMode;         // 0 = 屏幕像素 / 1 = 世界米
+uniform float u_arrowLengthPixels;
+uniform float u_arrowHalfWidthPixels;
+uniform float u_arrowLengthMeters;
+uniform float u_arrowHalfWidthMeters;
+uniform vec4  u_arrowColor;
+#define ARROW_BOX_PADDING 1.35
+#define ARROW_TOP_RISE_METERS 1000.0
+#endif
 `;
 }
 
@@ -366,6 +417,38 @@ ${ cesiumPlaneDistance }
 ${ cesiumGammaCorrect }
 
 ${ LOG_DEPTH_FRAGMENT_HELPERS }
+
+// ── 贴地线 FS 专用 czm 量 + 线 / 虚线 uniform。仅在 polyline 材质中编译。
+//    czm_viewport / czm_frustumPlanes / czm_currentFrustum 已在 FS prefix
+//    基础块里；这里只补 czm_sceneMode（FS 原本没有，metersPerPixel 依赖）、
+//    czm_pixelRatio 等线专属量，以及 u_color（基础 FS prefix 不含——其它
+//    材质走 v_color varying；线材质 PER_INSTANCE_COLOR 路径直接读 uniform）。──
+#ifdef CESIUM_THREE_POLYLINE
+const float czm_sceneMode2D = 2.0;
+#define czm_orthographicIn3D 0.0
+uniform float czm_sceneMode;
+uniform float czm_pixelRatio;
+uniform vec4 u_color;
+uniform float u_lineWidthMode;
+uniform float u_lineWidthMeters;
+uniform float u_lineDashEnabled;
+uniform float u_lineDashLengthMeters;
+uniform float u_lineGapLengthMeters;
+uniform float u_lineTotalMeters;
+
+${ cesiumMetersPerPixel }
+#endif
+
+// ── 线端箭头 FS uniform（仅 arrowhead 材质编译）。──
+#ifdef CESIUM_THREE_POLYLINE_ARROW
+uniform float u_arrowWidthMode;
+uniform float u_arrowLengthPixels;
+uniform float u_arrowHalfWidthPixels;
+uniform float u_arrowLengthMeters;
+uniform float u_arrowHalfWidthMeters;
+uniform vec4  u_arrowColor;
+uniform float u_arrowStrokeHalfPixels;  // open 样式：斜边笔宽（像素）
+#endif
 `;
 }
 
@@ -679,7 +762,7 @@ export function createStencilMaterial(
 
 	const material = new RawShaderMaterial( {
 		glslVersion: GLSL3,
-		uniforms,
+		uniforms: asThreeUniforms( uniforms ),
 		vertexShader: `${ createVertexPrefix( defines ) }\n${ vertexShader }`,
 		fragmentShader: `${ createFragmentPrefix( defines ) }\n${ fragmentShader }`,
 		side,
@@ -728,7 +811,7 @@ export function createColorMaterial( uniforms: SharedUniforms, fragmentCull: boo
 
 	const material = new RawShaderMaterial( {
 		glslVersion: GLSL3,
-		uniforms,
+		uniforms: asThreeUniforms( uniforms ),
 		vertexShader: `${ createVertexPrefix( defines ) }\n${ vertexShader }`,
 		fragmentShader: `${ createFragmentPrefix( defines ) }\n${ fragmentShader }`,
 		side: DoubleSide,
@@ -865,7 +948,7 @@ export function createTextColorMaterial(
 
 	const material = new RawShaderMaterial( {
 		glslVersion: GLSL3,
-		uniforms,
+		uniforms: asThreeUniforms( uniforms ),
 		vertexShader: `${ createVertexPrefix( defines ) }\n${ vertexShader }`,
 		fragmentShader: `${ createFragmentPrefix( defines ) }\n${ fragmentShader }`,
 		side: DoubleSide,
@@ -891,6 +974,521 @@ export function createTextColorMaterial(
 	} );
 
 	material.name = 'CesiumGroundTextColorMaterial';
+	return material;
+}
+
+// ============================================================
+// 贴地线 polyline shader bodies + material factory（doc 05-07）
+//
+// 这是一条与 stencil 管线**正交**的单 pass 管线：每段 8 顶点 box，VS 按
+// 屏宽挤出 + czm_projection 投影，FS 采样全局地形深度纹理重建地形点 EC、
+// 用三平面距离裁切并上色。无 stencil，BackSide 渲染反绕几何（相机进入
+// 盒子内部仍覆盖），depthTest = false（深度比对在 FS 内手动做）。
+// ============================================================
+
+/**
+ * 贴地线 VS 主体。删除 `COLUMBUS_VIEW_2D` 分支（项目 3D-only），其余逐字
+ * 对齐 Cesium `PolylineShadowVolumeVS.glsl`。屏宽 / 世界宽通过
+ * `u_lineWidthMode` 双分支均完整实现。
+ */
+const POLYLINE_VS = /* glsl */ `
+in vec3 position3DHigh;
+in vec3 position3DLow;
+
+in vec4 startHiAndForwardOffsetX;
+in vec4 startLoAndForwardOffsetY;
+in vec4 startNormalAndForwardOffsetZ;
+in vec4 endNormalAndTextureCoordinateNormalizationX;
+in vec4 rightNormalAndTextureCoordinateNormalizationY;
+in float batchId;
+
+out vec4 v_startPlaneNormalEcAndHalfWidth;
+out vec4 v_endPlaneNormalEcAndBatchId;
+out vec4 v_rightPlaneEC;
+out vec4 v_endEcAndStartEcX;
+out vec4 v_texcoordNormalizationAndStartEcYZ;
+
+void main() {
+	// 1) 段起点（EC）：RTE 编码 → relative-to-eye → 视图旋转。
+	vec3 ecStart = ( czm_modelViewRelativeToEye *
+		czm_translateRelativeToEye( startHiAndForwardOffsetX.xyz, startLoAndForwardOffsetY.xyz ) ).xyz;
+	vec3 offset = czm_normal * vec3(
+		startHiAndForwardOffsetX.w,
+		startLoAndForwardOffsetY.w,
+		startNormalAndForwardOffsetZ.w
+	);
+	vec3 ecEnd = ecStart + offset;
+	vec3 forwardDirectionEC = normalize( offset );
+
+	// 2) 三平面（EC, Hessian）。w = -dot(n, plane-point)
+	vec4 startPlaneEC;
+	startPlaneEC.xyz = czm_normal * startNormalAndForwardOffsetZ.xyz;
+	startPlaneEC.w = - dot( startPlaneEC.xyz, ecStart );
+
+	vec4 endPlaneEC;
+	endPlaneEC.xyz = czm_normal * endNormalAndTextureCoordinateNormalizationX.xyz;
+	endPlaneEC.w = - dot( endPlaneEC.xyz, ecEnd );
+
+	v_rightPlaneEC.xyz = czm_normal * rightNormalAndTextureCoordinateNormalizationY.xyz;
+	v_rightPlaneEC.w = - dot( v_rightPlaneEC.xyz, ecStart );
+
+	// 3) 透传 texcoord 归一 + 起止点（FS s/t 用）
+	v_texcoordNormalizationAndStartEcYZ.x = abs( endNormalAndTextureCoordinateNormalizationX.w );
+	v_texcoordNormalizationAndStartEcYZ.y = rightNormalAndTextureCoordinateNormalizationY.w;
+	v_endEcAndStartEcX.xyz = ecEnd;
+	v_endEcAndStartEcX.w = ecStart.x;
+	v_texcoordNormalizationAndStartEcYZ.zw = ecStart.yz;
+
+	// 4) 当前顶点 EC（box 8 角之一）。
+	vec4 positionRelativeToEye = czm_computePosition();
+	vec4 positionEC = czm_modelViewRelativeToEye * positionRelativeToEye;
+
+	// 5) 选离当前顶点更近的斜接平面，叉乘出挤出法线 normalEC（朝右）。
+	float absStart = abs( czm_planeDistance( startPlaneEC, positionEC.xyz ) );
+	float absEnd = abs( czm_planeDistance( endPlaneEC, positionEC.xyz ) );
+	vec3 planeDirection = czm_branchFreeTernary( absStart < absEnd, startPlaneEC.xyz, endPlaneEC.xyz );
+	vec3 upOrDown = normalize( cross( v_rightPlaneEC.xyz, planeDirection ) );
+	vec3 normalEC = normalize( cross( planeDirection, upOrDown ) );
+
+	// 6) 底部下沿顶点向下延伸（视距驱动，与 GroundPrimitive 同理）。仅
+	//    texcoordNormalization.y 越界（< 0 或 > 1）的顶点才参与延伸。
+	upOrDown = cross( forwardDirectionEC, normalEC );
+	upOrDown = float(
+		v_texcoordNormalizationAndStartEcYZ.y > 1.0 ||
+		v_texcoordNormalizationAndStartEcYZ.y < 0.0
+	) * upOrDown;
+	upOrDown = min(
+		GLOBE_MINIMUM_ALTITUDE,
+		czm_geometricToleranceOverMeter * length( positionRelativeToEye.xyz )
+	) * upOrDown;
+	positionEC.xyz += upOrDown;
+
+	// 复原 texcoordNormalization.y：> 1 的哨兵（9.0）→ 0.0，其余取 abs。
+	v_texcoordNormalizationAndStartEcYZ.y = czm_branchFreeTernary(
+		v_texcoordNormalizationAndStartEcYZ.y > 1.0,
+		0.0,
+		abs( v_texcoordNormalizationAndStartEcYZ.y )
+	);
+
+	// 7) 半宽透传给 FS（FS 用 halfMaxWidth 做横向裁切）。screen 模式存像素半宽，
+	//    world 模式存米半宽。盒子的顶点位置在 §8 用「全宽」（×2）推开——
+	//    Cesium VS 注释：「Make volumes about double pixel width for a
+	//    conservative fit」，盒子比线本身宽 2× 才能避免 subpixel 漂移时 FS
+	//    错过线两侧边缘像素，否则线在缩放过程中会闪烁。
+	float fullWidth = czm_branchFreeTernary(
+		u_lineWidthMode > 0.5,
+		u_lineWidthMeters,
+		u_lineWidthPixels
+	);
+	v_startPlaneNormalEcAndHalfWidth.xyz = startPlaneEC.xyz;
+	v_startPlaneNormalEcAndHalfWidth.w = fullWidth * 0.5;
+
+	v_endPlaneNormalEcAndBatchId.xyz = endPlaneEC.xyz;
+	v_endPlaneNormalEcAndBatchId.w = batchId;
+
+	// 8) 顶点挤出：把盒子做成「2× 线宽」的保险范围。screen 模式下用
+	//    metersPerPixel(positionEC) 把像素换算成米；world 模式直接用米。
+	//    再除以 dot(normalEC, rightPlane) 做斜接补偿（normalEC 在拐角处
+	//    不等于 rightNormal，需要把沿右法线的距离换算成沿 normalEC 的距离）。
+	float pushMeters = czm_branchFreeTernary(
+		u_lineWidthMode > 0.5,
+		fullWidth,
+		fullWidth * max( 0.0, czm_metersPerPixel( positionEC ) )
+	);
+	pushMeters = pushMeters / dot( normalEC, v_rightPlaneEC.xyz );
+
+	// 左 / 右半边由 endNormalAndTextureCoordinateNormalizationX.w 的符号决定。
+	normalEC *= sign( endNormalAndTextureCoordinateNormalizationX.w );
+	positionEC.xyz += pushMeters * normalEC;
+
+	// 9) 用 czm_projection（纯投影，Float64 每帧刷新）+ depthClamp + log-depth。
+	gl_Position = czm_depthClamp( czm_projection * positionEC );
+#ifdef LOG_DEPTH
+	czm_vertexLogDepth();
+#endif
+}
+`;
+
+/**
+ * 贴地线 FS 主体。深度重建分类法 + 三平面距离裁切 + 沿线 s/t 归一 +
+ * PER_INSTANCE_COLOR 纯色 / 材质虚线两路。
+ */
+const POLYLINE_FS = /* glsl */ `
+in vec4 v_startPlaneNormalEcAndHalfWidth;
+in vec4 v_endPlaneNormalEcAndBatchId;
+in vec4 v_rightPlaneEC;
+in vec4 v_endEcAndStartEcX;
+in vec4 v_texcoordNormalizationAndStartEcYZ;
+
+void main() {
+	// 1) 采样全局地形深度纹理：屏幕 UV = gl_FragCoord.xy / czm_viewport.zw。
+	float logDepthOrDepth = czm_unpackDepth(
+		texture( czm_globeDepthTexture, gl_FragCoord.xy / czm_viewport.zw )
+	);
+	vec3 ecStart = vec3( v_endEcAndStartEcX.w, v_texcoordNormalizationAndStartEcYZ.zw );
+
+	// 2) 天空（无地形写入处）→ discard。
+	if ( logDepthOrDepth == 0.0 ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 1.0, 0.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
+
+	// 3) 重建当前像素下的地形点（EC）。算法的核心 —— 后续三平面距离判定都
+	//    跑在「真实地形点」上而非盒子顶点本身。
+	vec4 eyeCoordinate = czm_windowToEyeCoordinates( gl_FragCoord.xy, logDepthOrDepth );
+	eyeCoordinate /= eyeCoordinate.w;
+
+	// 4) 半宽换算：屏宽模式下乘 metersPerPixel(地形点)；世界宽模式直接拿米。
+	float halfMaxWidth = czm_branchFreeTernary(
+		u_lineWidthMode > 0.5,
+		v_startPlaneNormalEcAndHalfWidth.w,
+		v_startPlaneNormalEcAndHalfWidth.w * czm_metersPerPixel( eyeCoordinate )
+	);
+
+	// 5) 地形点到「右平面」的横向距离（决定是否在线宽内）。
+	float widthwiseDistance = czm_planeDistance( v_rightPlaneEC, eyeCoordinate.xyz );
+
+	// 6) 地形点到「起 / 止斜接平面」的距离（决定是否在段长范围内）。
+	float distanceFromStart = czm_planeDistance(
+		v_startPlaneNormalEcAndHalfWidth.xyz,
+		- dot( ecStart, v_startPlaneNormalEcAndHalfWidth.xyz ),
+		eyeCoordinate.xyz
+	);
+	float distanceFromEnd = czm_planeDistance(
+		v_endPlaneNormalEcAndBatchId.xyz,
+		- dot( v_endEcAndStartEcX.xyz, v_endPlaneNormalEcAndBatchId.xyz ),
+		eyeCoordinate.xyz
+	);
+
+	// 7) 裁切：横向超半宽，或越过起 / 止端面 → 丢弃。
+	if (
+		abs( widthwiseDistance ) > halfMaxWidth ||
+		distanceFromStart < 0.0 ||
+		distanceFromEnd < 0.0
+	) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 1.0, 0.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
+
+	// 8) 对齐平面（aligned plane）：把斜接平面「掰正」到与 right 平面正交且
+	//    更朝向 forward 方向。用它重算 distanceFromStart/End，得到无斜接畸变
+	//    的沿线距离（供 s 归一）。
+	vec3 alignedPlaneNormal;
+
+	alignedPlaneNormal = cross( v_rightPlaneEC.xyz, v_startPlaneNormalEcAndHalfWidth.xyz );
+	alignedPlaneNormal = normalize( cross( alignedPlaneNormal, v_rightPlaneEC.xyz ) );
+	distanceFromStart = czm_planeDistance(
+		alignedPlaneNormal, - dot( alignedPlaneNormal, ecStart ), eyeCoordinate.xyz
+	);
+
+	alignedPlaneNormal = cross( v_rightPlaneEC.xyz, v_endPlaneNormalEcAndBatchId.xyz );
+	alignedPlaneNormal = normalize( cross( alignedPlaneNormal, v_rightPlaneEC.xyz ) );
+	distanceFromEnd = czm_planeDistance(
+		alignedPlaneNormal, - dot( alignedPlaneNormal, v_endEcAndStartEcX.xyz ), eyeCoordinate.xyz
+	);
+
+	// 9) 沿线 s / 横向 t 归一坐标。s 是整条线 [0,1] 的弧长参数（供虚线 / 渐变用）。
+	float s = clamp( distanceFromStart / ( distanceFromStart + distanceFromEnd ), 0.0, 1.0 );
+	s = ( s * v_texcoordNormalizationAndStartEcYZ.x ) + v_texcoordNormalizationAndStartEcYZ.y;
+	// 当前未读 t，但保留计算以便未来扩展（移除掉避免「变量未使用」告警）。
+	float t = ( widthwiseDistance + halfMaxWidth ) / ( 2.0 * halfMaxWidth );
+	t = clamp( t, 0.0, 1.0 );
+
+	vec4 col = u_color;
+
+	// 10) 虚线：沿线米相位 mod(along, period) > dash → discard。
+	if ( u_lineDashEnabled > 0.5 && u_lineTotalMeters > 0.0 ) {
+		float along = s * u_lineTotalMeters;
+		float period = u_lineDashLengthMeters + u_lineGapLengthMeters;
+		if ( period > 0.0 ) {
+			float phase = mod( along, period );
+			if ( phase > u_lineDashLengthMeters ) {
+				discard;
+			}
+		}
+	}
+
+	// 11) 预乘 alpha（与 polygon colorMesh 一致，配合 blendSrc=ONE）。
+	col.rgb *= col.a;
+	out_FragColor = col;
+
+#ifdef LOG_DEPTH
+	czm_writeLogDepth();
+#endif
+}
+`;
+
+/**
+ * Creates the polyline material — single mesh, BackSide, no stencil, depthTest
+ * off, premultiplied blend. Reuses createVertexPrefix / createFragmentPrefix
+ * via the `CESIUM_THREE_POLYLINE` define to bring in metersPerPixel + line
+ * uniforms while keeping stencil / color material outputs byte-identical.
+ *
+ * @param uniforms     Shared uniforms map (must include `czm_projection`,
+ *                     `czm_pixelRatio`, `u_lineWidthPixels`, `u_lineWidthMode`,
+ *                     `u_lineWidthMeters`, dash uniforms, `u_lineTotalMeters`).
+ * @param debugVolume  When true，FS 用半透红色直接绘制盒子的所有像素（不做
+ *                     terrain depth 重建 / 平面距离裁切），方便诊断「盒子有没有
+ *                     盖到该屏幕区域」「FS 是不是被裁切掉」这类几何 / 着色器问题。
+ * @returns            RawShaderMaterial driving the depth-reconstruction line pass.
+ */
+export function createPolylineMaterial(
+	uniforms: SharedUniforms,
+	debugVolume = false,
+): RawShaderMaterial {
+	const defines = combineDefines( [
+		'PER_INSTANCE_COLOR',
+		'CESIUM_THREE_POLYLINE',
+		debugVolume ? 'DEBUG_SHOW_VOLUME' : '',
+	] );
+
+	const material = new RawShaderMaterial( {
+		glslVersion: GLSL3,
+		uniforms: asThreeUniforms( uniforms ),
+		vertexShader: `${ createVertexPrefix( defines ) }\n${ POLYLINE_VS }`,
+		fragmentShader: `${ createFragmentPrefix( defines ) }\n${ POLYLINE_FS }`,
+		// Cesium 原版用 BackSide + 反绕 winding 让「相机在盒外」时看到背面；
+		// 但相机部分维度进入盒内时（地形紧贴盒子 + 大 widthMeters 让横向也
+		// 把相机包进去），BackSide 会把所有面 cull 掉，盒子整段消失（实测
+		// seg 1 在 world widthMeters=50 时遇到）。改成 DoubleSide 两面都画，
+		// FS 自己负责 terrain depth 重建 + 平面距离裁切，多画一面 GPU 开销
+		// 可忽略，但相机任意位置都能保证 FS 跑到。
+		side: DoubleSide,
+		colorWrite: true,
+		depthWrite: false,               // Cesium depthMask: false
+		depthTest: false,                // 地形比对在 FS（采样深度纹理）
+		stencilWrite: false,             // 不碰模板缓冲
+		transparent: true,
+		blending: CustomBlending,
+		blendEquation: AddEquation,
+		blendSrc: OneFactor,
+		blendDst: OneMinusSrcAlphaFactor,
+		blendSrcAlpha: OneFactor,
+		blendDstAlpha: OneMinusSrcAlphaFactor,
+		toneMapped: false,
+	} );
+
+	material.name = 'CesiumGroundPolylineMaterial';
+	return material;
+}
+
+// ============================================================
+// 线端箭头 ARROWHEAD_VS / ARROWHEAD_FS / createArrowHeadMaterial
+//
+// 每个箭头端 = 一个 8 顶点薄盒，盒子尺寸由 VS 用 `czm_metersPerPixel(tip)`
+// 动态挤出（屏幕像素恒定）。FS 把当前像素下重建的地形点投到端点切平面
+// `(a=沿线内向, b=横向)`，做实心三角形成员判定。屏幕恒定来源与线一致。
+// ============================================================
+
+/**
+ * 线端箭头 VS。从 RTE-encoded tip 重建 EC，端点标架旋到 EC，按 metersPerPixel
+ * 把盒子在切平面里挤成「箭头三角形外接矩形」，并把盒子上 / 下沿沿 up 方向
+ * 拉成「穿过地表的薄墙」，确保 FS 在箭头屏幕区域被调用。
+ */
+const ARROWHEAD_VS = /* glsl */ `
+in vec3 arrowTipHigh;
+in vec3 arrowTipLow;
+in vec3 arrowBackDir;
+in vec3 arrowRightDir;
+in vec3 arrowUpDir;
+in vec3 arrowCorner;            // (aCoef, bSign, topBottomSide)
+
+out vec3 v_arrowTipEC;
+out vec3 v_arrowBackEC;
+out vec3 v_arrowRightEC;
+
+void main() {
+	// 1) tip EC：RTE 解码（与线 ecStart 同路径），消除高 zoom 抖动。
+	vec4 tipRTE = czm_translateRelativeToEye( arrowTipHigh, arrowTipLow );
+	vec4 tipEC = czm_modelViewRelativeToEye * tipRTE;
+
+	// 2) 端点标架（世界单位向量）旋到 EC，FS 用它做投影。
+	vec3 backEC  = normalize( czm_normal * arrowBackDir );
+	vec3 rightEC = normalize( czm_normal * arrowRightDir );
+	vec3 upEC    = normalize( czm_normal * arrowUpDir );
+	v_arrowTipEC   = tipEC.xyz;
+	v_arrowBackEC  = backEC;
+	v_arrowRightEC = rightEC;
+
+	// 3) 像素 → 米：用尖端处 metersPerPixel 代表整个小箭头，乘保险放大系数
+	//    ARROW_BOX_PADDING——因为 FS 用「地形点处的」metersPerPixel 算三角形，
+	//    与 tipEC 处的 mpp 略有差异；盒子放大 1.35× 确保 FS 三角形恒落在盒覆盖
+	//    的屏幕像素内。
+	float mpp = max( 0.0, czm_metersPerPixel( tipEC ) );
+	float Lm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+		u_arrowLengthMeters,
+		u_arrowLengthPixels * mpp
+	) * ARROW_BOX_PADDING;
+	float Wm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+		u_arrowHalfWidthMeters,
+		u_arrowHalfWidthPixels * mpp
+	) * ARROW_BOX_PADDING;
+
+	// 4) 切平面内挤出盒底面四角：tip + back·(aCoef·Lm) + right·(bSign·Wm)。
+	float aCoef = arrowCorner.x;
+	float bSign = arrowCorner.y;
+	float tb    = arrowCorner.z;
+	vec3 positionEC = tipEC.xyz
+		+ backEC * ( aCoef * Lm )
+		+ rightEC * ( bSign * Wm );
+
+	// 5) 竖直薄墙：顶沿(tb>0)抬 ARROW_TOP_RISE_METERS，底沿(tb<0)按视距下延
+	//    （与线一致：min(GLOBE_MINIMUM_ALTITUDE, geometricToleranceOverMeter·视距)）。
+	//    保证薄墙穿过地表、FS 在箭头屏幕区域被调用。
+	float viewDist = length( tipRTE.xyz );
+	float drop = min(
+		GLOBE_MINIMUM_ALTITUDE,
+		czm_geometricToleranceOverMeter * viewDist
+	);
+	positionEC += upEC * czm_branchFreeTernary(
+		tb > 0.0,
+		ARROW_TOP_RISE_METERS,
+		- drop
+	);
+
+	// 6) 投影 + depthClamp + log-depth（与线同协议，必须配对）。
+	gl_Position = czm_depthClamp( czm_projection * vec4( positionEC, 1.0 ) );
+#ifdef LOG_DEPTH
+	czm_vertexLogDepth();
+#endif
+}
+`;
+
+/**
+ * 线端箭头 FS。深度纹理重建 + 端点切平面 (a,b) 投影 + 实心三角形成员判定。
+ * 屏幕恒定来自「FS 用地形点 EC 算 metersPerPixel」（与线 halfMaxWidth 同口径）。
+ * `ARROW_OPEN` define 切换为「开口雪佛龙」样式（仅画到两条斜边的笔宽内）。
+ */
+const ARROWHEAD_FS = /* glsl */ `
+in vec3 v_arrowTipEC;
+in vec3 v_arrowBackEC;
+in vec3 v_arrowRightEC;
+
+void main() {
+	// 1) 采样全局地形深度纹理（与线 FS 完全一致）。
+	float depth = czm_unpackDepth(
+		texture( czm_globeDepthTexture, gl_FragCoord.xy / czm_viewport.zw )
+	);
+
+	// 2) 天空（无地形写入处）→ discard，否则箭头糊在天空背景。
+	if ( depth == 0.0 ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );   // 调试染绿（区别于线的红）
+		return;
+#else
+		discard;
+#endif
+	}
+
+	// 3) 重建当前像素下的地形点（EC）。
+	vec4 P = czm_windowToEyeCoordinates( gl_FragCoord.xy, depth );
+	P /= P.w;
+
+	// 4) 把地形点投到端点切平面坐标：a 沿线内向、b 横向。
+	vec3 v = P.xyz - v_arrowTipEC;
+	float a = dot( v, v_arrowBackEC );
+	float b = dot( v, v_arrowRightEC );
+
+	// 5) 像素 → 米（用地形点处 mpp，屏幕恒定的来源）。
+	float mpp = czm_metersPerPixel( P );
+	float Lm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+		u_arrowLengthMeters,
+		u_arrowLengthPixels * mpp
+	);
+	float Wm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+		u_arrowHalfWidthMeters,
+		u_arrowHalfWidthPixels * mpp
+	);
+
+	// 6) 三角形成员判定。
+#ifdef ARROW_OPEN
+	// 开口雪佛龙：只画三角形两条斜边附近的笔宽内像素。
+	// edge = |b| - Wm·(a/Lm) 的「垂直距离」（除以斜边的长度比 Lm/sqrt(Lm²+Wm²)）。
+	float lineFactor = Lm / sqrt( Lm * Lm + Wm * Wm );
+	float edgeDistance = abs( abs( b ) - Wm * ( a / Lm ) ) * lineFactor;
+	if ( a < 0.0 || a > Lm || edgeDistance > u_arrowStrokeHalfPixels * mpp ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
+#else
+	// 实心三角（默认）：0 ≤ a ≤ Lm 且 |b| ≤ Wm·(a/Lm)（基底向尖端线性收窄）。
+	if ( a < 0.0 || a > Lm || abs( b ) > Wm * ( a / Lm ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
+#endif
+
+	// 7) 上色（预乘 alpha，配合 blendSrc=ONE）+ log-depth。
+	vec4 col = u_arrowColor;
+	col.rgb *= col.a;
+	out_FragColor = col;
+
+#ifdef LOG_DEPTH
+	czm_writeLogDepth();
+#endif
+}
+`;
+
+/**
+ * 创建线端箭头材质。与线材质字节级相同的渲染状态，只换 shader 主体 + 加
+ * `CESIUM_THREE_POLYLINE_ARROW` define 拉出 arrow uniform。
+ *
+ * @param uniforms     共享 uniforms（与同一 polyline 实例共用）。
+ * @param debugVolume  把盒子整体染绿调试用。
+ * @param open         true → 走开口雪佛龙样式（`ARROW_OPEN`）；默认实心三角。
+ * @returns            RawShaderMaterial。
+ */
+export function createArrowHeadMaterial(
+	uniforms: SharedUniforms,
+	debugVolume = false,
+	open = false,
+): RawShaderMaterial {
+	const defines = combineDefines( [
+		'PER_INSTANCE_COLOR',
+		'CESIUM_THREE_POLYLINE',
+		'CESIUM_THREE_POLYLINE_ARROW',
+		open ? 'ARROW_OPEN' : '',
+		debugVolume ? 'DEBUG_SHOW_VOLUME' : '',
+	] );
+
+	const material = new RawShaderMaterial( {
+		glslVersion: GLSL3,
+		uniforms: asThreeUniforms( uniforms ),
+		vertexShader: `${ createVertexPrefix( defines ) }\n${ ARROWHEAD_VS }`,
+		fragmentShader: `${ createFragmentPrefix( defines ) }\n${ ARROWHEAD_FS }`,
+		// 与线材质同样的 DoubleSide，避免相机在薄墙某一侧时 BackSide 把面 cull 光。
+		side: DoubleSide,
+		colorWrite: true,
+		depthWrite: false,
+		depthTest: false,
+		stencilWrite: false,
+		transparent: true,
+		blending: CustomBlending,
+		blendEquation: AddEquation,
+		blendSrc: OneFactor,
+		blendDst: OneMinusSrcAlphaFactor,
+		blendSrcAlpha: OneFactor,
+		blendDstAlpha: OneMinusSrcAlphaFactor,
+		toneMapped: false,
+	} );
+
+	material.name = 'CesiumGroundPolylineArrowMaterial';
 	return material;
 }
 

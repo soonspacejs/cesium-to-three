@@ -7,6 +7,10 @@
 // ============================================================
 
 import type {
+	CesiumGroundArcType,
+	CesiumGroundArrowMode,
+	CesiumGroundArrowStyle,
+	CesiumGroundLineWidthMode,
 	CesiumGroundPointShape,
 	LonLatPoint,
 	PlotTextAlign,
@@ -152,6 +156,44 @@ export interface GroundDebugSettings {
 	largePointSquareStrokeWidth: number;
 	largePointSquareFillColor: string;
 	largePointSquareFillOpacity: number;
+
+	// 折线标绘（1:1 比例尺：屏宽 + 几十 m 长度）
+	polylineVisible: boolean;
+	polylinePlotOrder: number;
+	polylinePoints: LonLatPoint[];
+	polylineStrokeColor: string;
+	polylineStrokeOpacity: number;
+	polylineWidthPixels: number;
+	polylineWidthMeters: number;
+	polylineWidthMode: CesiumGroundLineWidthMode;
+	polylineArcType: CesiumGroundArcType;
+	polylineLoop: boolean;
+	polylineDashLengthMeters: number;
+	polylineGapLengthMeters: number;
+	polylineDebugVolume: boolean;
+	polylineArrowMode: CesiumGroundArrowMode;
+	polylineArrowStyle: CesiumGroundArrowStyle;
+	polylineArrowLengthPixels: number;
+	polylineArrowWidthPixels: number;
+
+	// 折线标绘（大比例尺：km 长度）
+	largePolylineVisible: boolean;
+	largePolylinePlotOrder: number;
+	largePolylinePoints: LonLatPoint[];
+	largePolylineStrokeColor: string;
+	largePolylineStrokeOpacity: number;
+	largePolylineWidthPixels: number;
+	largePolylineWidthMeters: number;
+	largePolylineWidthMode: CesiumGroundLineWidthMode;
+	largePolylineArcType: CesiumGroundArcType;
+	largePolylineLoop: boolean;
+	largePolylineDashLengthMeters: number;
+	largePolylineGapLengthMeters: number;
+	largePolylineDebugVolume: boolean;
+	largePolylineArrowMode: CesiumGroundArrowMode;
+	largePolylineArrowStyle: CesiumGroundArrowStyle;
+	largePolylineArrowLengthPixels: number;
+	largePolylineArrowWidthPixels: number;
 
 	// 文字标绘（1:1 比例尺）
 	textVisible: boolean;

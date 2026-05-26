@@ -25,10 +25,12 @@ import {
 	CesiumGroundCirclePrimitive,
 	CesiumGroundPointPrimitive,
 	CesiumGroundPolygonPrimitive,
+	CesiumGroundPolylinePrimitive,
 	CesiumGroundRectanglePrimitive,
 	CesiumGroundTextPrimitive,
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
 	CESIUM_GROUND_NON_PICKABLE_LAYER,
+	LINE_DEFAULT_GRANULARITY,
 	MAX_CIRCLE_GRANULARITY_RADIANS,
 	MIN_CIRCLE_GRANULARITY_RADIANS,
 	initializeApproximateTerrainHeights,
@@ -38,6 +40,10 @@ import {
 	validateCesiumGroundRenderer,
 	wgs84NormalFromDegrees,
 	wgs84PositionFromDegrees,
+	type CesiumGroundArcType,
+	type CesiumGroundArrowMode,
+	type CesiumGroundArrowStyle,
+	type CesiumGroundLineWidthMode,
 	type CesiumGroundPointShape,
 	type LonLatPoint,
 } from '../lib/ground';
@@ -96,6 +102,15 @@ const POINT_CIRCLE_OFFSET_LON = 25.0 * 1.02e-5;   // ~25 m east of rectangle
 const POINT_CIRCLE_OFFSET_LAT = - 35.0 * 9.01e-6; // ~35 m south of rectangle
 const POINT_SQUARE_OFFSET_LON = - 20.0 * 1.02e-5; // ~20 m west of rectangle
 const POINT_SQUARE_OFFSET_LAT = - 35.0 * 9.01e-6; // ~35 m south of rectangle
+
+// 折线 1:1 锚点：四个折点形成跨越矩形周围其它图元的 zig-zag 路径，方便
+// 观察拐角斜接 + breakMiter 行为；总长约 200 m，与其它 1:1 图元同量级。
+const POLYLINE_VERTEX_OFFSETS: { eastMeters: number; northMeters: number }[] = [
+	{ eastMeters: - 90.0, northMeters: 55.0 },   // 西北
+	{ eastMeters: - 30.0, northMeters: 65.0 },
+	{ eastMeters: 30.0, northMeters: 45.0 },
+	{ eastMeters: 90.0, northMeters: 55.0 },     // 东北
+];
 
 /**
  * lil-gui 的 string controller 默认是 `<input type="text">` 单行，按 Enter 直接
@@ -178,12 +193,14 @@ type DemoPlotId =
 	| 'text'
 	| 'pointCircle'
 	| 'pointSquare'
+	| 'polyline'
 	| 'largeRectangle'
 	| 'largePolygon'
 	| 'largeCircle'
 	| 'largeText'
 	| 'largePointCircle'
 	| 'largePointSquare'
+	| 'largePolyline'
 	| ArrowPlotId;
 
 interface RectangleGuiModel {
@@ -435,6 +452,25 @@ export function runGroundDemo(): void {
 	);
 	const initialLargeCircleRadiusMeters = 5000.0;
 
+	// 折线 1:1：四个折点环绕矩形向北分布。
+	const initialPolylinePoints: LonLatPoint[] = lonLatPointsFromMeterOffsets(
+		RECTANGLE_CENTER_LON,
+		RECTANGLE_CENTER_LAT,
+		POLYLINE_VERTEX_OFFSETS,
+	);
+	// 大比例尺折线：横跨 large rectangle / circle / polygon 之间的 km 级 zig-zag。
+	const initialLargePolylinePoints: LonLatPoint[] = lonLatPointsFromMeterOffsets(
+		RECTANGLE_CENTER_LON,
+		RECTANGLE_CENTER_LAT,
+		[
+			{ eastMeters: - 17000.0, northMeters: 4500.0 },
+			{ eastMeters: - 9000.0, northMeters: 8000.0 },
+			{ eastMeters: 0.0, northMeters: 6000.0 },
+			{ eastMeters: 9000.0, northMeters: 8000.0 },
+			{ eastMeters: 17000.0, northMeters: 4500.0 },
+		],
+	);
+
 	const debugSettings: GroundDebugSettings = {
 		points: initialRectanglePoints,
 		centerLon: RECTANGLE_CENTER_LON,
@@ -565,6 +601,44 @@ export function runGroundDemo(): void {
 		largePointSquareStrokeWidth: 60.0,
 		largePointSquareFillColor: '#aa66ff',
 		largePointSquareFillOpacity: 55,
+		// 折线 1:1：4 个折点的 zig-zag，~3 px 屏宽，screen 模式（缩放屏宽恒定）。
+		polylineVisible: true,
+		polylinePlotOrder: 6,
+		polylinePoints: initialPolylinePoints,
+		polylineStrokeColor: '#ff3030',
+		polylineStrokeOpacity: 95,
+		polylineWidthPixels: 3.0,
+		polylineWidthMeters: 5.0,
+		polylineWidthMode: 'screen',
+		polylineArcType: 'geodesic',
+		polylineLoop: false,
+		polylineDashLengthMeters: 0.0,
+		polylineGapLengthMeters: 0.0,
+		polylineDebugVolume: false,
+		// 默认终点端有箭头，方便看「箭头跟着线方向走」。
+		polylineArrowMode: 'right',
+		polylineArrowStyle: 'solid',
+		polylineArrowLengthPixels: 18,
+		polylineArrowWidthPixels: 16,
+		// 折线大比例尺：5 段、~50 km 总长、screen 模式 3 px 屏宽（远视角不消失）。
+		largePolylineVisible: true,
+		largePolylinePlotOrder: 14,
+		largePolylinePoints: initialLargePolylinePoints,
+		largePolylineStrokeColor: '#ff66ff',
+		largePolylineStrokeOpacity: 95,
+		largePolylineWidthPixels: 3.0,
+		largePolylineWidthMeters: 200.0,
+		largePolylineWidthMode: 'screen',
+		largePolylineArcType: 'geodesic',
+		largePolylineLoop: false,
+		largePolylineDashLengthMeters: 0.0,
+		largePolylineGapLengthMeters: 0.0,
+		largePolylineDebugVolume: false,
+		// 大比例尺折线两端都加箭头展示。
+		largePolylineArrowMode: 'both',
+		largePolylineArrowStyle: 'solid',
+		largePolylineArrowLengthPixels: 22,
+		largePolylineArrowWidthPixels: 20,
 		// 文字标绘 1:1：metersPerPixel=1.0 即「1 纹素 = 1 米」字面意义比例尺。
 		// 默认 content 含 \n 演示横排换行；anchor 放在矩形正北 ~30 m。
 		textVisible: true,
@@ -647,6 +721,8 @@ export function runGroundDemo(): void {
 	debugSettings.largeTextPlotOrder = plotOrderRegistry.register( 'largeText', debugSettings.largeTextPlotOrder );
 	debugSettings.largePointCirclePlotOrder = plotOrderRegistry.register( 'largePointCircle', debugSettings.largePointCirclePlotOrder );
 	debugSettings.largePointSquarePlotOrder = plotOrderRegistry.register( 'largePointSquare', debugSettings.largePointSquarePlotOrder );
+	debugSettings.polylinePlotOrder = plotOrderRegistry.register( 'polyline', debugSettings.polylinePlotOrder );
+	debugSettings.largePolylinePlotOrder = plotOrderRegistry.register( 'largePolyline', debugSettings.largePolylinePlotOrder );
 
 	/**
 	 * Returns the current fill rectangle derived from the public points field.
@@ -970,6 +1046,22 @@ export function runGroundDemo(): void {
 			debugSettings.largePointSquarePlotOrder = plotOrderRegistry.update(
 				'largePointSquare',
 				debugSettings.largePointSquarePlotOrder,
+			);
+			return;
+		}
+
+		if ( target === 'polyline' ) {
+			debugSettings.polylinePlotOrder = plotOrderRegistry.update(
+				'polyline',
+				debugSettings.polylinePlotOrder,
+			);
+			return;
+		}
+
+		if ( target === 'largePolyline' ) {
+			debugSettings.largePolylinePlotOrder = plotOrderRegistry.update(
+				'largePolyline',
+				debugSettings.largePolylinePlotOrder,
 			);
 			return;
 		}
@@ -1402,6 +1494,58 @@ export function runGroundDemo(): void {
 		} );
 	}
 
+	/**
+	 * 折线 1:1：~3 px 屏宽（缩放屏宽恒定），geodesic 拐角斜接。
+	 */
+	function createGroundPolyline(): CesiumGroundPolylinePrimitive {
+		return new CesiumGroundPolylinePrimitive( {
+			points: debugSettings.polylinePoints,
+			strokeColor: debugSettings.polylineStrokeColor,
+			strokeOpacity: debugSettings.polylineStrokeOpacity,
+			widthPixels: debugSettings.polylineWidthPixels,
+			widthMeters: debugSettings.polylineWidthMeters,
+			widthMode: debugSettings.polylineWidthMode,
+			arcType: debugSettings.polylineArcType,
+			loop: debugSettings.polylineLoop,
+			visible: debugSettings.polylineVisible,
+			renderOrder: plotOrderToRenderOrder( debugSettings.polylinePlotOrder ),
+			dashLengthMeters: debugSettings.polylineDashLengthMeters,
+			gapLengthMeters: debugSettings.polylineGapLengthMeters,
+			granularityRadians: LINE_DEFAULT_GRANULARITY,
+			debugVolume: debugSettings.polylineDebugVolume,
+			arrowMode: debugSettings.polylineArrowMode,
+			arrowStyle: debugSettings.polylineArrowStyle,
+			arrowLengthPixels: debugSettings.polylineArrowLengthPixels,
+			arrowWidthPixels: debugSettings.polylineArrowWidthPixels,
+		} );
+	}
+
+	/**
+	 * 折线大比例尺：km 长度 + 3 px 屏宽，几何加密 + Vincenty 大地线在远视角也保持平滑。
+	 */
+	function createLargeGroundPolyline(): CesiumGroundPolylinePrimitive {
+		return new CesiumGroundPolylinePrimitive( {
+			points: debugSettings.largePolylinePoints,
+			strokeColor: debugSettings.largePolylineStrokeColor,
+			strokeOpacity: debugSettings.largePolylineStrokeOpacity,
+			widthPixels: debugSettings.largePolylineWidthPixels,
+			widthMeters: debugSettings.largePolylineWidthMeters,
+			widthMode: debugSettings.largePolylineWidthMode,
+			arcType: debugSettings.largePolylineArcType,
+			loop: debugSettings.largePolylineLoop,
+			visible: debugSettings.largePolylineVisible,
+			renderOrder: plotOrderToRenderOrder( debugSettings.largePolylinePlotOrder ),
+			dashLengthMeters: debugSettings.largePolylineDashLengthMeters,
+			gapLengthMeters: debugSettings.largePolylineGapLengthMeters,
+			granularityRadians: LINE_DEFAULT_GRANULARITY,
+			debugVolume: debugSettings.largePolylineDebugVolume,
+			arrowMode: debugSettings.largePolylineArrowMode,
+			arrowStyle: debugSettings.largePolylineArrowStyle,
+			arrowLengthPixels: debugSettings.largePolylineArrowLengthPixels,
+			arrowWidthPixels: debugSettings.largePolylineArrowWidthPixels,
+		} );
+	}
+
 	let groundRectangle = createGroundRectangle();
 	let groundPolygon = createGroundPolygon();
 	let groundCircle = createGroundCircle();
@@ -1414,6 +1558,8 @@ export function runGroundDemo(): void {
 	let largeGroundText = createLargeGroundText();
 	let largeGroundPointCircle = createLargeGroundPointCircle();
 	let largeGroundPointSquare = createLargeGroundPointSquare();
+	let groundPolyline = createGroundPolyline();
+	let largeGroundPolyline = createLargeGroundPolyline();
 	scene.add( groundRectangle.classification.group );
 	scene.add( groundPolygon.classification.group );
 	scene.add( groundCircle.classification.group );
@@ -1426,6 +1572,8 @@ export function runGroundDemo(): void {
 	scene.add( largeGroundText.group );
 	scene.add( largeGroundPointCircle.classification.group );
 	scene.add( largeGroundPointSquare.classification.group );
+	scene.add( groundPolyline.group );
+	scene.add( largeGroundPolyline.group );
 
 	// Lazily set after createGroundDebugGui() so we can attach to its GUI root.
 	// Forwarded settings (fragmentCull + pass visibility) are applied via the
@@ -1656,6 +1804,39 @@ export function runGroundDemo(): void {
 			new Color( debugSettings.largePointSquareStrokeColor ),
 			debugSettings.largePointSquareStrokeOpacity / 100.0,
 			debugSettings.largePointSquareStrokeWidth,
+		);
+
+		// ── 折线 1:1 ── 颜色 / 宽度三件 / 可见性 / renderOrder，不重建几何。
+		//    用 `applyWidthState` 一次性刷 widthMode + 两个宽度 uniform，
+		//    避免 setWidth 单参数版用 stale `this.options.widthMode` 写错
+		//    uniform 导致「切回原 mode 也回不去」。点位 / arcType / loop /
+		//    dash 才走 rebuildGroundPolyline。
+		groundPolyline.setColor( debugSettings.polylineStrokeColor, debugSettings.polylineStrokeOpacity );
+		groundPolyline.applyWidthState(
+			debugSettings.polylineWidthMode,
+			debugSettings.polylineWidthPixels,
+			debugSettings.polylineWidthMeters,
+		);
+		groundPolyline.setRenderOrder( plotOrderToRenderOrder( debugSettings.polylinePlotOrder ) );
+		groundPolyline.setVisible( debugSettings.polylineVisible );
+		// 箭头尺寸（屏宽像素）可热改不重建；mode / style 走 GUI rebuild。
+		groundPolyline.setArrowSize(
+			debugSettings.polylineArrowLengthPixels,
+			debugSettings.polylineArrowWidthPixels,
+		);
+
+		// ── 折线大比例尺 ── 同上。
+		largeGroundPolyline.setColor( debugSettings.largePolylineStrokeColor, debugSettings.largePolylineStrokeOpacity );
+		largeGroundPolyline.applyWidthState(
+			debugSettings.largePolylineWidthMode,
+			debugSettings.largePolylineWidthPixels,
+			debugSettings.largePolylineWidthMeters,
+		);
+		largeGroundPolyline.setRenderOrder( plotOrderToRenderOrder( debugSettings.largePolylinePlotOrder ) );
+		largeGroundPolyline.setVisible( debugSettings.largePolylineVisible );
+		largeGroundPolyline.setArrowSize(
+			debugSettings.largePolylineArrowLengthPixels,
+			debugSettings.largePolylineArrowWidthPixels,
 		);
 
 		// Shared render-state knobs (fragment culling + 3-pass visibility) must
@@ -1956,6 +2137,34 @@ export function runGroundDemo(): void {
 		applyGroundDebugSettings();
 	}
 
+	/** 重建 1:1 折线（点位 / arcType / loop / width mode 变化时调）。 */
+	function rebuildGroundPolyline(): void {
+		scene.remove( groundPolyline.group );
+		groundPolyline.dispose();
+		groundPolyline = createGroundPolyline();
+		scene.add( groundPolyline.group );
+		applyGroundDebugSettings();
+	}
+
+	/** 重建大比例尺折线（同上）。 */
+	function rebuildLargeGroundPolyline(): void {
+		scene.remove( largeGroundPolyline.group );
+		largeGroundPolyline.dispose();
+		largeGroundPolyline = createLargeGroundPolyline();
+		scene.add( largeGroundPolyline.group );
+		applyGroundDebugSettings();
+	}
+
+	function applyPolylinePlotOrder(): void {
+		updateRegisteredPlotOrder( 'polyline' );
+		applyGroundDebugSettings();
+	}
+
+	function applyLargePolylinePlotOrder(): void {
+		updateRegisteredPlotOrder( 'largePolyline' );
+		applyGroundDebugSettings();
+	}
+
 	/**
 	 * Creates the lil-gui control surface for render-pass diagnosis.
 	 */
@@ -2089,6 +2298,52 @@ export function runGroundDemo(): void {
 		pointSquareFolder.addColor( debugSettings, 'pointSquareFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		pointSquareFolder.add( debugSettings, 'pointSquareFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
 
+		// 折线 1:1：4 段 zig-zag，与 polygon/circle/text/point 同 1:1 比例尺。
+		// 拖 strokeWidth 滑杆 → 直接 setWidth；切 arcType / loop / widthMode →
+		// rebuildGroundPolyline 重建几何（与点 / 文字 rebuild 同模式）。
+		const widthModeOptions: Record<string, CesiumGroundLineWidthMode> = {
+			'screen (px)': 'screen',
+			'world (m)': 'world',
+		};
+		const arcTypeOptions: Record<string, CesiumGroundArcType> = {
+			geodesic: 'geodesic',
+			rhumb: 'rhumb',
+			none: 'none',
+		};
+		const polylineFolder = gui.addFolder( 'Polyline 1:1 (~200 m)' );
+		polylineFolder.add( debugSettings, 'polylineVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		polylineFolder.add( debugSettings, 'polylinePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyPolylinePlotOrder ).listen();
+		polylineFolder.addColor( debugSettings, 'polylineStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		polylineFolder.add( debugSettings, 'polylineStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		polylineFolder.add( debugSettings, 'polylineWidthMode', widthModeOptions ).name( 'widthMode' ).onChange( applyGroundDebugSettings );
+		polylineFolder.add( debugSettings, 'polylineWidthPixels', 0.5, 20.0, 0.5 ).name( 'widthPixels' ).onChange( applyGroundDebugSettings );
+		polylineFolder.add( debugSettings, 'polylineWidthMeters', 0.5, 50.0, 0.5 ).name( 'widthMeters' ).onChange( applyGroundDebugSettings );
+		polylineFolder.add( debugSettings, 'polylineArcType', arcTypeOptions ).name( 'arcType' ).onFinishChange( rebuildGroundPolyline );
+		polylineFolder.add( debugSettings, 'polylineLoop' ).name( 'loop' ).onChange( rebuildGroundPolyline );
+		polylineFolder.add( debugSettings, 'polylineDashLengthMeters', 0.0, 50.0, 1.0 ).name( 'dash m' ).onFinishChange( rebuildGroundPolyline );
+		polylineFolder.add( debugSettings, 'polylineGapLengthMeters', 0.0, 50.0, 1.0 ).name( 'gap m' ).onFinishChange( rebuildGroundPolyline );
+		polylineFolder.add( debugSettings, 'polylineDebugVolume' ).name( 'debug volume' ).onChange( rebuildGroundPolyline );
+		// 线端箭头：mode 切换端数走 setArrowMode（无需重建几何）；尺寸热刷。
+		const arrowModeOptions: Record<string, CesiumGroundArrowMode> = {
+			none: 'none',
+			left: 'left',
+			right: 'right',
+			both: 'both',
+		};
+		const arrowStyleOptions: Record<string, CesiumGroundArrowStyle> = {
+			solid: 'solid',
+			open: 'open',
+		};
+		polylineFolder.add( debugSettings, 'polylineArrowMode', arrowModeOptions ).name( 'arrow mode' ).onChange( () => {
+			groundPolyline.setArrowMode( debugSettings.polylineArrowMode );
+		} );
+		polylineFolder.add( debugSettings, 'polylineArrowStyle', arrowStyleOptions ).name( 'arrow style' ).onChange( () => {
+			groundPolyline.setArrowStyle( debugSettings.polylineArrowStyle );
+		} );
+		polylineFolder.add( debugSettings, 'polylineArrowLengthPixels', 4.0, 60.0, 1.0 ).name( 'arrow len px' ).onChange( applyGroundDebugSettings );
+		polylineFolder.add( debugSettings, 'polylineArrowWidthPixels', 4.0, 60.0, 1.0 ).name( 'arrow width px' ).onChange( applyGroundDebugSettings );
+		polylineFolder.close();
+
 		const largeFolder = gui.addFolder( 'Large Scale' );
 		const largeRectangleFolder = largeFolder.addFolder( 'Rectangle 10km x 5km' );
 		largeRectangleFolder.add( debugSettings, 'largeRectangleVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
@@ -2179,6 +2434,31 @@ export function runGroundDemo(): void {
 		largePointSquareFolder.addColor( debugSettings, 'largePointSquareFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		largePointSquareFolder.add( debugSettings, 'largePointSquareFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
 		largePointSquareFolder.close();
+
+		// 大比例尺折线：50 km 总长 5 段 zig-zag，screen 模式默认 3 px，远视角
+		// 仍然可见。切到 world 模式（widthMeters=200 m）观察「远处变细」效果。
+		const largePolylineFolder = largeFolder.addFolder( 'Polyline ~50km' );
+		largePolylineFolder.add( debugSettings, 'largePolylineVisible' ).name( 'visible' ).onChange( applyGroundDebugSettings );
+		largePolylineFolder.add( debugSettings, 'largePolylinePlotOrder', 0, 100, 1 ).name( 'plot order' ).onChange( applyLargePolylinePlotOrder ).listen();
+		largePolylineFolder.addColor( debugSettings, 'largePolylineStrokeColor' ).name( 'strokeColor' ).onChange( applyGroundDebugSettings );
+		largePolylineFolder.add( debugSettings, 'largePolylineStrokeOpacity', 0.0, 100.0, 1.0 ).name( 'strokeOpacity' ).onChange( applyGroundDebugSettings );
+		largePolylineFolder.add( debugSettings, 'largePolylineWidthMode', widthModeOptions ).name( 'widthMode' ).onChange( applyGroundDebugSettings );
+		largePolylineFolder.add( debugSettings, 'largePolylineWidthPixels', 0.5, 20.0, 0.5 ).name( 'widthPixels' ).onChange( applyGroundDebugSettings );
+		largePolylineFolder.add( debugSettings, 'largePolylineWidthMeters', 50.0, 2000.0, 25.0 ).name( 'widthMeters' ).onChange( applyGroundDebugSettings );
+		largePolylineFolder.add( debugSettings, 'largePolylineArcType', arcTypeOptions ).name( 'arcType' ).onFinishChange( rebuildLargeGroundPolyline );
+		largePolylineFolder.add( debugSettings, 'largePolylineLoop' ).name( 'loop' ).onChange( rebuildLargeGroundPolyline );
+		largePolylineFolder.add( debugSettings, 'largePolylineDashLengthMeters', 0.0, 5000.0, 50.0 ).name( 'dash m' ).onFinishChange( rebuildLargeGroundPolyline );
+		largePolylineFolder.add( debugSettings, 'largePolylineGapLengthMeters', 0.0, 5000.0, 50.0 ).name( 'gap m' ).onFinishChange( rebuildLargeGroundPolyline );
+		largePolylineFolder.add( debugSettings, 'largePolylineDebugVolume' ).name( 'debug volume' ).onChange( rebuildLargeGroundPolyline );
+		largePolylineFolder.add( debugSettings, 'largePolylineArrowMode', arrowModeOptions ).name( 'arrow mode' ).onChange( () => {
+			largeGroundPolyline.setArrowMode( debugSettings.largePolylineArrowMode );
+		} );
+		largePolylineFolder.add( debugSettings, 'largePolylineArrowStyle', arrowStyleOptions ).name( 'arrow style' ).onChange( () => {
+			largeGroundPolyline.setArrowStyle( debugSettings.largePolylineArrowStyle );
+		} );
+		largePolylineFolder.add( debugSettings, 'largePolylineArrowLengthPixels', 4.0, 80.0, 1.0 ).name( 'arrow len px' ).onChange( applyGroundDebugSettings );
+		largePolylineFolder.add( debugSettings, 'largePolylineArrowWidthPixels', 4.0, 80.0, 1.0 ).name( 'arrow width px' ).onChange( applyGroundDebugSettings );
+		largePolylineFolder.close();
 
 		largeFolder.close();
 
@@ -2350,6 +2630,22 @@ export function runGroundDemo(): void {
 			width: renderer.domElement.width,
 			height: renderer.domElement.height,
 			camera,
+		} );
+		// 贴地线必须填 pixelRatio——czm_metersPerPixel 内部要乘它，HiDPI 下
+		// 漏掉会让屏宽差 2×（doc 09 §4.2 / doc 10 §15）。
+		groundPolyline.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+			pixelRatio: renderer.getPixelRatio(),
+		} );
+		largeGroundPolyline.update( {
+			depthTexture: globeDepth.target.texture,
+			width: renderer.domElement.width,
+			height: renderer.domElement.height,
+			camera,
+			pixelRatio: renderer.getPixelRatio(),
 		} );
 		groundText.update( {
 			depthTexture: globeDepth.target.texture,

@@ -190,11 +190,112 @@ export interface CesiumClassificationCommandVisibility {
 	color?: boolean;
 }
 
+/**
+ * 贴地线连线方式。'geodesic' = Vincenty 大地线（默认），'rhumb' = 恒向线，
+ * 'none' = ECEF 弦（仅在调用方明确要求或极短段时用）。
+ */
+export type CesiumGroundArcType = 'none' | 'geodesic' | 'rhumb';
+
+/**
+ * 贴地线宽度模式。'screen' = 像素恒定（默认，缩放不消失），
+ * 'world' = 米恒定（远处变细）。
+ */
+export type CesiumGroundLineWidthMode = 'screen' | 'world';
+
+/**
+ * 贴地线两端箭头放置模式。
+ *   - 'none'  无箭头（默认）
+ *   - 'left'  起点端（points[0]）画箭头
+ *   - 'right' 终点端（points[N-1]）画箭头
+ *   - 'both'  两端都画
+ */
+export type CesiumGroundArrowMode = 'none' | 'left' | 'right' | 'both';
+
+/**
+ * 箭头形态：实心三角 / 开口雪佛龙（V 形线条）。
+ */
+export type CesiumGroundArrowStyle = 'solid' | 'open';
+
+/**
+ * 贴地折线的 plot-spec 契约：lon/lat 点序 + 颜色 + 宽度 + 可见性。
+ * 高级字段（loop / arcType / granularity / width mode / dash / 高度窗口）
+ * 全部可选；resolvePublicLineOptions 填默认并严格校验。
+ */
+export interface CesiumGroundPolylineOptions {
+	/** lon/lat 折点（度），≥ 2 个。 */
+	points: LonLatPoint[];
+	/** 线色（'#rrggbb' 或 css 颜色）。 */
+	strokeColor: string;
+	/** 不透明度 0..100（与其它图元一致的百分比口径）。 */
+	strokeOpacity: number;
+	/** 可见性。 */
+	visible: boolean;
+	/** 屏宽模式下的像素宽（默认 3）。 */
+	widthPixels?: number;
+	/** 是否闭合（默认 false；2 点强制 false）。 */
+	loop?: boolean;
+	/** 连线方式（默认 'geodesic'）。 */
+	arcType?: CesiumGroundArcType;
+	/**
+	 * 加密距离阈值（**米**，默认 9999）。`interpolateSegment` 用
+	 * `segments = ceil(surfaceDistance / granularity)` 计算每段中间点数；
+	 * 默认 9999 m 对 km 级线段产生 5-10 个中间点，能保持平滑又不爆量。
+	 *
+	 * 字段名以 "Radians" 结尾是历史包袱（Cesium 同名 API），实际单位是米。
+	 */
+	granularityRadians?: number;
+	/** 高度窗口下限（米，默认 -55000）。高级。 */
+	minimumHeight?: number;
+	/** 高度窗口上限（米，默认 +55000）。高级。 */
+	maximumHeight?: number;
+	/** 线宽模式（默认 'screen'）。 */
+	widthMode?: CesiumGroundLineWidthMode;
+	/** 世界宽模式下的米宽（widthMode==='world' 时使用，默认 5）。 */
+	widthMeters?: number;
+	/** 渲染顺序（默认 40，> polygon 的 30）。 */
+	renderOrder?: number;
+	/** 虚线：实线段长（米）。设置且 > 0 即启用虚线。 */
+	dashLengthMeters?: number;
+	/** 虚线：间隙长（米）。 */
+	gapLengthMeters?: number;
+	/**
+	 * 调试：把盒子整体染红显示，跳过 terrain depth 重建 / 平面距离裁切。
+	 * 用来定位「线段为什么不渲染」——盒子覆盖的屏幕区域就是 FS 实际被调用的
+	 * 范围，盒子有但没线 → FS 平面距离/depth 裁切问题；盒子无 → 几何 / 视锥
+	 * 问题。
+	 */
+	debugVolume?: boolean;
+	/** 线端箭头：'none'/'left'/'right'/'both'。默认 'none'。 */
+	arrowMode?: CesiumGroundArrowMode;
+	/** 箭头形态：'solid' 实心三角 / 'open' 开口雪佛龙。默认 'solid'。 */
+	arrowStyle?: CesiumGroundArrowStyle;
+	/** 箭头沿线长（屏幕像素，默认 18）。 */
+	arrowLengthPixels?: number;
+	/** 箭头基底全宽（屏幕像素，默认 16）。 */
+	arrowWidthPixels?: number;
+	/** world 模式下箭头沿线长（米，默认 30）。 */
+	arrowLengthMeters?: number;
+	/** world 模式下箭头基底全宽（米，默认 24）。 */
+	arrowWidthMeters?: number;
+	/** 箭头色，默认跟随 strokeColor。 */
+	arrowColor?: string;
+	/** 箭头不透明度 0..100，默认跟随 strokeOpacity。 */
+	arrowOpacity?: number;
+	/** open 样式的斜边笔宽（屏幕像素，默认 3）。 */
+	arrowStrokeWidthPixels?: number;
+}
+
 export interface CesiumGroundFrameState {
 	depthTexture: WebGLRenderTarget['texture'];
 	width: number;
 	height: number;
 	camera: PerspectiveCamera;
+	/**
+	 * 物理像素与 CSS 像素的比值，由宿主每帧填入（典型：renderer.getPixelRatio()）。
+	 * 仅 CesiumGroundPolylinePrimitive 在意——`czm_metersPerPixel` 内部要乘它。
+	 * 面图元不读，缺省 1.0（HiDPI 下线宽偏窄）。
+	 */
+	pixelRatio?: number;
 }
 
 export interface CesiumLogDepthParameters {
@@ -223,7 +324,7 @@ export interface PlanarBounds {
 }
 
 export interface SharedUniforms {
-	[ uniform: string ]: { value: unknown };
+	[ uniform: string ]: { value: unknown } | undefined;
 	czm_encodedCameraPositionMCHigh: { value: Vector3 };
 	czm_encodedCameraPositionMCLow: { value: Vector3 };
 	czm_modelViewRelativeToEye: { value: Matrix4 };
@@ -272,4 +373,25 @@ export interface SharedUniforms {
 	 * `#ifdef CESIUM_THREE_TEXT` 守住声明，不污染其它材质编译。
 	 */
 	u_textTexture: { value: Texture | null };
+	// ── 贴地线扩展（全部可选；面图元的 uniform map 不设这些键，
+	//    classification.ts 守卫式写入跳过它们）。GLSL 端用
+	//    `#ifdef CESIUM_THREE_POLYLINE` 守住声明，对 stencil/color 编译无影响。──
+	czm_projection?: { value: Matrix4 };
+	czm_pixelRatio?: { value: number };
+	u_lineWidthPixels?: { value: number };
+	u_lineWidthMode?: { value: number };
+	u_lineWidthMeters?: { value: number };
+	u_lineDashEnabled?: { value: number };
+	u_lineDashLengthMeters?: { value: number };
+	u_lineGapLengthMeters?: { value: number };
+	u_lineTotalMeters?: { value: number };
+	// ── 线端箭头扩展（仅在 polyline 材质 / 箭头材质里使用；其它材质
+	//    prefix 不声明这些 uniform，写入 no-op，零回归）。──
+	u_arrowWidthMode?: { value: number };
+	u_arrowLengthPixels?: { value: number };
+	u_arrowHalfWidthPixels?: { value: number };
+	u_arrowLengthMeters?: { value: number };
+	u_arrowHalfWidthMeters?: { value: number };
+	u_arrowColor?: { value: Vector4 };
+	u_arrowStrokeHalfPixels?: { value: number };
 }

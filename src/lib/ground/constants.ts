@@ -58,6 +58,55 @@ export const CESIUM_MAXIMUM_SCREEN_SPACE_ERROR = 2.0;
 export const APPROXIMATE_TERRAIN_DEFAULT_MIN_HEIGHT = - 100000.0;
 export const APPROXIMATE_TERRAIN_DEFAULT_MAX_HEIGHT = 9000.0;
 
+// ── Ground polyline (line-shadow-volume) shared constants ──
+// Standard wall height window used by the geometry builder BEFORE
+// `adjustHeights` pushes vertices to the user-configured min/max.
+// Same constants as Cesium's GroundPolylineGeometry.
+export const WALL_INITIAL_MIN_HEIGHT = 0.0;
+export const WALL_INITIAL_MAX_HEIGHT = 1000.0;
+
+// Miter break thresholds. Cesium ports cos(30°) / cos(150°), used by
+// `breakMiter` to decide when a corner is sharp enough to warrant rotating
+// the geometry normal by ±90° instead of letting the miter blow up.
+export const MITER_BREAK_SMALL = Math.cos( Math.PI / 6.0 );  // ≈ 0.8660254037844387
+export const MITER_BREAK_LARGE = Math.cos( 5.0 * Math.PI / 6.0 ); // ≈ -0.8660254037844387
+
+// Nudge epsilons used inside the per-segment box generator.
+// LINE_NORMAL_NUDGE (EPSILON5) — push the 8 box corners ±1e-5 m along the
+//   right normal to avoid zero-thickness boxes (FS reconstruction would be
+//   numerically unstable on a degenerate face).
+// LINE_NUDGE_XZ (EPSILON2) — when a vertex sits within 1 cm of the XZ plane
+//   (y == 0 in WGS84), push it ~1 cm along the segment direction so
+//   GeometryPipeline-style numeric paths don't collapse it.
+export const LINE_NORMAL_NUDGE = 1.0e-5;
+export const LINE_NUDGE_XZ = 1.0e-2;
+
+// Epsilon used by `splitAcrossXZPlane` to discard near-coincident split
+// intersections (ECEF magnitude scale).
+export const LINE_SPLIT_EPSILON = 1.0e-7;
+
+// Epsilon used by the cartographic dedup pass (compares radian lon/lat).
+export const LINE_DEDUP_EPSILON = 1.0e-12;
+
+// Default per-segment densification step **in METERS** (despite the
+// historic "granularity radians" naming). Matches Cesium's
+// `GroundPolylineGeometry` default (see
+// `cesium-ground-source/.../GroundPolylineGeometry.js`:107
+// `this.granularity = options.granularity ?? 9999.0`). The function
+// `interpolateSegment` computes `segments = ceil(surfaceDistance(meters) /
+// granularity)` and Cesium's JSDoc explicitly states
+// "distance interval in meters". A 50 km line at this default produces ~6
+// interpolation points — well below the millions a radian-scale default
+// would generate, which froze the tab.
+export const LINE_DEFAULT_GRANULARITY = 9999.0;
+
+// Default screen-space stroke width in CSS pixels (matches Cesium's default).
+export const LINE_DEFAULT_WIDTH_PIXELS = 3.0;
+
+// Default render-order for polylines. Higher than the polygon default (30)
+// so lines paint above filled ground primitives.
+export const LINE_DEFAULT_RENDER_ORDER = 40;
+
 // Three.js layer index used by every Cesium-ground "non-pickable" mesh
 // (classification shadow-volume stencil/back-stencil/color meshes, and the
 // rectangle debug-surface mesh). These meshes need to **render** as part of

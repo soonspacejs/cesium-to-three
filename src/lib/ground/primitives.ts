@@ -17,23 +17,47 @@
 // ============================================================
 
 import {
+	BufferGeometry,
 	Color,
 	DoubleSide,
+	Group,
+	Matrix3,
+	Matrix4,
 	Mesh,
 	MeshBasicMaterial,
+	Vector2,
 	Vector3,
+	Vector4,
 	type Material,
+	type RawShaderMaterial,
 } from 'three';
 
-import { CesiumClassificationPrimitive } from './classification';
+import { CesiumClassificationPrimitive, updateFrameStateUniforms } from './classification';
 import { computeCirclePlanarExtents } from './circle/circle-extents';
 import { buildCircleShadowVolumeGeometry } from './circle/circle-shadow-volume';
+import { encodeCesiumVector3 } from './geometry';
 import {
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
 	CESIUM_GROUND_NON_PICKABLE_LAYER,
+	LINE_DEFAULT_WIDTH_PIXELS,
 	MAX_CIRCLE_GRANULARITY_RADIANS,
 	MIN_CIRCLE_GRANULARITY_RADIANS,
 } from './constants';
+import { buildLineShadowVolumeGeometry } from './line/line-shadow-volume';
+import {
+	parseArrowMode,
+	parseArrowStyle,
+	resolvePublicLineOptions,
+	toLineShadowVolumeOptions,
+	type ResolvedLineOptions,
+} from './line/line-options';
+import type { LineGeometryUserData } from './line/line-shadow-volume';
+import {
+	ARROW_MODE,
+	buildArrowHeadGeometry,
+} from './line/line-arrowhead';
+import { LineWidthMode } from './line/line-types';
+import { createArrowHeadMaterial, createPolylineMaterial } from './materials';
 import { computePolygonPlanarExtents } from './polygon/polygon-extents';
 import { polygonRenderBoundsThroughMeters } from './polygon/polygon-offset';
 import {
@@ -57,15 +81,19 @@ import { rectangleRadiansFromDegrees } from './rectangle/rectangle-radians';
 import { buildRectangleShadowVolumeGeometry } from './rectangle/rectangle-shadow-volume';
 import type {
 	CartesianLike,
+	CesiumGroundArrowMode,
+	CesiumGroundArrowStyle,
 	CesiumGroundCirclePrimitiveOptions,
 	CesiumGroundFrameState,
 	CesiumGroundPointPrimitiveOptions,
 	CesiumGroundPointShape,
 	CesiumGroundPolygonOptions,
+	CesiumGroundPolylineOptions,
 	CesiumGroundRectanglePrimitiveOptions,
 	LonLatPoint,
 	PolygonHierarchyDegrees,
 	RectangleRadians,
+	SharedUniforms,
 } from './types';
 
 /**
@@ -780,4 +808,448 @@ export class CesiumGroundPointPrimitive {
 	public dispose(): void {
 		this.delegate.dispose();
 	}
+}
+
+/**
+ * 把 #rrggbb / css 颜色 + 0..100 不透明度解析成 Three Color + 0..1 alpha。
+ */
+function parseLineColor( strokeColor: string, strokeOpacity: number ): { color: Color; alpha: number } {
+	return {
+		color: new Color( strokeColor ),
+		alpha: normalizePercentOpacity( strokeOpacity ),
+	};
+}
+
+/**
+ * 贴地折线（polyline）—— 与 polygon/rectangle/circle 等贴地面图元正交的
+ * 「深度纹理重建分类法」单 pass 管线：每段 8 顶点 box + FS 内重建地形点 +
+ * 三平面距离裁切 + 上色。无 stencil。详见 doc 00 §1。
+ *
+ * 公开方法：
+ *   primitive.group              // Three.Group，scene.add(primitive.group)
+ *   primitive.update(frameState) // 每帧
+ *   primitive.setColor(...)
+ *   primitive.setWidth(...)      // screen→px / world→m
+ *   primitive.setRenderOrder(n)
+ *   primitive.setVisible(b)
+ *   primitive.dispose()
+ */
+export class CesiumGroundPolylinePrimitive {
+	private readonly _group = new Group();
+	private readonly uniforms: SharedUniforms;
+	private readonly mesh: Mesh;
+	private readonly material: RawShaderMaterial;
+	private geometry: ReturnType<typeof buildLineShadowVolumeGeometry>;
+	private readonly options: ResolvedLineOptions;
+	private readonly cameraHigh = new Vector3();
+	private readonly cameraLow = new Vector3();
+	// 箭头是可选的次级 mesh，与线 mesh 同 group、同 uniform 表。`arrowColorExplicit`
+	// 标志「箭头是否独立配色」——`setColor` 改线色时若为 false 则同步刷新箭头色，
+	// 否则保持独立色不变。
+	private arrowMesh?: Mesh;
+	private arrowMaterial?: RawShaderMaterial;
+	private arrowGeometry?: BufferGeometry;
+	private arrowColorExplicit = false;
+	private disposed = false;
+
+	public constructor( options: CesiumGroundPolylineOptions ) {
+		this.options = resolvePublicLineOptions( options );
+
+		// 1. 几何（line-shadow-volume facade）。一次性、纯 CPU。
+		this.geometry = buildLineShadowVolumeGeometry(
+			toLineShadowVolumeOptions( this.options ),
+		);
+		const userData = this.geometry.userData as LineGeometryUserData;
+
+		// 2. 共享 uniform。线只用极小一部分共享键 + 自己的 9 个 line uniform；
+		//    面图元那一大堆 (u_polygon* / u_circle* / extents / 等) 留占位值
+		//    即可——materials.ts 的 prefix 把它们都声明为 inactive，运行期写
+		//    入对 GPU 是 no-op，且面图元那侧用同名键 + 真值不受影响。
+		const { color, alpha } = parseLineColor(
+			this.options.strokeColor,
+			this.options.strokeOpacity,
+		);
+		this.uniforms = createPolylineUniforms( color, alpha, this.options, userData.length3D );
+		// `czm_encodedCameraPositionMC*` 是 RTE 解码的另一半（与每个顶点 RTE
+		// 位置在 GPU 端做 `(p.high - eye.high) + (p.low - eye.low)`）。这里把
+		// uniform 槽位的 value 指向类成员 Vector3，update() 每帧 in-place
+		// 写入相机位置 high/low——与 CesiumClassificationPrimitive 的相机
+		// 编码同步逻辑一致，否则线全在 ECEF 原点附近 ~6.4e6 m 处，相机看不到。
+		( this.uniforms.czm_encodedCameraPositionMCHigh as { value: Vector3 } ).value = this.cameraHigh;
+		( this.uniforms.czm_encodedCameraPositionMCLow as { value: Vector3 } ).value = this.cameraLow;
+
+		// 3. 材质 + Mesh
+		this.material = createPolylineMaterial( this.uniforms, this.options.debugVolume );
+		this.mesh = new Mesh( this.geometry, this.material );
+		this.mesh.name = 'CesiumGroundPolylineColorCommand';
+		// 几何无 `position` 属性 → boundingSphere 空 → 必须关闭视锥剔除（doc 04 §11）。
+		this.mesh.frustumCulled = false;
+		this.mesh.renderOrder = this.options.renderOrder;
+		// 不可拾取层：与其它贴地图元一致，相机 layers.enable(1) 才会渲染。
+		this.mesh.layers.set( CESIUM_GROUND_NON_PICKABLE_LAYER );
+		this.mesh.visible = this.options.visible;
+		this._group.add( this.mesh );
+
+		// 4. 可选的箭头 mesh：与线共用 uniform 表，材质换 shader + 加
+		//    ARROW define。renderOrder=line+1 让箭头画在线之上。
+		if ( this.options.arrowMode !== ARROW_MODE.NONE ) {
+			this.buildArrowMesh( userData );
+		}
+	}
+
+	/**
+	 * 构造或重建箭头 mesh。在 `options.arrowMode` 不是 NONE 时调用。
+	 * 调用前需确保旧的 arrowMesh / Geometry / Material 已 dispose。
+	 *
+	 * @param userData 线几何 userData，含端点标架。
+	 */
+	private buildArrowMesh( userData: LineGeometryUserData ): void {
+		// 颜色：调用方显式给了 arrowColor 就独立配色，否则跟随线色。
+		if ( this.options.arrowColor !== undefined ) {
+			this.arrowColorExplicit = true;
+			const { color, alpha } = parseLineColor(
+				this.options.arrowColor,
+				this.options.arrowOpacity ?? this.options.strokeOpacity,
+			);
+			( this.uniforms.u_arrowColor as { value: Vector4 } ).value.set(
+				color.r, color.g, color.b, alpha,
+			);
+		} else {
+			this.arrowColorExplicit = false;
+			const { color, alpha } = parseLineColor(
+				this.options.strokeColor,
+				this.options.strokeOpacity,
+			);
+			( this.uniforms.u_arrowColor as { value: Vector4 } ).value.set(
+				color.r, color.g, color.b, alpha,
+			);
+		}
+
+		this.arrowGeometry = buildArrowHeadGeometry(
+			userData.startFrame,
+			userData.endFrame,
+			this.options.arrowMode,
+		);
+		this.arrowMaterial = createArrowHeadMaterial(
+			this.uniforms,
+			this.options.debugVolume,
+			this.options.arrowStyle === 'open',
+		);
+		this.arrowMesh = new Mesh( this.arrowGeometry, this.arrowMaterial );
+		this.arrowMesh.name = 'CesiumGroundPolylineArrowCommand';
+		this.arrowMesh.frustumCulled = false;
+		this.arrowMesh.renderOrder = this.options.renderOrder + 1;
+		this.arrowMesh.layers.set( CESIUM_GROUND_NON_PICKABLE_LAYER );
+		this.arrowMesh.visible = this.options.visible;
+		this._group.add( this.arrowMesh );
+	}
+
+	/**
+	 * 拆掉当前 arrowMesh + geometry + material。`setArrowMode` 切端 → 重建 /
+	 * dispose() 总清理 都用这条路径。
+	 */
+	private disposeArrowMesh(): void {
+		if ( this.arrowMesh === undefined ) {
+			return;
+		}
+		this._group.remove( this.arrowMesh );
+		this.arrowGeometry?.dispose();
+		this.arrowMaterial?.dispose();
+		this.arrowMesh = undefined;
+		this.arrowGeometry = undefined;
+		this.arrowMaterial = undefined;
+	}
+
+	/** 把图元挂到场景：`scene.add(primitive.group)`。 */
+	public get group(): Group {
+		return this._group;
+	}
+
+	/** 每帧调用：刷新相机相关 uniform + 全局地形深度纹理。 */
+	public update( frameState: CesiumGroundFrameState ): void {
+		if ( this.disposed || ! this.mesh.visible ) {
+			return;
+		}
+		// 先把相机位置编码到 high/low（与 CesiumClassificationPrimitive 完全一致）。
+		// 漏掉这一步线就被 RTE 解码到 ECEF 原点附近，全帧不可见。
+		encodeCesiumVector3( frameState.camera.position, this.cameraHigh, this.cameraLow );
+		updateFrameStateUniforms( frameState, this.uniforms );
+	}
+
+	/**
+	 * 改线色。
+	 *
+	 * @param strokeColor  '#rrggbb' 或 css 颜色。
+	 * @param strokeOpacity 0..100 百分比（与其它图元一致）。
+	 */
+	public setColor( strokeColor: string, strokeOpacity?: number ): void {
+		const safeOpacity = Number.isFinite( strokeOpacity )
+			? ( strokeOpacity as number )
+			: this.options.strokeOpacity;
+		const { color, alpha } = parseLineColor( strokeColor, safeOpacity );
+		const u = this.uniforms.u_color as { value: Vector4 };
+		u.value.set( color.r, color.g, color.b, alpha );
+		this.options.strokeColor = strokeColor;
+		this.options.strokeOpacity = safeOpacity;
+		// 箭头未独立配色 → 跟随线色。
+		if ( this.arrowMesh !== undefined && ! this.arrowColorExplicit ) {
+			( this.uniforms.u_arrowColor as { value: Vector4 } ).value.set(
+				color.r, color.g, color.b, alpha,
+			);
+		}
+	}
+
+	/**
+	 * 改线宽。screen 模式传像素，world 模式传米。**只改当前模式对应的那一个
+	 * uniform**——切换模式请用 `applyWidthState`，否则 `this.options.widthMode`
+	 * 跟实际意图不一致时会写错 uniform。
+	 *
+	 * @param width 像素或米。
+	 */
+	public setWidth( width: number ): void {
+		if ( this.options.widthMode === LineWidthMode.WORLD ) {
+			( this.uniforms.u_lineWidthMeters as { value: number } ).value = width;
+			this.options.widthMeters = width;
+		} else {
+			( this.uniforms.u_lineWidthPixels as { value: number } ).value = width;
+			this.options.widthPixels = width;
+		}
+	}
+
+	/**
+	 * 一次性原子地刷新「线宽相关三件」——`u_lineWidthMode` + `u_lineWidthPixels`
+	 * + `u_lineWidthMeters`，并同步 `this.options.widthMode/Pixels/Meters`。
+	 *
+	 * 为什么需要这条 API：单 `setWidth(value)` 用 `this.options.widthMode` 决定
+	 * 写哪个 uniform。如果调用方在 GUI 上切了 `widthMode` 但没触发 rebuild，
+	 * `this.options.widthMode` 还是旧值，`setWidth` 会写错 uniform，而且
+	 * `u_lineWidthMode` 也没人更新 → 线的宽度模式跟显示对不上、且来回切
+	 * 不回原状态。这条方法让宿主把 widthMode + 两个宽度值一次刷到位。
+	 *
+	 * @param mode         'screen' or 'world'。
+	 * @param widthPixels  像素宽（即使当前是 world 模式也写入，便于切回）。
+	 * @param widthMeters  米宽（即使当前是 screen 模式也写入，便于切回）。
+	 */
+	public applyWidthState(
+		mode: 'screen' | 'world',
+		widthPixels: number,
+		widthMeters: number,
+	): void {
+		const enumMode = mode === 'world' ? LineWidthMode.WORLD : LineWidthMode.SCREEN;
+		( this.uniforms.u_lineWidthMode as { value: number } ).value =
+			enumMode === LineWidthMode.WORLD ? 1.0 : 0.0;
+		( this.uniforms.u_lineWidthPixels as { value: number } ).value = widthPixels;
+		( this.uniforms.u_lineWidthMeters as { value: number } ).value = widthMeters;
+		this.options.widthMode = enumMode;
+		this.options.widthPixels = widthPixels;
+		this.options.widthMeters = widthMeters;
+	}
+
+	/** 改渲染顺序（直接设 mesh.renderOrder，无 stencil 三件套偏移）。 */
+	public setRenderOrder( order: number ): void {
+		this.mesh.renderOrder = order;
+		this.options.renderOrder = order;
+		if ( this.arrowMesh !== undefined ) {
+			this.arrowMesh.renderOrder = order + 1;
+		}
+	}
+
+	/** 改可见性。 */
+	public setVisible( visible: boolean ): void {
+		this.mesh.visible = visible;
+		this._group.visible = visible;
+		if ( this.arrowMesh !== undefined ) {
+			this.arrowMesh.visible = visible;
+		}
+	}
+
+	/**
+	 * 切换箭头放置模式。NONE → 拆掉 arrowMesh；其它 → 重建 arrowMesh（端点数
+	 * 变化需要新的几何）。颜色 / 大小变化不必走这条路径，分别用
+	 * `setArrowColor` / `setArrowSize`。
+	 *
+	 * @param mode 'none' / 'left' / 'right' / 'both'。
+	 */
+	public setArrowMode( mode: CesiumGroundArrowMode ): void {
+		const newMode = parseArrowMode( mode );
+		if ( newMode === this.options.arrowMode && this.arrowMesh !== undefined ) {
+			return; // 已经是这个 mode，不必重建。
+		}
+		this.disposeArrowMesh();
+		this.options.arrowMode = newMode;
+		if ( newMode === ARROW_MODE.NONE ) {
+			return;
+		}
+		const userData = this.geometry.userData as LineGeometryUserData;
+		this.buildArrowMesh( userData );
+	}
+
+	/**
+	 * 切换箭头样式（实心三角 / 开口雪佛龙）。要换 material 的 define，所以
+	 * 必须重建材质——但几何不变。
+	 *
+	 * @param style 'solid' / 'open'。
+	 */
+	public setArrowStyle( style: CesiumGroundArrowStyle ): void {
+		const newStyle = parseArrowStyle( style );
+		if ( newStyle === this.options.arrowStyle ) {
+			return;
+		}
+		this.options.arrowStyle = newStyle;
+		if ( this.arrowMesh === undefined ) {
+			return; // 没启用箭头，等开启时再用新 style 建。
+		}
+		// 只换材质，几何复用。
+		this.arrowMaterial?.dispose();
+		this.arrowMaterial = createArrowHeadMaterial(
+			this.uniforms,
+			this.options.debugVolume,
+			newStyle === 'open',
+		);
+		this.arrowMesh.material = this.arrowMaterial;
+	}
+
+	/**
+	 * 独立给箭头改色（设过之后 `setColor` 改线色不再波及箭头）。
+	 *
+	 * @param color   '#rrggbb' / css 颜色。
+	 * @param opacity 0..100 百分比。缺省沿用线 strokeOpacity。
+	 */
+	public setArrowColor( color: string, opacity?: number ): void {
+		this.arrowColorExplicit = true;
+		const safeOpacity = Number.isFinite( opacity )
+			? ( opacity as number )
+			: this.options.strokeOpacity;
+		const parsed = parseLineColor( color, safeOpacity );
+		( this.uniforms.u_arrowColor as { value: Vector4 } ).value.set(
+			parsed.color.r, parsed.color.g, parsed.color.b, parsed.alpha,
+		);
+		this.options.arrowColor = color;
+		this.options.arrowOpacity = safeOpacity;
+	}
+
+	/**
+	 * 改箭头屏幕像素尺寸（沿线长 + 基底全宽）。world 模式用 `setArrowSizeMeters`。
+	 *
+	 * @param lengthPixels 沿线长（屏幕像素）。
+	 * @param widthPixels  基底全宽（屏幕像素）。
+	 */
+	public setArrowSize( lengthPixels: number, widthPixels: number ): void {
+		( this.uniforms.u_arrowLengthPixels as { value: number } ).value = lengthPixels;
+		( this.uniforms.u_arrowHalfWidthPixels as { value: number } ).value = widthPixels * 0.5;
+		this.options.arrowLengthPixels = lengthPixels;
+		this.options.arrowWidthPixels = widthPixels;
+	}
+
+	/**
+	 * 改箭头世界米尺寸（仅在 u_arrowWidthMode=1 时生效）。
+	 *
+	 * @param lengthMeters 沿线长（米）。
+	 * @param widthMeters  基底全宽（米）。
+	 */
+	public setArrowSizeMeters( lengthMeters: number, widthMeters: number ): void {
+		( this.uniforms.u_arrowLengthMeters as { value: number } ).value = lengthMeters;
+		( this.uniforms.u_arrowHalfWidthMeters as { value: number } ).value = widthMeters * 0.5;
+		this.options.arrowLengthMeters = lengthMeters;
+		this.options.arrowWidthMeters = widthMeters;
+	}
+
+	/** 释放 geometry / material（共享深度纹理由 CesiumGlobeDepth 管理，不动）。 */
+	public dispose(): void {
+		if ( this.disposed ) {
+			return;
+		}
+		this.disposeArrowMesh();
+		this._group.remove( this.mesh );
+		this.geometry.dispose();
+		this.material.dispose();
+		this.disposed = true;
+	}
+}
+
+/**
+ * 构造 polyline 专用 uniform map。除了 `czm_*` 共享键和 `u_color` 之外，
+ * 还含 9 个线专属键（czm_projection / czm_pixelRatio / 4 个线宽 / 4 个虚线）。
+ * 面图元用到的所有 u_polygon* / u_circle* / extents 用占位值——polyline FS
+ * 不读这些字段，但 prefix 里的 `uniform` 声明仍存在（inactive），写占位值
+ * 既不影响编译也不影响其它材质。
+ */
+function createPolylineUniforms(
+	color: Color,
+	alpha: number,
+	options: ResolvedLineOptions,
+	length3D: number,
+): SharedUniforms {
+	const safeAlpha = Math.min( Math.max( alpha, 0.0 ), 1.0 );
+
+	return {
+		// Float64 + RTE 每帧刷新（与面图元一致）。
+		czm_encodedCameraPositionMCHigh: { value: new Vector3() },
+		czm_encodedCameraPositionMCLow: { value: new Vector3() },
+		czm_modelViewRelativeToEye: { value: new Matrix4() },
+		czm_modelViewProjectionRelativeToEye: { value: new Matrix4() },
+		czm_normal: { value: new Matrix3() },
+		czm_geometricToleranceOverMeter: { value: 0.0 },
+		czm_sceneMode: { value: 3.0 },
+
+		// 占位字段（polyline 不读，但与共享 SharedUniforms 接口保持兼容）
+		u_globeMinimumAltitude: { value: CESIUM_GLOBE_MINIMUM_ALTITUDE },
+		u_southWest_HIGH: { value: new Vector3() },
+		u_southWest_LOW: { value: new Vector3() },
+		u_eastward: { value: new Vector3() },
+		u_northward: { value: new Vector3() },
+		u_uvMinAndExtents: { value: new Vector4() },
+		u_uMaxVmax: { value: new Vector4() },
+		u_color: { value: new Vector4( color.r, color.g, color.b, safeAlpha ) },
+		u_borderColor: { value: new Vector4( 1.0, 1.0, 1.0, 1.0 ) },
+		u_borderEnabled: { value: 0.0 },
+		u_borderWidthMeters: { value: 0.0 },
+		u_innerMetersRect: { value: new Vector4() },
+		u_cpuWestPlane: { value: new Vector4( 1.0, 0.0, 0.0, 0.0 ) },
+		u_cpuSouthPlane: { value: new Vector4( 0.0, 1.0, 0.0, 0.0 ) },
+		u_polygonBorderMode: { value: 0.0 },
+		u_polygonMiterStrokeMode: { value: 0.0 },
+		u_polygonPointCount: { value: 0.0 },
+		u_polygonPoints: { value: [ new Vector2() ] },
+		u_circleBorderMode: { value: 0.0 },
+		u_circleCenterMeters: { value: new Vector2() },
+		u_circleFillRadiusMeters: { value: 0.0 },
+		u_circleRenderRadiusMeters: { value: 0.0 },
+		u_circleRingCount: { value: 1.0 },
+		u_circleRingGapMeters: { value: 0.0 },
+		u_circleSectorStartRadians: { value: 0.0 },
+		u_circleSectorAngleRadians: { value: Math.PI * 2.0 },
+
+		// 共享每帧量
+		czm_globeDepthTexture: { value: null },
+		czm_viewport: { value: new Vector4( 0.0, 0.0, 1.0, 1.0 ) },
+		czm_inverseProjection: { value: new Matrix4() },
+		czm_viewportTransformation: { value: new Matrix4() },
+		czm_frustumPlanes: { value: new Vector4() },
+		czm_currentFrustum: { value: new Vector3() },
+		czm_farDepthFromNearPlusOne: { value: 1.0 },
+		czm_log2FarDepthFromNearPlusOne: { value: 1.0 },
+		czm_oneOverLog2FarDepthFromNearPlusOne: { value: 1.0 },
+		u_textTexture: { value: null },
+
+		// ── 贴地线扩展 9 件套 ──
+		czm_projection: { value: new Matrix4() },
+		czm_pixelRatio: { value: 1.0 },
+		u_lineWidthPixels: { value: options.widthPixels ?? LINE_DEFAULT_WIDTH_PIXELS },
+		u_lineWidthMode: { value: options.widthMode === LineWidthMode.WORLD ? 1.0 : 0.0 },
+		u_lineWidthMeters: { value: options.widthMeters },
+		u_lineDashEnabled: { value: options.dashEnabled ? 1.0 : 0.0 },
+		u_lineDashLengthMeters: { value: options.dashLengthMeters },
+		u_lineGapLengthMeters: { value: options.gapLengthMeters },
+		u_lineTotalMeters: { value: length3D },
+
+		// ── 线端箭头 7 件套（线材质里这些 uniform 是 inactive，无副作用） ──
+		u_arrowWidthMode: { value: 0.0 },   // 始终用屏幕像素恒定，与线宽屏宽语义一致
+		u_arrowLengthPixels: { value: options.arrowLengthPixels },
+		u_arrowHalfWidthPixels: { value: options.arrowWidthPixels * 0.5 },
+		u_arrowLengthMeters: { value: options.arrowLengthMeters },
+		u_arrowHalfWidthMeters: { value: options.arrowWidthMeters * 0.5 },
+		u_arrowColor: { value: new Vector4( color.r, color.g, color.b, safeAlpha ) },
+		u_arrowStrokeHalfPixels: { value: options.arrowStrokeWidthPixels * 0.5 },
+	} as unknown as SharedUniforms;
 }

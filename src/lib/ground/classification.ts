@@ -346,10 +346,16 @@ function updateCpuPlanarUniforms(
  * Updates Cesium automatic uniforms for this frame, including the LOG_DEPTH
  * uniforms required by the shadow-volume vertex and fragment shaders.
  *
+ * Exported so the ground-polyline primitive (which lives outside the
+ * stencil command group) can share the same per-frame uniform pipeline.
+ * Polylines opt in to extra fields (`czm_projection`, `czm_pixelRatio`) by
+ * declaring them in their uniform map; guarded writes below leave the
+ * stencil/color/text materials untouched.
+ *
  * @param frameState Current Three-side frame state.
  * @param uniforms Shared material uniforms updated in place.
  */
-function updateFrameStateUniforms( frameState: CesiumGroundFrameState, uniforms: SharedUniforms ): void {
+export function updateFrameStateUniforms( frameState: CesiumGroundFrameState, uniforms: SharedUniforms ): void {
 	const camera = frameState.camera;
 	const quaternion = camera.quaternion;
 
@@ -413,6 +419,19 @@ function updateFrameStateUniforms( frameState: CesiumGroundFrameState, uniforms:
 	const pixelSizePerMeter = ( Math.tan( 0.5 * fovRad ) * 2.0 ) / viewportSize;
 	uniforms.czm_geometricToleranceOverMeter.value =
 		pixelSizePerMeter * CESIUM_MAXIMUM_SCREEN_SPACE_ERROR;
+
+	// ── 贴地线扩展（guard 式写入：面图元的 uniform map 不含这两键
+	//    → 守卫跳过；线图元的 uniform map 含这两键 → 每帧刷新）──
+	// `czm_projection`：纯投影矩阵（Float64 算后落 Three Matrix4）。线 VS
+	// 需要「EC 内挤出 → 再投影」，所以除了 mvp 还要单独提供 projection。
+	if ( uniforms.czm_projection !== undefined ) {
+		( uniforms.czm_projection.value as Matrix4 ).fromArray( projectionFloat64 );
+	}
+	// `czm_pixelRatio`：metersPerPixel 内部要乘它，HiDPI 必须正确填。
+	if ( uniforms.czm_pixelRatio !== undefined ) {
+		( uniforms.czm_pixelRatio as { value: number } ).value =
+			frameState.pixelRatio !== undefined ? frameState.pixelRatio : 1.0;
+	}
 }
 
 /**

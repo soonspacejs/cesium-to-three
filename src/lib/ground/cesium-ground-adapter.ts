@@ -20,6 +20,7 @@ export {
 	CesiumGroundCirclePrimitive,
 	CesiumGroundPointPrimitive,
 	CesiumGroundPolygonPrimitive,
+	CesiumGroundPolylinePrimitive,
 	CesiumGroundRectanglePrimitive,
 } from './primitives';
 
