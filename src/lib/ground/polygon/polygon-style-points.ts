@@ -128,20 +128,20 @@ export function computePolygonPlanarStylePoints(
 	renderHierarchy: PolygonHierarchy,
 	fillPoints: readonly LonLatPoint[],
 ): Vector2[] {
-	// Step 1 · center → ENU 矩阵 + 逆矩阵
+	// 步骤 1 · center → ENU 矩阵 + 逆矩阵
 	rectangleCenter( polygonRectangle, _styleCenterCarto );
 	_styleCenterCarto.height = 0.0;
 	cartographicToCartesian( _styleCenterCarto, _styleCenterCartesian );
 	eastNorthUpToFixedFrame( _styleCenterCartesian, _styleEnuMatrix );
 	_styleInverseEnu.copy( _styleEnuMatrix ).invert();
 
-	// Step 2 · render hierarchy 的 ENU 平面 AABB
+	// 步骤 2 · render hierarchy 的 ENU 平面 AABB
 	const renderBounds = computeRenderPlanarBounds(
 		renderHierarchy,
 		_styleInverseEnu,
 	);
 
-	// Step 3 · 对每个 fill 顶点:lon/lat → ECEF → ENU → 相对 SW 偏移
+	// 步骤 3 · 对每个 fill 顶点:lon/lat → ECEF → ENU → 相对 SW 偏移
 	const result: Vector2[] = new Array( fillPoints.length );
 	for ( let i = 0; i < fillPoints.length; i++ ) {
 		const point = fillPoints[ i ];

@@ -371,12 +371,10 @@ function _pointOnEllipsoid(
 void _pointOnEllipsoid;
 
 /**
- * Builds one CPU Float64 circle point from local WGS84 ENU meter offsets.
+ * 根据局部 WGS84 ENU 米制偏移构建一个 CPU Float64 圆点。
  *
- * Unlike Cesium's geocentric rotation helper above, this function treats the
- * requested radius as a true local east/north meter distance before the point
- * is uploaded to the GPU. The output is still ECEF world space, but the source
- * of truth is the local 2-D circle.
+ * 与上方 Cesium 地心旋转辅助函数不同,本函数在点上传到 GPU 前,把请求半径视为
+ * 真实局部 east/north 米制距离。输出仍是 ECEF 世界空间,但事实来源是局部 2D 圆。
  */
 function _pointOnLocalEnuCircle(
 	theta: number,
@@ -481,9 +479,8 @@ export function computeCircleFillPositions(
 	let eastVec = _cartesianCross( _UNIT_Z as unknown as Vector3, center, _eastVecScratch );
 	eastVec = _cartesianNormalize( eastVec, eastVec );
 
-	// northVec = geodetic up × eastVec. This is the true local WGS84 ENU
-	// north axis; using geocentric center/magnitude subtly tilts the meter
-	// frame on an ellipsoid and is visible in the 1:1 circle test.
+	// northVec = geodetic up × eastVec。这是真正的局部 WGS84 ENU 北轴;
+	// 如果使用地心 center/magnitude,米制框架会在椭球体上轻微倾斜,在 1:1 圆测试中可见。
 	const northVec = _cartesianCross( upVec, eastVec, _northVecScratch );
 
 	// ============================================================

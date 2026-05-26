@@ -71,16 +71,16 @@ export interface ExtrudedCircleResult {
  * 7 步算法(逐字对齐 Cesium computeExtrudedEllipse L746-839,
  * 跳过 BoundingSphere 因为本期 BufferGeometry 不消费):
  *
- *   Step 1 · computeEllipsePositions(addFill=true, addEdge=true)
- *   Step 2 · computeTopBottomAttributes(fill.positions, options, extrude=true)
- *   Step 3 · topIndices(numPts)                                 ← top 索引模板
- *   Step 4 · 镜像 bottom 索引:winding 反转 (i, i+1, i+2 → i+2, i+1, i)
+ *   步骤 1 · computeEllipsePositions(addFill=true, addEdge=true)
+ *   步骤 2 · computeTopBottomAttributes(fill.positions, options, extrude=true)
+ *   步骤 3 · topIndices(numPts)                                 ← top 索引模板
+ *   步骤 4 · 镜像 bottom 索引:winding 反转 (i, i+1, i+2 → i+2, i+1, i)
  *           + 偏移 posLength(= fill.positions.length / 3)
  *           → topBottomIndices = createTypedArray((posLength × 2) / 3, indices)
- *   Step 5 · computeWallAttributes(fill.outerPositions, options)
- *   Step 6 · computeWallIndices(fill.outerPositions)            ← 墙索引模板
+ *   步骤 5 · computeWallAttributes(fill.outerPositions, options)
+ *   步骤 6 · computeWallIndices(fill.outerPositions)            ← 墙索引模板
  *           → wallIndices = createTypedArray((outer.length × 2) / 3, wallIdx)
- *   Step 7 · combineInstances:positions / extrudeDirection 数组拼接;
+ *   步骤 7 · combineInstances:positions / extrudeDirection 数组拼接;
  *           wall 索引 += topBottomVertexCount
  *
  * @param centerECEF    已 scaleToGeodeticSurface 的 center(由 caller 保证)。
@@ -100,7 +100,7 @@ export function constructExtrudedCircleShadowVolume(
 	maximumHeight: number,
 ): ExtrudedCircleResult {
 	// ============================================================
-	// Step 1 · fill 网格 + 外圈点
+	// 步骤 1 · fill 网格 + 外圈点
 	// ============================================================
 	const fill = computeCircleFillPositions(
 		centerECEF, radius, granularity, rotation,
@@ -110,7 +110,7 @@ export function constructExtrudedCircleShadowVolume(
 	// fill.numPts:经 if-branch 兜底后的环数
 
 	// ============================================================
-	// Step 2 · top/bot 顶点 + extrudeDirection(segregated)
+	// 步骤 2 · top/bot 顶点 + extrudeDirection(segregated)
 	// ============================================================
 	const topBottom = computeTopBottomAttributes(
 		fill.positions, maximumHeight, minimumHeight,
@@ -120,17 +120,17 @@ export function constructExtrudedCircleShadowVolume(
 
 	const topBottomVertexCount = topBottom.positions.length / 3;
 	// posLength 是 Cesium 局部变量名,= fill.positions.length / 3 = fillVertexCount。
-	// 用于 Step 4 的 bottom 索引偏移。
+	// 用于步骤 4 的 bottom 索引偏移。
 	const posLength = fill.positions.length / 3;
 
 	// ============================================================
-	// Step 3 · top 索引
+	// 步骤 3 · top 索引
 	// ============================================================
 	const topIndicesArray = computeTopIndices( fill.numPts );
 	// topIndicesArray:number[],长度 = 12 × numPts × (numPts + 1) − 6
 
 	// ============================================================
-	// Step 4 · 镜像 bottom 索引 + 拼成 topBottomIndices typed array
+	// 步骤 4 · 镜像 bottom 索引 + 拼成 topBottomIndices typed array
 	//
 	// Cesium L791-799 逐字:
 	//   const length = indices.length;
@@ -178,7 +178,7 @@ export function constructExtrudedCircleShadowVolume(
 	}
 
 	// ============================================================
-	// Step 5 · 墙顶点 + extrudeDirection(segregated)
+	// 步骤 5 · 墙顶点 + extrudeDirection(segregated)
 	// ============================================================
 	const wall = computeWallAttributes(
 		fill.outerPositions, maximumHeight, minimumHeight,
@@ -186,13 +186,13 @@ export function constructExtrudedCircleShadowVolume(
 	const wallVertexCount = wall.positions.length / 3;
 
 	// ============================================================
-	// Step 6 · 墙索引(Cesium computeWallIndices)
+	// 步骤 6 · 墙索引(Cesium computeWallIndices)
 	// ============================================================
 	// computeWallIndices 内部已通过 createIndexTypedArray 选好 Uint16/32 类型。
 	const wallIndices = computeWallIndices( fill.outerPositions.length );
 
 	// ============================================================
-	// Step 7 · combineInstances 复刻(positions / extrudeDirection / indices 合并)
+	// 步骤 7 · combineInstances 复刻(positions / extrudeDirection / indices 合并)
 	//
 	// Cesium GeometryPipeline.combineInstances 的语义:
 	//   - 对每个 attribute name,把每个 instance 的 values 数组按顺序 concat

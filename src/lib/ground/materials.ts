@@ -1,11 +1,10 @@
 // ============================================================
 // materials.ts
-// Layer: Cesium-to-Three ground shader/material bridge.
-// Role: translate Cesium GroundPrimitive shader snippets into Three
-//       RawShaderMaterial instances while preserving Cesium stencil/color
-//       command semantics, including the Cesium LOG_DEPTH path.
-// Dependencies: Three.js material state and unmodified Cesium GLSL sources.
-// Consumed by: classification.ts and depth.ts.
+// 层级:Cesium-to-Three 贴地 shader/material 桥接层。
+// 职责:把 Cesium GroundPrimitive 着色器片段转换成 Three RawShaderMaterial,
+//       同时保留 Cesium stencil/color 命令语义,包括 Cesium LOG_DEPTH 路径。
+// 依赖:Three.js 材质状态与未改动的 Cesium GLSL 源码。
+// 被消费:classification.ts 与 depth.ts。
 // ============================================================
 
 import {
@@ -58,57 +57,44 @@ function asThreeUniforms( uniforms: SharedUniforms ): { [ k: string ]: IUniform 
 	return uniforms as unknown as { [ k: string ]: IUniform };
 }
 
-// Three.js's RawShaderMaterial does not run Cesium ShaderSource's automatic
-// LOG_DEPTH wrapping (which adds czm_vertexLogDepth() / czm_writeLogDepth()
-// calls to main()). We replicate that injection manually below. The
-// `LOG_DEPTH` define controls whether the gl_FragDepth path is active in
-// both the GLSL source and the matching Three render state.
+// Three.js 的 RawShaderMaterial 不会执行 Cesium ShaderSource 的自动
+// LOG_DEPTH 包装(也就是向 main() 添加 czm_vertexLogDepth() /
+// czm_writeLogDepth() 调用)。下面手动复刻这段注入逻辑。`LOG_DEPTH`
+// define 同时控制 GLSL 源码与对应 Three 渲染状态中的 gl_FragDepth 路径。
 const ENABLE_LOG_DEPTH = true;
 
 /**
- * Cesium-equivalent log-depth helpers expressed in GLSL3. Behaviour matches
- * the stock Cesium snippets byte-for-byte in the parts that affect the
- * Z-fail stencil shadow volume pipeline:
+ * 用 GLSL3 表达的 Cesium 等价对数深度辅助代码。对影响 Z-fail stencil
+ * 阴影体管线的部分,行为与 Cesium 原始片段逐字节对齐:
  *
- * - `czm_vertexLogDepth()` writes `v_depthFromNearPlusOne` and clamps
- *   `gl_Position.z` to `[-w, w]` so a vertex that landed outside that
- *   range due to log-depth precision still reaches the fragment shader
- *   (emulates GL_DEPTH_CLAMP for the vertex stage; matches
- *   {@link czm_updatePositionDepth} in Cesium's vertexLogDepth.glsl).
+ * - `czm_vertexLogDepth()` 写入 `v_depthFromNearPlusOne`,并把
+ *   `gl_Position.z` clamp 到 `[-w, w]`,让因对数深度精度落到范围外的顶点
+ *   仍能进入片元着色器(在顶点阶段模拟 GL_DEPTH_CLAMP;对齐 Cesium
+ *   vertexLogDepth.glsl 中的 {@link czm_updatePositionDepth})。
  *
- * - `czm_writeLogDepth()` uses Cesium's `log2(depth) /
- *   log2(czm_farDepthFromNearPlusOne)` formula and **discards** fragments
- *   outside the frustum. This is **the critical bit** for shadow volumes:
- *   a previous revision of this file clamped to `gl_FragDepth = 0.0` /
- *   `1.0` instead, with a comment claiming it kept stencil counts intact
- *   under a single frustum. That reasoning was wrong:
- *     - A *back* face that crosses the far plane, clamped to
- *       `gl_FragDepth = 1.0`, **fails** the LessEqual depth test
- *       (`1.0 > terrain_depth`) and runs `stencilZFail = INCR_WRAP`. That
- *       contributes an extra +1 to the stencil for the pixel.
- *     - A *front* face that crosses the far plane gives the symmetric
- *       extra -1 (DECR_WRAP).
- *     - The two only cancel when both faces project onto the same pixel.
- *       For a shadow-volume box clipped asymmetrically by the far plane
- *       (the far-camera side of the box past the plane, the near-camera
- *       side still in-frustum), some terrain pixels are only touched by
- *       the clipped face's stray ±1, while other pixels see only the
- *       in-frustum face's normal contribution. The mismatch leaves a
- *       visible curved band where the stencil net flips between
- *       "inside" and "outside" the volume — exactly the artefact
- *       observed when the arrow primitives' tall shadow volumes started
- *       getting clipped by `camera.far = horizonDistance + 0.1`.
+ * - `czm_writeLogDepth()` 使用 Cesium 的 `log2(depth) /
+ *   log2(czm_farDepthFromNearPlusOne)` 公式,并 **discard** 视锥外片元。
+ *   这是阴影体正确性的关键:此文件早期版本曾改为 clamp 到
+ *   `gl_FragDepth = 0.0` / `1.0`,并认为单视锥下 stencil 计数仍会保持
+ *   完整。这个推理是错的:
+ *     - 穿过远平面的 *back* face 被 clamp 到 `gl_FragDepth = 1.0` 后,
+ *       会 **失败** LessEqual 深度测试(`1.0 > terrain_depth`),于是执行
+ *       `stencilZFail = INCR_WRAP`,给该像素额外贡献 +1。
+ *     - 穿过远平面的 *front* face 会对称地产生额外 -1(DECR_WRAP)。
+ *     - 只有两面投影到同一像素时二者才会抵消。对于被远平面非对称裁剪的
+ *       阴影体盒(远离相机的一侧越过远平面,靠近相机的一侧仍在视锥内),
+ *       某些地形像素只受到被裁剪面的游离 ±1 影响,另一些像素只看到视锥内
+ *       面的正常贡献。这种不匹配会留下可见弧带,让 stencil 净值在体积
+ *       "内部" 与 "外部" 之间翻转;这正是箭头图元高阴影体开始被
+ *       `camera.far = horizonDistance + 0.1` 裁剪时观察到的伪影。
  *
- *   Cesium's discard avoids this entirely: the clipped face simply
- *   doesn't write to the stencil at all, so it neither over- nor
- *   under-counts.
+ *   Cesium 的 discard 会完全避开这个问题:被裁剪面根本不写 stencil,
+ *   因此既不会多计也不会少计。
  *
- * - **Terrain log-depth** in `terrain-log-depth.ts` still uses the
- *   clamp-to-0/1 form on purpose: terrain has no stencil pass, and the
- *   clamp prevents log-depth precision rounding from accidentally
- *   discarding terrain that *just barely* oversteps the frustum (the
- *   original justification for clamping). The shadow-volume stencil
- *   pass has a stricter correctness requirement and must discard.
+ * - `terrain-log-depth.ts` 中的 **地形 log-depth** 仍有意使用 clamp-to-0/1
+ *   形式:地形没有 stencil pass,clamp 可避免对数深度精度舍入意外丢弃那些
+ *   *刚刚* 越过视锥的地形片元(这是 clamp 的原始理由)。阴影体 stencil
+ *   pass 对正确性要求更严格,必须 discard。
  */
 const LOG_DEPTH_VERTEX_HELPERS = /* glsl */ `
 #ifdef LOG_DEPTH
@@ -126,12 +112,9 @@ const LOG_DEPTH_FRAGMENT_HELPERS = /* glsl */ `
 in float v_depthFromNearPlusOne;
 
 void czm_writeLogDepth( float depth ) {
-	// Match Cesium writeLogDepth.glsl exactly: drop the fragment when its
-	// log-depth value sits past the near or far plane. For shadow-volume
-	// stencil correctness we'd rather miss a fragment entirely (= zero
-	// contribution to the +1/-1 stencil tally) than synthesize a
-	// fake-far-plane fragment that always depth-fails and feeds a
-	// phantom DECR_WRAP / INCR_WRAP into the stencil.
+	// 精确匹配 Cesium writeLogDepth.glsl:当 log-depth 值越过近/远平面时丢弃片元。
+	// 为了阴影体 stencil 正确性,宁可完全漏掉一个片元(对 +1/-1 stencil 计数贡献为 0),
+	// 也不能合成一个必定深度失败的伪远平面片元,再把虚假的 DECR_WRAP / INCR_WRAP 写进 stencil。
 	if ( depth <= 0.9999999 || depth > czm_farDepthFromNearPlusOne ) {
 		discard;
 	}
@@ -145,14 +128,14 @@ void czm_writeLogDepth() {
 `;
 
 /**
- * Wraps a shader's `main()` into a renamed inner function and replaces it
- * with a new `main()` that calls the inner function then runs `appended`.
- * Mirrors Cesium ShaderSource.replaceMain + DerivedCommand log depth wrap.
+ * 把 shader 的 `main()` 包装成重命名的内部函数,再替换为新的 `main()`:
+ * 先调用内部函数,再执行 `appended`。复刻 Cesium ShaderSource.replaceMain
+ * 与 DerivedCommand 对数深度包装。
  *
- * @param source GLSL source containing exactly one `void main()` definition.
- * @param innerName Replacement name for the original `main()` body.
- * @param appended GLSL statements injected after the original main runs.
- * @returns Wrapped GLSL with a new `void main()` calling the renamed body.
+ * @param source 包含且仅包含一个 `void main()` 定义的 GLSL 源码。
+ * @param innerName 原 `main()` 函数体的替换名称。
+ * @param appended 原 main 执行后注入的 GLSL 语句。
+ * @returns 包装后的 GLSL,新的 `void main()` 会调用被重命名的函数体。
  */
 function wrapShaderMain( source: string, innerName: string, appended: string ): string {
 	const pattern = /void\s+main\s*\(\s*(?:void\s*)?\)/;
@@ -170,11 +153,11 @@ void main() {
 }
 
 /**
- * Creates the vertex prefix that supplies Cesium automatic uniforms, batch
- * table hooks, and LOG_DEPTH helpers to the shadow-volume vertex shader.
+ * 创建顶点前缀,向阴影体顶点着色器提供 Cesium 自动 uniform、batch table
+ * hook 与 LOG_DEPTH 辅助函数。
  *
- * @param defines GLSL defines to prepend exactly as Cesium ShaderSource would.
- * @returns GLSL source prefix.
+ * @param defines 像 Cesium ShaderSource 一样前置的 GLSL define。
+ * @returns GLSL 源码前缀。
  */
 function createVertexPrefix( defines: readonly string[] ): string {
 	const defineSource = defines.map( define => `#define ${ define }` ).join( '\n' );
@@ -281,10 +264,10 @@ uniform vec4  u_arrowColor;
 }
 
 /**
- * Creates the fragment prefix for Cesium shadow-volume color or stencil shaders.
+ * 为 Cesium 阴影体 color 或 stencil 着色器创建片元前缀。
  *
- * @param defines GLSL defines to prepend exactly as Cesium ShaderSource would.
- * @returns GLSL source prefix.
+ * @param defines 像 Cesium ShaderSource 一样前置的 GLSL define。
+ * @returns GLSL 源码前缀。
  */
 function createFragmentPrefix( defines: readonly string[] ): string {
 	const defineSource = defines.map( define => `#define ${ define }` ).join( '\n' );
@@ -351,17 +334,14 @@ float czm_lineDistance(vec2 point1, vec2 point2, vec2 point) {
 	return abs((point2.y - point1.y) * point.x - (point2.x - point1.x) * point.y + point2.x * point1.y - point2.y * point1.x) / distance(point2, point1);
 }
 
-// Wraps an angle into [0, 2π) so circle sector tests can compare a
-// fragment's azimuth against the configured start without sign confusion.
+// 把角度包装到 [0, 2π),让圆扇区测试比较片元方位角与配置起点时不会受符号干扰。
 float c23_wrappedPositiveAngle(float radians) {
 	float wrapped = mod(radians, czm_twoPi);
 	return wrapped < 0.0 ? wrapped + czm_twoPi : wrapped;
 }
 
-// Even-odd ray-casting point-in-polygon test against the planar-meter fill
-// vertices supplied via setPolygonBorderPoints. Iterating up to
-// MAX_POLYGON_STYLE_VERTICES with an early break keeps the loop bounded for
-// older WebGL drivers that disallow non-constant loop bounds.
+// 对 setPolygonBorderPoints 提供的平面米制填充顶点执行奇偶射线法点在多边形内测试。
+// 循环最多跑到 MAX_POLYGON_STYLE_VERTICES 并提前 break,可兼容不允许非常量循环边界的旧 WebGL 驱动。
 bool c23_pointInsidePolygon(vec2 point) {
 	bool inside = false;
 	int count = int(u_polygonPointCount);
@@ -453,13 +433,12 @@ uniform float u_arrowStrokeHalfPixels;  // open 样式：斜边笔宽（像素�
 }
 
 /**
- * Creates a shader that packs gl_FragCoord.z with Cesium czm_packDepth in
- * non-log-depth mode, or packs the Cesium log-depth value when LOG_DEPTH is
- * active. Either way, the result mirrors what czm_unpackDepth in
- * ShadowVolumeAppearanceFS expects, so czm_screenToEyeCoordinates can rebuild
- * eye coordinates correctly inside the color command's fragment shader.
+ * 创建深度打包 shader:非 log-depth 模式下用 Cesium czm_packDepth 打包
+ * gl_FragCoord.z;启用 LOG_DEPTH 时打包 Cesium 对数深度值。两种情况下结果都
+ * 对齐 ShadowVolumeAppearanceFS 中 czm_unpackDepth 的预期,让 color 命令的
+ * 片元着色器能通过 czm_screenToEyeCoordinates 正确重建 eye 坐标。
  *
- * @returns RawShaderMaterial used by the globe depth pass.
+ * @returns globe depth pass 使用的 RawShaderMaterial。
  */
 export function createPackDepthMaterial(): RawShaderMaterial {
 	const defines = ENABLE_LOG_DEPTH ? [ 'LOG_DEPTH' ] : [];
@@ -507,30 +486,23 @@ uniform float czm_farDepthFromNearPlusOne;
 uniform float czm_oneOverLog2FarDepthFromNearPlusOne;
 #endif
 
-// Globe-depth pack pass: discards out-of-frustum terrain fragments so the
-// packed-color render target stays at its cleared sentinel (0,0,0,0)
-// (set in depth.ts via setClearColor(0x000000, 0.0), matching Cesium's
-// GlobeDepth.js:226 Color(0,0,0,0) clear).
+// 地球深度打包 pass:丢弃视锥外地形片元,让 packed-color render target
+// 保持清屏哨兵值 (0,0,0,0)(在 depth.ts 中通过 setClearColor(0x000000, 0.0)
+// 设置,对齐 Cesium GlobeDepth.js:226 的 Color(0,0,0,0) clear)。
 //
-// Why discard instead of clamping to 0.0 / 1.0:
-//   The classification color pass reads this packed depth and reconstructs
-//   the terrain world position via czm_unpackDepth + czm_windowToEye-
-//   Coordinates. The Cesium ShadowVolumeAppearanceFS CULL_FRAGMENTS branch
-//   only honours ONE sentinel (logDepthOrDepth == 0.0) to mean "no terrain
-//   here, skip". Past-far-plane fragments written as 1.0 sneak past that
-//   check and feed czm_windowToEyeCoordinates(fragCoord, 1.0) - a fake
-//   position parked AT the far plane in the camera's view direction. The
-//   shape-specific bounds test then runs on that fake uv:
-//     - Circle's radius test happens to discard for far-away fake positions
-//       (rotationally symmetric, robust)
-//     - Polygon's point-in-polygon and rectangle's axis-aligned-bbox tests
-//       can give either result depending on where camera-forward points,
-//       which produces a wrong fill outline along the camera-far-plane ×
-//       ellipsoid curve.
+// 为什么 discard 而不是 clamp 到 0.0 / 1.0:
+//   classification color pass 会读取这个打包深度,并通过 czm_unpackDepth +
+//   czm_windowToEyeCoordinates 重建地形世界位置。Cesium ShadowVolumeAppearanceFS
+//   的 CULL_FRAGMENTS 分支只认可一个哨兵值(logDepthOrDepth == 0.0)表示
+//   "这里没有地形,跳过"。如果把远平面外片元写成 1.0,它会绕过该检查,并喂给
+//   czm_windowToEyeCoordinates(fragCoord, 1.0) 一个伪位置:正好停在相机视线
+//   方向上的远平面处。之后形状专用边界测试会在这个假 uv 上运行:
+//     - 圆的半径测试通常会丢弃远处假位置(旋转对称,较稳健)。
+//     - 多边形的点内测试与矩形的轴对齐 bbox 测试会随 camera-forward 指向不同
+//       得到不同结果,从而沿 camera-far-plane × ellipsoid 曲线产生错误填充轮廓。
 //
-//   Cesium-style discard keeps the packed-color at cleared-0 so the same
-//   CULL_FRAGMENTS check catches both "no terrain" AND "terrain past
-//   frustum" with one branch, no shape-specific tuning needed.
+//   Cesium 风格的 discard 会让 packed-color 保持清屏后的 0,于是同一个
+//   CULL_FRAGMENTS 分支可以同时捕获 "无地形" 和 "地形越过视锥",不需要按形状调参。
 void main() {
 #ifdef LOG_DEPTH
 	float depth = v_depthFromNearPlusOne;
@@ -554,13 +526,12 @@ void main() {
 }
 
 /**
- * Injects adapter-side border styling into Cesium's per-instance color branch.
+ * 向 Cesium per-instance color 分支注入适配层边框样式。
  *
- * Geometry generation, stencil updates, and globe-depth classification still
- * use Cesium's shadow volume. The border is a material style computed from the
- * local meter coordinates reconstructed from Cesium's planar uv.
+ * 几何生成、stencil 更新与 globe-depth 分类仍使用 Cesium 阴影体。边框只是
+ * 材质样式,基于 Cesium planar uv 重建出的局部米制坐标计算。
  *
- * @returns ShadowVolumeAppearanceFS with one Three-side border style hook.
+ * @returns 插入了一个 Three 侧边框样式 hook 的 ShadowVolumeAppearanceFS。
  */
 function createColorFragmentBody(): string {
 	const colorDeclaration = '    vec4 color = czm_gammaCorrect(v_color);';
@@ -701,8 +672,8 @@ function combineDefines( ...lists: readonly ( string | undefined )[][] ): string
 }
 
 /**
- * Wraps the Cesium shadow-volume vertex source with the LOG_DEPTH main()
- * postlude so czm_vertexLogDepth() runs after gl_Position is finalized.
+ * 用 LOG_DEPTH main() 后处理包装 Cesium 阴影体顶点源码,确保
+ * czm_vertexLogDepth() 在 gl_Position 最终确定后执行。
  */
 function buildStencilVertexShader(): string {
 	const innerName = 'czm_shadow_volume_stencil_main_vs';
@@ -742,13 +713,13 @@ function buildColorFragmentShader(): string {
 }
 
 /**
- * Creates one face-specific material for Cesium's stencil-depth command.
+ * 为 Cesium stencil-depth 命令创建一个面向特定面的材质。
  *
- * @param uniforms Shared uniforms for all classification commands.
- * @param side Three side selection matching the Cesium front/back command.
- * @param stencilZFail Stencil operation executed when depth test fails.
- * @param name Material debug name.
- * @returns RawShaderMaterial matching one half of Cesium's z-fail command.
+ * @param uniforms 所有 classification 命令共享的 uniforms。
+ * @param side 与 Cesium front/back 命令匹配的 Three 面选择。
+ * @param stencilZFail 深度测试失败时执行的 stencil 操作。
+ * @param name 材质调试名称。
+ * @returns 匹配 Cesium z-fail 命令半边的 RawShaderMaterial。
  */
 export function createStencilMaterial(
 	uniforms: SharedUniforms,
@@ -769,9 +740,8 @@ export function createStencilMaterial(
 		colorWrite: false,
 		depthWrite: false,
 		depthTest: true,
-		// Cesium getStencilDepthRenderState uses DepthFunction.LESS_OR_EQUAL.
-		// Three.js defaults to LessDepth, which silently drops the stencil
-		// op whenever the shadow volume face coincides with terrain depth.
+		// Cesium getStencilDepthRenderState 使用 DepthFunction.LESS_OR_EQUAL。
+		// Three.js 默认是 LessDepth,当阴影体面与地形深度重合时会静默丢掉 stencil 操作。
 		depthFunc: LessEqualDepth,
 		stencilWrite: true,
 		stencilFunc: AlwaysStencilFunc,
@@ -789,11 +759,11 @@ export function createStencilMaterial(
 }
 
 /**
- * Creates the material for Cesium's final color classification command.
+ * 为 Cesium 最终 color classification 命令创建材质。
  *
- * @param uniforms Shared uniforms for all classification commands.
- * @param fragmentCull Whether Cesium's fragment-culling shader define is active.
- * @returns RawShaderMaterial matching Cesium's color pass render state.
+ * @param uniforms 所有 classification 命令共享的 uniforms。
+ * @param fragmentCull Cesium fragment-culling shader define 是否启用。
+ * @returns 匹配 Cesium color pass 渲染状态的 RawShaderMaterial。
  */
 export function createColorMaterial( uniforms: SharedUniforms, fragmentCull: boolean ): RawShaderMaterial {
 	const defines = combineDefines( [
@@ -826,9 +796,8 @@ export function createColorMaterial( uniforms: SharedUniforms, fragmentCull: boo
 		stencilFail: ZeroStencilOp,
 		stencilZFail: ZeroStencilOp,
 		stencilZPass: ZeroStencilOp,
-		// The final color command still blends, but it must stay in Three's
-		// opaque render list so renderOrder can keep each plot object's
-		// stencil and color commands contiguous.
+		// 最终 color 命令仍然混合,但必须留在 Three 的 opaque 渲染列表中,
+		// 这样 renderOrder 才能让每个标绘对象的 stencil 与 color 命令保持连续。
 		transparent: false,
 		blending: CustomBlending,
 		blendEquation: AddEquation,
@@ -844,17 +813,15 @@ export function createColorMaterial( uniforms: SharedUniforms, fragmentCull: boo
 }
 
 /**
- * Injects the ground-text fragment branch into Cesium's per-instance color
- * shader. Uses the same `vec4 color = czm_gammaCorrect(v_color);` anchor as
- * `createColorFragmentBody()` so the only difference between rectangle/circle
- * fill and text is the inner branch. The text branch reuses the CPU-plane
- * `planarMeters` path (same precision pipeline as the border path), normalizes
- * to `[0,1]` uv using the footprint meters stored in `u_innerMetersRect.zw`,
- * then samples `u_textTexture` with the V axis flipped (canvas origin is
- * top-left, uv origin is SW).
+ * 把贴地文字片元分支注入 Cesium per-instance color shader。它与
+ * `createColorFragmentBody()` 使用同一个 `vec4 color = czm_gammaCorrect(v_color);`
+ * 锚点,因此矩形/圆填充与文字之间只差内部片元分支。文字分支复用 CPU-plane
+ * 的 `planarMeters` 路径(与边框路径同一套精度管线),使用 `u_innerMetersRect.zw`
+ * 中存储的 footprint 米制尺寸归一化到 `[0,1]` uv,随后在翻转 V 轴后采样
+ * `u_textTexture`(canvas 原点在左上,uv 原点在 SW)。
  *
- * @returns ShadowVolumeAppearanceFS with the text sampling branch inserted.
- * @throws  When the Cesium anchor line is missing (upstream shader churn).
+ * @returns 插入文字采样分支后的 ShadowVolumeAppearanceFS。
+ * @throws  当 Cesium 锚点行缺失时抛出(上游 shader 发生变化)。
  */
 function createTextColorFragmentBody(): string {
 	const colorDeclaration = '    vec4 color = czm_gammaCorrect(v_color);';
@@ -901,8 +868,8 @@ function createTextColorFragmentBody(): string {
 }
 
 /**
- * Wraps the text color fragment body with the LOG_DEPTH `main()` postlude so
- * `czm_writeLogDepth()` runs after the texture sampling early-return path.
+ * 用 LOG_DEPTH `main()` 后处理包装文字 color 片元主体,确保
+ * `czm_writeLogDepth()` 在纹理采样 early-return 路径之后执行。
  *
  * @returns LOG_DEPTH 包装后的文字片元源。
  */
@@ -917,17 +884,15 @@ function buildTextColorFragmentShader(): string {
 }
 
 /**
- * Creates the ground-text color material. Render state matches
- * `createColorMaterial` byte-for-byte so the front-stencil / back-stencil /
- * color command block keeps the same render-order contract; the only delta is
- * the `CESIUM_THREE_TEXT` define and a fragment branch that samples
- * `u_textTexture`. Caller is expected to inject the texture uniform via the
- * shared `extraUniforms` path so the LOG_DEPTH + CPU-plane + Float64-RTE
- * precision pipeline stays unchanged.
+ * 创建贴地文字 color 材质。渲染状态逐字节匹配 `createColorMaterial`,让
+ * front-stencil / back-stencil / color 命令块保持同一 render-order 契约;
+ * 唯一差异是 `CESIUM_THREE_TEXT` define 与采样 `u_textTexture` 的片元分支。
+ * 调用方应通过共享 `extraUniforms` 路径注入纹理 uniform,从而保持
+ * LOG_DEPTH + CPU-plane + Float64-RTE 精度管线不变。
  *
- * @param uniforms     Shared uniforms (must include `u_textTexture` value).
- * @param fragmentCull Whether Cesium's `CULL_FRAGMENTS` define is active.
- * @returns            RawShaderMaterial for the text color command.
+ * @param uniforms     共享 uniforms(必须包含 `u_textTexture` 值)。
+ * @param fragmentCull Cesium `CULL_FRAGMENTS` define 是否启用。
+ * @returns            文字 color 命令使用的 RawShaderMaterial。
  */
 export function createTextColorMaterial(
 	uniforms: SharedUniforms,
@@ -1227,18 +1192,18 @@ void main() {
 `;
 
 /**
- * Creates the polyline material — single mesh, BackSide, no stencil, depthTest
- * off, premultiplied blend. Reuses createVertexPrefix / createFragmentPrefix
- * via the `CESIUM_THREE_POLYLINE` define to bring in metersPerPixel + line
- * uniforms while keeping stencil / color material outputs byte-identical.
+ * 创建贴地线材质:单 mesh、BackSide、无 stencil、depthTest 关闭、预乘混合。
+ * 通过 `CESIUM_THREE_POLYLINE` define 复用 createVertexPrefix /
+ * createFragmentPrefix,引入 metersPerPixel 与线 uniform,同时保持 stencil /
+ * color 材质输出逐字节一致。
  *
- * @param uniforms     Shared uniforms map (must include `czm_projection`,
+ * @param uniforms     共享 uniforms 映射(必须包含 `czm_projection`,
  *                     `czm_pixelRatio`, `u_lineWidthPixels`, `u_lineWidthMode`,
  *                     `u_lineWidthMeters`, dash uniforms, `u_lineTotalMeters`).
  * @param debugVolume  When true，FS 用半透红色直接绘制盒子的所有像素（不做
  *                     terrain depth 重建 / 平面距离裁切），方便诊断「盒子有没有
  *                     盖到该屏幕区域」「FS 是不是被裁切掉」这类几何 / 着色器问题。
- * @returns            RawShaderMaterial driving the depth-reconstruction line pass.
+ * @returns            驱动深度重建线 pass 的 RawShaderMaterial。
  */
 export function createPolylineMaterial(
 	uniforms: SharedUniforms,

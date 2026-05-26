@@ -207,7 +207,7 @@ export function buildAttackArrowSkeleton(
 	const bodySmoothingSegments =
 		options.bodySmoothingSegments ?? DEFAULT_BODY_SMOOTHING_SEGMENTS;
 
-	// ── Step 1:tailLeft / tailRight + midTail ──
+	// ── 步骤 1:tailLeft / tailRight + midTail ──
 	// 体部走 Frenet 法线偏移:perp_CCW = ( -spineDirY, spineDirX ) 指向脊线的
 	// 左侧(在 +y 朝北的右手系下)。要求 leftSide[0] = tailLeft 也位于这一侧,
 	// 否则 leftSide[0] → leftSide[1] 这条边会穿过脊线,整个多边形自交,
@@ -239,7 +239,7 @@ export function buildAttackArrowSkeleton(
 	}
 	const midTail = mid( tailLeft, tailRight );
 
-	// ── Step 2:脊线控制点 ──
+	// ── 步骤 2:脊线控制点 ──
 	const spineControlPoints: LonLatPoint[] = [ midTail ];
 	for ( let i = 2; i < controlPoints.length; i++ ) {
 		spineControlPoints.push( controlPoints[ i ] );
@@ -248,7 +248,7 @@ export function buildAttackArrowSkeleton(
 		return null;
 	}
 
-	// ── Step 3:**唯一一次** Catmull-Rom 平滑脊线 ──
+	// ── 步骤 3:**唯一一次** Catmull-Rom 平滑脊线 ──
 	const spineSamples = centripetalCatmullRomSamples(
 		spineControlPoints,
 		bodySmoothingSegments,
@@ -257,7 +257,7 @@ export function buildAttackArrowSkeleton(
 		return null;
 	}
 
-	// ── Step 4:头部尺寸 clamp ──
+	// ── 步骤 4:头部尺寸 clamp ──
 	const tailWidth = mathDistance( tailLeft, tailRight );
 	const baseLen = getBaseLength( spineControlPoints );
 	const tip: LonLatPoint = [
@@ -290,7 +290,7 @@ export function buildAttackArrowSkeleton(
 	const headHalfWidth = headHeight * headWidthFactor;
 	const neckHalfWidth = headHeight * neckWidthFactor;
 
-	// ── Step 5:把 spineSamples 在 neck 处剪开 ──
+	// ── 步骤 5:把 spineSamples 在 neck 处剪开 ──
 	const neckCut = findPointAlongPolylineFromEnd( spineSamples, neckHeight );
 	if ( neckCut === null ) {
 		// 头部比整条脊线还长 — 上面 clamp 之后不应进入此分支。
@@ -317,10 +317,10 @@ export function buildAttackArrowSkeleton(
 		return null;
 	}
 
-	// ── Step 6:逐 body 样本切向 + 法线 ──
+	// ── 步骤 6:逐 body 样本切向 + 法线 ──
 	const tangents = computeTangents( bodySpine );
 
-	// ── Step 7:沿脊线一笔走完左侧,再走右侧(同一组样本,严格对齐)──
+	// ── 步骤 7:沿脊线一笔走完左侧,再走右侧(同一组样本,严格对齐)──
 	const tailHalfWidth = tailWidth / 2.0;
 	const lastBodyIdx = bodySpine.length - 1;
 
@@ -351,7 +351,7 @@ export function buildAttackArrowSkeleton(
 		rightSide[ i ] = [ sx - px * halfW, sy - py * halfW ];
 	}
 
-	// ── Step 8:把用户指定的 tail 严格钉在多边形上 ──
+	// ── 步骤 8:把用户指定的 tail 严格钉在多边形上 ──
 	// midTail = mid(tailLeft, tailRight) 经过 Centripetal CR 后端点严格通过,
 	// 但是 CR 的 mirror 端点策略可能让 spineSamples[0] 与 midTail 有微小漂移。
 	// 这里把 leftSide[0] / rightSide[0] 强制覆盖为用户指定的 tailLeft / tailRight,
@@ -359,7 +359,7 @@ export function buildAttackArrowSkeleton(
 	leftSide[ 0 ] = [ tailLeft[ 0 ], tailLeft[ 1 ] ];
 	rightSide[ 0 ] = [ tailRight[ 0 ], tailRight[ 1 ] ];
 
-	// ── Step 9:头部 3 个新点(headLeft / tip / headRight)──
+	// ── 步骤 9:头部 3 个新点(headLeft / tip / headRight)──
 	// 翼尖在 neck 处沿法线外扩 headHalfWidth(比 neckHalfWidth 大 → 翼展张开)。
 	const neckTx = tangents[ lastBodyIdx ][ 0 ];
 	const neckTy = tangents[ lastBodyIdx ][ 1 ];

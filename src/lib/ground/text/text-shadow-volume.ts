@@ -36,13 +36,13 @@ import type { TextShadowVolumeOptions } from './text-options';
 export function buildTextShadowVolumeGeometry(
 	options: TextShadowVolumeOptions,
 ): BufferGeometry {
-	// Step 1 · 棱柱顶点 / 挤出方向 / 索引
+	// 步骤 1 · 棱柱顶点 / 挤出方向 / 索引
 	const result = constructExtrudedTextShadowVolume( options );
 
-	// Step 2 · RTE split-double：Float64 ECEF → high/low Float32
+	// 步骤 2 · RTE split-double：Float64 ECEF → high/low Float32
 	const { high, low } = encodePositionsToHighLowArrays( result.positions );
 
-	// Step 3 · 装配 BufferGeometry
+	// 步骤 3 · 装配 BufferGeometry
 	const geometry = new BufferGeometry();
 	const vertexCount = result.positions.length / 3;
 

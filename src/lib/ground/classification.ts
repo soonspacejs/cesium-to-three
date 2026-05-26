@@ -1,10 +1,10 @@
 // ============================================================
 // classification.ts
-// Layer: Cesium-to-Three ground classification command group.
-// Role: execute Cesium's front-stencil, back-stencil, and color commands as a
-//       contiguous Three render-order block.
-// Dependencies: Three.js meshes/uniforms, material bridge, and geometry RTE.
-// Consumed by: primitives.ts.
+// 层级:Cesium-to-Three 贴地 classification 命令组。
+// 职责:把 Cesium 的 front-stencil、back-stencil、color 命令作为连续的
+//      Three renderOrder 命令块执行。
+// 依赖:Three.js 网格/uniform、材质桥接、几何 RTE。
+// 被消费:primitives.ts。
 // ============================================================
 
 import {
@@ -42,11 +42,11 @@ import type {
 } from './types';
 
 /**
- * Creates the viewport transform Cesium uses for window-to-eye reconstruction.
+ * 创建 Cesium 用于 window-to-eye 重建的 viewport transform。
  *
- * @param width Drawing buffer width in physical pixels.
- * @param height Drawing buffer height in physical pixels.
- * @returns Matrix equivalent to Cesium's viewportTransformation.
+ * @param width 绘制缓冲宽度，单位物理像素。
+ * @param height 绘制缓冲高度，单位物理像素。
+ * @returns 等价于 Cesium viewportTransformation 的矩阵。
  */
 function createViewportTransformation( width: number, height: number ): Matrix4 {
 	const matrix = new Matrix4();
@@ -61,11 +61,10 @@ function createViewportTransformation( width: number, height: number ): Matrix4 
 	return matrix;
 }
 
-// Float64 scratch buffers keep the full RTE matrix chain at double precision
-// on the CPU. Three.js Matrix4.elements is a Float32Array, so any roundtrip
-// through `multiplyMatrices` / `copy` silently loses ~7 significant digits.
-// We do the math against these Float64Array scratches and only write the
-// final mat4 uniform back into the Float32 Three.js Matrix4 once.
+// Float64 scratch buffer 在 CPU 侧保持完整 RTE 矩阵链的双精度。
+// Three.js Matrix4.elements 是 Float32Array，任何经过 `multiplyMatrices` / `copy`
+// 的往返都会静默丢失约 7 位有效数字。这里用 Float64Array scratch 完成数学计算，
+// 最后只把 mat4 uniform 写回 Float32 Three.js Matrix4 一次。
 const viewRotationFloat64 = new Float64Array( 16 );
 const projectionFloat64 = new Float64Array( 16 );
 const mvpFloat64 = new Float64Array( 16 );
@@ -76,16 +75,15 @@ const cpuPlaneScratch = {
 };
 
 /**
- * Builds the column-major rotation-only view matrix from `camera.quaternion`
- * at Float64 precision. Equivalent to camera.matrixWorldInverse with the
- * translation column zeroed, but avoids the Float32 round-trip through
- * Three.js Matrix4.elements when the quaternion is converted to a matrix.
+ * 从 `camera.quaternion` 构建列主序、仅旋转的 Float64 view matrix。
+ * 它等价于把 camera.matrixWorldInverse 的平移列清零，但避免 quaternion 转矩阵时
+ * 经由 Three.js Matrix4.elements 的 Float32 往返。
  *
- * @param qx Quaternion x component.
- * @param qy Quaternion y component.
- * @param qz Quaternion z component.
- * @param qw Quaternion w component.
- * @param out Float64Array(16) destination in column-major layout.
+ * @param qx 四元数 x 分量。
+ * @param qy 四元数 y 分量。
+ * @param qz 四元数 z 分量。
+ * @param qw 四元数 w 分量。
+ * @param out Float64Array(16) 输出，列主序布局。
  */
 function writeViewRotationFloat64(
 	qx: number, qy: number, qz: number, qw: number,
@@ -104,7 +102,7 @@ function writeViewRotationFloat64(
 	const wy = qw * y2;
 	const wz = qw * z2;
 
-	// Camera-to-world rotation columns derived directly from the quaternion.
+	// 直接由四元数推导 camera-to-world 旋转列。
 	const camToWorld00 = 1.0 - ( yy + zz );
 	const camToWorld10 = xy + wz;
 	const camToWorld20 = xz - wy;
@@ -115,8 +113,7 @@ function writeViewRotationFloat64(
 	const camToWorld12 = yz - wx;
 	const camToWorld22 = 1.0 - ( xx + yy );
 
-	// View rotation = transpose of the camera-to-world rotation. With the
-	// camera translation zeroed it's the relativeToEye view matrix.
+	// View rotation = camera-to-world rotation 的转置。相机平移清零后即 relativeToEye view matrix。
 	out[ 0 ] = camToWorld00; out[ 1 ] = camToWorld01; out[ 2 ] = camToWorld02; out[ 3 ] = 0.0;
 	out[ 4 ] = camToWorld10; out[ 5 ] = camToWorld11; out[ 6 ] = camToWorld12; out[ 7 ] = 0.0;
 	out[ 8 ] = camToWorld20; out[ 9 ] = camToWorld21; out[ 10 ] = camToWorld22; out[ 11 ] = 0.0;
@@ -124,16 +121,15 @@ function writeViewRotationFloat64(
 }
 
 /**
- * Mirrors Three.js PerspectiveCamera.updateProjectionMatrix using Float64
- * intermediates. The output matches the camera.projectionMatrix for
- * symmetric centred-frusta (no film offset, no view offset) but does not
- * carry the rounded values stored in Three.js Float32 elements.
+ * 使用 Float64 中间值复刻 Three.js PerspectiveCamera.updateProjectionMatrix。
+ * 对称居中视锥(无 film offset、无 view offset)下输出与 camera.projectionMatrix 一致，
+ * 但不会携带 Three.js Float32 elements 中已舍入的值。
  *
- * @param fovDegrees Vertical field of view in degrees.
- * @param aspect Aspect ratio (width / height).
- * @param near Near plane distance.
- * @param far Far plane distance.
- * @param out Float64Array(16) destination in column-major layout.
+ * @param fovDegrees 垂直视场角，单位度。
+ * @param aspect 宽高比(width / height)。
+ * @param near 近裁剪面距离。
+ * @param far 远裁剪面距离。
+ * @param out Float64Array(16) 输出，列主序布局。
  */
 function writePerspectiveProjectionFloat64(
 	fovDegrees: number, aspect: number, near: number, far: number,
@@ -159,13 +155,12 @@ function writePerspectiveProjectionFloat64(
 }
 
 /**
- * Float64 matrix multiplication: out = a * b. Layout is column-major, matching
- * Three.js Matrix4.elements. Variable naming `aRowCol` reflects mathematical
- * convention, while index access goes through column-major offsets.
+ * Float64 矩阵乘法:out = a * b。布局为列主序，与 Three.js Matrix4.elements 匹配。
+ * 变量命名 `aRowCol` 采用数学约定，索引访问则使用列主序偏移。
  *
- * @param a Left operand stored column-major in 16 Float64 entries.
- * @param b Right operand stored column-major in 16 Float64 entries.
- * @param out Destination stored column-major in 16 Float64 entries.
+ * @param a 左操作数，16 个 Float64，列主序。
+ * @param b 右操作数，16 个 Float64，列主序。
+ * @param out 输出矩阵，16 个 Float64，列主序。
  */
 function multiplyMatricesFloat64(
 	a: Float64Array, b: Float64Array, out: Float64Array,
@@ -226,11 +221,11 @@ function multiplyMatricesFloat64(
 }
 
 /**
- * Writes the Cesium normal matrix (modelView rotation as a 3x3) from a 16
- * entry Float64 column-major matrix into Three.js Matrix3 elements.
+ * 将 Cesium normal matrix(modelView 旋转的 3x3 部分)从 16 项 Float64
+ * 列主序矩阵写入 Three.js Matrix3 elements。
  *
- * @param source Float64 column-major matrix.
- * @param destination Three Matrix3 receiver.
+ * @param source Float64 列主序矩阵。
+ * @param destination Three Matrix3 接收者。
  */
 function writeMatrix3FromFloat64Mat4( source: Float64Array, destination: Matrix3 ): void {
 	const elements = destination.elements;
@@ -246,10 +241,10 @@ function writeMatrix3FromFloat64Mat4( source: Float64Array, destination: Matrix3
 }
 
 /**
- * Multiplies a world-space direction by the Float64 view rotation matrix.
+ * 将世界空间方向乘以 Float64 view rotation 矩阵。
  *
- * @param source Direction vector in ECEF/world coordinates.
- * @param out Float64Array(3) receiver in eye coordinates.
+ * @param source ECEF/world 坐标中的方向向量。
+ * @param out Float64Array(3) 接收 eye 坐标方向。
  */
 function writeEyeDirectionFloat64( source: Vector3, out: Float64Array ): void {
 	const x = source.x;
@@ -262,16 +257,15 @@ function writeEyeDirectionFloat64( source: Vector3, out: Float64Array ): void {
 }
 
 /**
- * Writes eye-space planar classification planes from CPU Float64 math.
+ * 使用 CPU Float64 数学写入 eye-space 平面 classification 平面。
  *
- * The Cesium shader normally derives these planes in the vertex shader from
- * RTE uniforms. That is fine for broad classification, but small 1:1 meter
- * circles expose float-axis drift in the procedural ring/circle styling. We
- * therefore compute the exact eye-space west/south planes on the CPU and let
- * the fragment shader consume them directly for local meter coordinates.
+ * Cesium shader 通常在顶点着色器中从 RTE uniform 推导这些平面。
+ * 对大范围 classification 没问题，但 1:1 米级小圆会在程序化 ring/circle 样式中暴露
+ * float 轴向漂移。因此这里在 CPU 上计算精确的 eye-space west/south 平面，
+ * 让片元着色器直接消费它们来获得局部米制坐标。
  *
- * @param frameState Current Three-side frame state.
- * @param uniforms Shared material uniforms updated in place.
+ * @param frameState 当前 Three 侧帧状态。
+ * @param uniforms 原地更新的共享材质 uniform。
  */
 function updateCpuPlanarUniforms(
 	frameState: CesiumGroundFrameState,
@@ -343,27 +337,23 @@ function updateCpuPlanarUniforms(
 }
 
 /**
- * Updates Cesium automatic uniforms for this frame, including the LOG_DEPTH
- * uniforms required by the shadow-volume vertex and fragment shaders.
+ * 更新本帧 Cesium automatic uniform，包括 shadow-volume 顶点/片元着色器需要的
+ * LOG_DEPTH uniform。
  *
- * Exported so the ground-polyline primitive (which lives outside the
- * stencil command group) can share the same per-frame uniform pipeline.
- * Polylines opt in to extra fields (`czm_projection`, `czm_pixelRatio`) by
- * declaring them in their uniform map; guarded writes below leave the
- * stencil/color/text materials untouched.
+ * 导出该函数是为了让位于 stencil 命令组之外的贴地折线图元复用同一套逐帧 uniform 管线。
+ * 折线通过在自己的 uniform map 中声明额外字段(`czm_projection`、`czm_pixelRatio`)
+ * 来 opt-in；下面的守卫式写入不会影响 stencil/color/text 材质。
  *
- * @param frameState Current Three-side frame state.
- * @param uniforms Shared material uniforms updated in place.
+ * @param frameState 当前 Three 侧帧状态。
+ * @param uniforms 原地更新的共享材质 uniform。
  */
 export function updateFrameStateUniforms( frameState: CesiumGroundFrameState, uniforms: SharedUniforms ): void {
 	const camera = frameState.camera;
 	const quaternion = camera.quaternion;
 
-	// Float64 view rotation directly from the camera quaternion so the
-	// model-view-relative-to-eye matrix is not bottle-necked by Three.js
-	// Float32 storage. Translation stays at zero - the actual offset is
-	// applied in the shader via czm_translateRelativeToEye(positionHigh,
-	// positionLow) using the encoded camera position.
+	// 直接从相机四元数构造 Float64 view rotation，避免 model-view-relative-to-eye
+	// 矩阵被 Three.js Float32 存储卡住精度。平移保持为零；真实偏移在 shader 中通过
+	// czm_translateRelativeToEye(positionHigh, positionLow) 与编码后的相机位置计算。
 	writeViewRotationFloat64(
 		quaternion.x, quaternion.y, quaternion.z, quaternion.w,
 		viewRotationFloat64,
@@ -376,9 +366,8 @@ export function updateFrameStateUniforms( frameState: CesiumGroundFrameState, un
 
 	multiplyMatricesFloat64( projectionFloat64, viewRotationFloat64, mvpFloat64 );
 
-	// Three.js Matrix4.elements is a plain `number[]`, not a Float32Array, so
-	// the typed-array `set()` method is not available. `fromArray()` copies 16
-	// entries by index and works identically with our Float64Array scratch.
+	// Three.js Matrix4.elements 是普通 `number[]`，不是 Float32Array，因此没有 typed-array
+	// `set()` 方法。`fromArray()` 会逐索引复制 16 项，和我们的 Float64Array scratch 配合一致。
 	uniforms.czm_modelViewRelativeToEye.value.fromArray( viewRotationFloat64 );
 	uniforms.czm_modelViewProjectionRelativeToEye.value.fromArray( mvpFloat64 );
 	writeMatrix3FromFloat64Mat4( viewRotationFloat64, uniforms.czm_normal.value );
@@ -408,13 +397,11 @@ export function updateFrameStateUniforms( frameState: CesiumGroundFrameState, un
 	uniforms.czm_log2FarDepthFromNearPlusOne.value = log2FarDepthFromNearPlusOne;
 	uniforms.czm_oneOverLog2FarDepthFromNearPlusOne.value = oneOverLog2FarDepthFromNearPlusOne;
 
-	// Cesium UniformState.update derives czm_geometricToleranceOverMeter as
-	// `pixelSizePerMeter * frameState.maximumScreenSpaceError`. The previous
-	// adapter shipped a hardcoded 1.0, which caused the EXTRUDED_GEOMETRY
-	// branch in ShadowVolumeAppearanceVS to always clamp to
-	// u_globeMinimumAltitude (55 km) regardless of eye distance. With the
-	// real formula, near-camera plots get a tiny extrude while distant
-	// plots still cover the configured pixel tolerance.
+	// Cesium UniformState.update 将 czm_geometricToleranceOverMeter 推导为
+	// `pixelSizePerMeter * frameState.maximumScreenSpaceError`。旧适配器曾硬编码为 1.0，
+	// 导致 ShadowVolumeAppearanceVS 的 EXTRUDED_GEOMETRY 分支无论 eye distance 如何，
+	// 都 clamp 到 u_globeMinimumAltitude(55 km)。使用真实公式后，近相机标绘只获得微小挤出，
+	// 远处标绘仍覆盖配置的像素容差。
 	const viewportSize = Math.max( frameState.width, frameState.height, 1.0 );
 	const pixelSizePerMeter = ( Math.tan( 0.5 * fovRad ) * 2.0 ) / viewportSize;
 	uniforms.czm_geometricToleranceOverMeter.value =
@@ -435,21 +422,20 @@ export function updateFrameStateUniforms( frameState: CesiumGroundFrameState, un
 }
 
 /**
- * Optional injection used by callers that need a non-default color material
- * (e.g. ground text needs a texture sampler in place of the per-instance fill
- * color). Other callers omit this argument and the primitive falls back to
- * `createColorMaterial` so circle / rectangle / polygon behaviour is unchanged.
+ * 可选注入点，供需要非默认 color material 的调用方使用。
+ * 例如贴地文字需要用纹理 sampler 替代 per-instance 填充色。
+ * 其它调用方省略该参数时，图元回退到 `createColorMaterial`，
+ * 圆形/矩形/多边形行为保持不变。
  */
 export interface ClassificationColorInjection {
-	/** Custom color material factory. Unset → default `createColorMaterial`. */
+	/** 自定义 color material 工厂。未设置时使用默认 `createColorMaterial`。 */
 	colorMaterialFactory?: ( uniforms: SharedUniforms, fragmentCull: boolean ) => RawShaderMaterial;
-	/** Extra uniforms merged into the shared uniforms map before material build. */
+	/** 材质构建前合并到共享 uniform map 的额外 uniform。 */
 	extraUniforms?: Record<string, { value: unknown }>;
 }
 
 /**
- * Three execution of Cesium ClassificationPrimitive's two stencil commands and
- * one color command.
+ * 在 Three 中执行 Cesium ClassificationPrimitive 的两个 stencil 命令和一个 color 命令。
  */
 export class CesiumClassificationPrimitive {
 	public readonly group: Group;
@@ -483,11 +469,8 @@ export class CesiumClassificationPrimitive {
 			czm_modelViewRelativeToEye: { value: new Matrix4() },
 			czm_modelViewProjectionRelativeToEye: { value: new Matrix4() },
 			czm_normal: { value: new Matrix3() },
-			// Initial value will be overwritten on the first frame by
-			// updateFrameStateUniforms using the active camera fov / drawing
-			// buffer size. The placeholder is intentionally tiny so the
-			// vertex shader never produces a non-trivial extrude before the
-			// uniforms are filled out.
+			// 初始值会在第一帧由 updateFrameStateUniforms 使用当前相机 fov / 绘制缓冲尺寸覆盖。
+			// 占位值有意保持极小，避免 uniform 填好前顶点着色器产生非平凡挤出。
 			czm_geometricToleranceOverMeter: { value: 0.0 },
 			czm_sceneMode: { value: SCENE_MODE_3D },
 			u_globeMinimumAltitude: { value: CESIUM_GLOBE_MINIMUM_ALTITUDE },
@@ -504,9 +487,8 @@ export class CesiumClassificationPrimitive {
 			u_innerMetersRect: { value: extents.innerMetersRect },
 			u_cpuWestPlane: { value: new Vector4( 1.0, 0.0, 0.0, 0.0 ) },
 			u_cpuSouthPlane: { value: new Vector4( 0.0, 1.0, 0.0, 0.0 ) },
-			// Polygon-stroke uniforms (additive feature, point-in-polygon test
-			// inside the existing color command — no impact on the LOG_DEPTH
-			// / Float64 / LessEqualDepth precision paths).
+			// Polygon-stroke uniform：附加能力，在现有 color 命令内做 point-in-polygon 测试，
+			// 不影响 LOG_DEPTH / Float64 / LessEqualDepth 精度路径。
 			u_polygonBorderMode: { value: 0.0 },
 			u_polygonMiterStrokeMode: { value: 0.0 },
 			u_polygonPointCount: { value: 0.0 },
@@ -516,9 +498,8 @@ export class CesiumClassificationPrimitive {
 					() => new Vector2(),
 				),
 			},
-			// Circle border / ring / sector uniforms (additive feature, ring
-			// and sector decoration inside the color command — no impact on
-			// the precision paths either).
+			// Circle border / ring / sector uniform：附加能力，在 color 命令内做环线与扇区装饰，
+			// 同样不影响精度路径。
 			u_circleBorderMode: { value: 0.0 },
 			u_circleCenterMeters: { value: new Vector2() },
 			u_circleFillRadiusMeters: { value: 0.0 },
@@ -536,14 +517,13 @@ export class CesiumClassificationPrimitive {
 			czm_farDepthFromNearPlusOne: { value: 1.0 },
 			czm_log2FarDepthFromNearPlusOne: { value: 1.0 },
 			czm_oneOverLog2FarDepthFromNearPlusOne: { value: 1.0 },
-			// Ground text texture slot. Default null; overwritten when caller
-			// passes `extraUniforms.u_textTexture`. GLSL declaration is guarded
-			// by `#ifdef CESIUM_THREE_TEXT`, so non-text materials never read it.
+			// 贴地文字纹理槽。默认 null；调用方传入 `extraUniforms.u_textTexture` 时覆盖。
+			// GLSL 声明由 `#ifdef CESIUM_THREE_TEXT` 保护，非文字材质不会读取它。
 			u_textTexture: { value: null },
 		};
 
-		// Merge caller-supplied uniforms (e.g. `u_textTexture`) before any
-		// material is built so all three commands share the same map.
+		// 在任何材质构建前合并调用方提供的 uniform(例如 `u_textTexture`)，
+		// 使三个命令共享同一张 map。
 		if ( injection !== undefined && injection.extraUniforms !== undefined ) {
 			for ( const key in injection.extraUniforms ) {
 				if ( Object.prototype.hasOwnProperty.call( injection.extraUniforms, key ) ) {
@@ -552,8 +532,8 @@ export class CesiumClassificationPrimitive {
 			}
 		}
 
-		// Persist the color material factory so `setFragmentCulling` can rebuild
-		// the color mesh later without losing the text-color injection.
+		// 保存 color material 工厂，使 `setFragmentCulling` 后续重建 color mesh 时
+		// 不会丢失 text-color 注入。
 		this.colorMaterialFactory =
 			injection !== undefined && injection.colorMaterialFactory !== undefined
 				? injection.colorMaterialFactory
@@ -585,29 +565,23 @@ export class CesiumClassificationPrimitive {
 		this.colorMesh.name = 'CesiumClassificationColorCommand';
 		this.colorMesh.frustumCulled = false;
 
-		// Move the three shadow-volume meshes to the non-pickable layer so
-		// scene raycasts (e.g. GlobeControls' adjustHeight + zoomPoint
-		// resolution via `EnvironmentControls._raycast` →
-		// `raycaster.intersectObject(scene)`) silently skip them.
+		// 将三个 shadow-volume 网格移动到不可拾取 layer，使场景 raycast
+		// (例如 GlobeControls 的 adjustHeight + zoomPoint 解析，
+		// 通过 `EnvironmentControls._raycast` → `raycaster.intersectObject(scene)`)
+		// 静默跳过它们。
 		//
-		// Why this matters: these meshes are extruded multi-km boxes
-		// (terrainMinHeight → terrainMaxHeight) used purely to drive the
-		// stencil + colour passes; they're not "real geometry" a user
-		// should be able to click or have the camera collide with. Their
-		// auto-computed boundingSphere is empty (the geometry uses
-		// RTE-encoded `position3DHigh` / `position3DLow` instead of a
-		// standard `position` attribute), so in practice today they don't
-		// produce raycast hits anyway. Marking the layer explicitly is a
-		// defensive belt-and-suspenders so any future change adding a
-		// standard `position` attribute doesn't suddenly start pinning the
-		// camera.
+		// 这样做很重要：这些网格是数公里级挤出 box(terrainMinHeight → terrainMaxHeight)，
+		// 只用于驱动 stencil + color pass，并不是用户应该点击或让相机碰撞的“真实几何”。
+		// 它们自动计算出的 boundingSphere 为空(几何使用 RTE 编码的 `position3DHigh` /
+		// `position3DLow`，而不是标准 `position` attribute)，所以目前实践中本来也不会产生
+		// raycast 命中。显式标记 layer 是防御性措施，避免未来某次改动加入标准
+		// `position` attribute 后突然把相机钉住。
 		//
-		// Three.js Raycaster.intersect is gated by `object.layers.test(
-		// raycaster.layers )` and does NOT check `object.visible`, so this
-		// gives us the right semantics even when the host briefly hides
-		// the group via `group.visible = false`. The host camera must
-		// `camera.layers.enable( CESIUM_GROUND_NON_PICKABLE_LAYER )` to
-		// keep these meshes in the render path — see ground-demo.ts.
+		// Three.js Raycaster.intersect 由 `object.layers.test(raycaster.layers)` 控制，
+		// 不检查 `object.visible`。因此即便宿主短暂通过 `group.visible = false` 隐藏组，
+		// 这里的 layer 语义仍正确。宿主相机必须调用
+		// `camera.layers.enable( CESIUM_GROUND_NON_PICKABLE_LAYER )`，
+		// 让这些网格仍处于渲染路径中；见 ground-demo.ts。
 		this.stencilMesh.layers.set( CESIUM_GROUND_NON_PICKABLE_LAYER );
 		this.backStencilMesh.layers.set( CESIUM_GROUND_NON_PICKABLE_LAYER );
 		this.colorMesh.layers.set( CESIUM_GROUND_NON_PICKABLE_LAYER );
@@ -617,9 +591,9 @@ export class CesiumClassificationPrimitive {
 	}
 
 	/**
-	 * Updates the base render order for this primitive's contiguous command block.
+	 * 更新该图元连续命令块的基础渲染顺序。
 	 *
-	 * @param renderOrder Base order assigned to the front-stencil command.
+	 * @param renderOrder 分配给 front-stencil 命令的基础顺序。
 	 */
 	public setRenderOrder( renderOrder: number ): void {
 		const safeRenderOrder = Number.isFinite( renderOrder ) ? renderOrder : 0;
@@ -629,9 +603,9 @@ export class CesiumClassificationPrimitive {
 	}
 
 	/**
-	 * Toggles individual draw commands without detaching them from the scene graph.
+	 * 切换单个绘制命令的可见性，不将其从场景图中分离。
 	 *
-	 * @param visibility Optional per-command visibility flags.
+	 * @param visibility 可选的逐命令可见性标志。
 	 */
 	public setCommandVisibility( visibility: CesiumClassificationCommandVisibility ): void {
 		if ( visibility.frontStencil !== undefined ) {
@@ -646,22 +620,22 @@ export class CesiumClassificationPrimitive {
 	}
 
 	/**
-	 * Updates the per-instance color uniform consumed by Cesium's shader.
+	 * 更新 Cesium shader 消费的 per-instance color uniform。
 	 *
-	 * @param color Linear Three color.
-	 * @param alpha Premultiplied output alpha factor.
+	 * @param color Three 线性颜色。
+	 * @param alpha 预乘输出 alpha 因子。
 	 */
 	public setColor( color: Color, alpha: number ): void {
 		this.uniforms.u_color.value.set( color.r, color.g, color.b, alpha );
 	}
 
 	/**
-	 * Updates the border style inside the existing Cesium color command.
+	 * 更新现有 Cesium color 命令中的边框样式。
 	 *
-	 * @param enabled Whether the shader should mix in the border color.
-	 * @param color Border color in Three's linear color representation.
-	 * @param opacity Straight alpha used before the classification blend pass.
-	 * @param widthMeters Border width in local meter coordinates.
+	 * @param enabled shader 是否混入边框颜色。
+	 * @param color Three 线性颜色表示的边框颜色。
+	 * @param opacity classification blend pass 之前使用的 straight alpha。
+	 * @param widthMeters 局部米制坐标中的边框宽度。
 	 */
 	public setBorderStyle( enabled: boolean, color: Color, opacity: number, widthMeters: number ): void {
 		const safeOpacity = Math.min( Math.max( opacity, 0.0 ), 1.0 );
@@ -673,16 +647,15 @@ export class CesiumClassificationPrimitive {
 	}
 
 	/**
-	 * Supplies the original polygon fill ring as planar meter coordinates so
-	 * the color fragment can run a point-in-polygon test for stroke styling.
+	 * 以平面米制坐标提供原始多边形填充环，使 color fragment 能为描边样式执行
+	 * point-in-polygon 测试。
 	 *
-	 * The shader uses these values only when `u_polygonBorderMode` is on; the
-	 * caller toggles that mode by passing 3+ points. Calling with fewer than 3
-	 * points disables polygon-border mode and falls back to the rectangle
-	 * `u_innerMetersRect` axis-aligned border that already shipped.
+	 * shader 仅在 `u_polygonBorderMode` 开启时使用这些值；调用方通过传入 3 个及以上
+	 * 点启用该模式。少于 3 个点时禁用 polygon-border 模式，并回退到已有的矩形
+	 * `u_innerMetersRect` 轴对齐边框。
 	 *
-	 * @param points Fill polygon vertices relative to the same SW meter origin
-	 *               the vertex shader derives from `u_southWest_HIGH/LOW`.
+	 * @param points 填充多边形顶点，相对于顶点着色器从 `u_southWest_HIGH/LOW`
+	 *               推导出的同一 SW 米制原点。
 	 */
 	public setPolygonBorderPoints( points: readonly Vector2[] ): void {
 		const polygonPoints = this.uniforms.u_polygonPoints.value;
@@ -694,39 +667,36 @@ export class CesiumClassificationPrimitive {
 
 		this.uniforms.u_polygonPointCount.value = pointCount;
 		this.uniforms.u_polygonBorderMode.value = pointCount >= 3 ? 1.0 : 0.0;
-		// Activating the polygon branch disables the circle branch so the
-		// fragment shader never tries to read circle uniforms left over from
-		// a previous primitive setup.
+		// 激活 polygon 分支会禁用 circle 分支，避免 fragment shader 读取上一个图元设置
+		// 遗留下来的 circle uniform。
 		this.uniforms.u_circleBorderMode.value = 0.0;
 	}
 
 	/**
-	 * Selects the polygon stroke classifier used by the fragment shader.
+	 * 选择 fragment shader 使用的多边形描边分类器。
 	 *
-	 * Round mode clips the stroke by distance to the fill ring and is robust
-	 * for generic polygons. Miter mode trusts the already-expanded render
-	 * geometry and only tests fill-vs-border, which preserves sharp arrow
-	 * tips and concave notches at meter scale.
+	 * round 模式按到填充环的距离裁剪描边，对通用多边形更鲁棒。
+	 * miter 模式信任已扩张的渲染几何，只测试 fill-vs-border，
+	 * 可在米级尺度保留尖锐箭头头部和凹口。
 	 *
-	 * @param enabled True when the render ring is a real miter offset shell.
+	 * @param enabled render ring 是真实 miter 偏移外壳时为 true。
 	 */
 	public setPolygonMiterStrokeMode( enabled: boolean ): void {
 		this.uniforms.u_polygonMiterStrokeMode.value = enabled ? 1.0 : 0.0;
 	}
 
 	/**
-	 * Supplies circle styling values in planar meter coordinates so the color
-	 * fragment can decorate the disc with concentric rings, a sector cut-out,
-	 * and an outer stroke band. Calling with both radii at zero disables the
-	 * circle branch and the rectangle / polygon paths take over.
+	 * 以平面米制坐标提供圆形样式值，使 color fragment 能为圆盘添加同心环、
+	 * 扇区裁切和外侧描边带。两个半径都为 0 时禁用 circle 分支，
+	 * 由 rectangle / polygon 路径接管。
 	 *
-	 * @param centerMeters Circle center relative to the shader's SW meter origin.
-	 * @param fillRadiusMeters Public fill radius in meters.
-	 * @param renderRadiusMeters Shadow-volume render radius in meters.
-	 * @param ringCount Number of filled concentric bands. Defaults to 1.
-	 * @param ringGapMeters Transparent gap width between filled bands in meters.
-	 * @param sectorStartRadians Start angle in the circle's local ENU plane.
-	 * @param sectorAngleRadians Positive angular sweep; ±2π means full circle.
+	 * @param centerMeters 相对于 shader SW 米制原点的圆心。
+	 * @param fillRadiusMeters 公开填充半径，单位米。
+	 * @param renderRadiusMeters shadow-volume 渲染半径，单位米。
+	 * @param ringCount 填充同心带数量，默认 1。
+	 * @param ringGapMeters 填充带之间的透明间隔宽度，单位米。
+	 * @param sectorStartRadians 圆局部 ENU 平面中的起始角。
+	 * @param sectorAngleRadians 正向角度扫掠；±2π 表示完整圆。
 	 */
 	public setCircleBorderStyle(
 		centerMeters: Vector2,
@@ -759,16 +729,15 @@ export class CesiumClassificationPrimitive {
 		this.uniforms.u_circleSectorAngleRadians.value = safeSectorAngleRadians;
 		this.uniforms.u_circleBorderMode.value =
 			fillRadiusMeters > 0.0 && renderRadiusMeters > 0.0 ? 1.0 : 0.0;
-		// Activating the circle branch disables the polygon branch (mutually
-		// exclusive in the fragment shader).
+		// 激活 circle 分支会禁用 polygon 分支(二者在 fragment shader 中互斥)。
 		this.uniforms.u_polygonBorderMode.value = 0.0;
 		this.uniforms.u_polygonPointCount.value = 0.0;
 	}
 
 	/**
-	 * Rebuilds the color material when fragment culling is toggled.
+	 * fragment culling 开关变化时重建 color material。
 	 *
-	 * @param enabled Whether Cesium's CULL_FRAGMENTS define is active.
+	 * @param enabled Cesium 的 CULL_FRAGMENTS define 是否启用。
 	 */
 	public setFragmentCulling( enabled: boolean ): void {
 		if ( this.colorFragmentCull === enabled ) {
@@ -782,9 +751,9 @@ export class CesiumClassificationPrimitive {
 	}
 
 	/**
-	 * Updates Cesium automatic uniforms for this frame.
+	 * 更新本帧 Cesium automatic uniform。
 	 *
-	 * @param frameState Three-side equivalent of Cesium frame state.
+	 * @param frameState Cesium frame state 的 Three 侧等价结构。
 	 */
 	public update( frameState: CesiumGroundFrameState ): void {
 		encodeCesiumVector3( frameState.camera.position, this.cameraHigh, this.cameraLow );
@@ -792,7 +761,7 @@ export class CesiumClassificationPrimitive {
 	}
 
 	/**
-	 * Releases geometry and material GPU resources.
+	 * 释放几何和材质 GPU 资源。
 	 */
 	public dispose(): void {
 		this.stencilMesh.geometry.dispose();

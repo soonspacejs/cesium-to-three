@@ -1,19 +1,18 @@
 // ============================================================
 // terrain-heights.ts
-// Layer: Cesium-to-Three ground adapter terrain height initialization.
-// Role: bootstrap Cesium ApproximateTerrainHeights by injecting the bundled
-//       approximateTerrainHeights.json so GroundPrimitive-style geometry can
-//       query a tile-accurate min/max for shadow-volume construction without
-//       performing a runtime fetch.
-// Dependencies: unmodified Cesium ApproximateTerrainHeights + bundled JSON.
-// Consumed by: primitives.ts and the public ground adapter entry point.
+// 层级:Cesium-to-Three 贴地适配器地形高度初始化。
+// 职责:向 Cesium ApproximateTerrainHeights 注入随包携带的 approximateTerrainHeights.json，
+//      使 GroundPrimitive 风格几何在构造 shadow-volume 时无需运行时 fetch，
+//      也能查询瓦片级 min/max 高度。
+// 依赖:未改动的 Cesium ApproximateTerrainHeights + 随包 JSON。
+// 被消费:primitives.ts 与公开贴地适配器入口。
 // ============================================================
 
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
+// @ts-ignore Cesium 源码有意保持为未改动 JavaScript。
 import ApproximateTerrainHeights from '../../../cesium-ground-source/engine/Source/Core/ApproximateTerrainHeights.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
+// @ts-ignore Cesium 源码有意保持为未改动 JavaScript。
 import Ellipsoid from '../../../cesium-ground-source/engine/Source/Core/Ellipsoid.js';
-// @ts-ignore Cesium source is intentionally kept as unmodified JavaScript.
+// @ts-ignore Cesium 源码有意保持为未改动 JavaScript。
 import Rectangle from '../../../cesium-ground-source/engine/Source/Core/Rectangle.js';
 import approximateTerrainHeightsJson from '../../../cesium-ground-source/engine/Source/Assets/approximateTerrainHeights.json';
 
@@ -24,7 +23,7 @@ import {
 import type { LonLatPoint, RectangleDegrees } from './types';
 
 /**
- * Synchronous min/max height pair returned by the adapter.
+ * 适配器同步返回的 min/max 高度对。
  */
 export interface TerrainMinMaxHeights {
 	minimumTerrainHeight: number;
@@ -34,9 +33,8 @@ export interface TerrainMinMaxHeights {
 let initialized = false;
 
 /**
- * Injects the bundled approximateTerrainHeights.json into Cesium
- * ApproximateTerrainHeights without triggering its async Resource.fetchJson
- * path. Idempotent: safe to call from multiple entry points.
+ * 将随包携带的 approximateTerrainHeights.json 注入 Cesium ApproximateTerrainHeights，
+ * 且不触发其异步 Resource.fetchJson 路径。该函数幂等，可从多个入口安全调用。
  */
 export function initializeApproximateTerrainHeights(): void {
 	if ( initialized ) {
@@ -44,15 +42,14 @@ export function initializeApproximateTerrainHeights(): void {
 	}
 
 	ApproximateTerrainHeights._terrainHeights = approximateTerrainHeightsJson;
-	// Match the resolved promise contract so any caller that defensively waits
-	// on initialize() still gets a settled promise instead of dispatching a
-	// network request through buildModuleUrl / Resource.
+	// 匹配 resolved promise 契约：即便调用方防御性等待 initialize()，
+	// 也会得到已 settled 的 promise，而不是通过 buildModuleUrl / Resource 发起网络请求。
 	ApproximateTerrainHeights._initPromise = Promise.resolve();
 	initialized = true;
 }
 
 /**
- * Reports whether the adapter has injected the terrain-height table yet.
+ * 报告适配器是否已经注入地形高度表。
  */
 export function isApproximateTerrainHeightsReady(): boolean {
 	return initialized;
@@ -61,21 +58,18 @@ export function isApproximateTerrainHeightsReady(): boolean {
 const lookupRectangleScratch = new Rectangle();
 
 /**
- * Queries Cesium ApproximateTerrainHeights for the tile-aligned min/max in a
- * geographic rectangle. Returns the Cesium default range if the heights have
- * not been initialized yet, so callers always receive a usable shadow-volume
- * window rather than throwing.
+ * 查询地理矩形内按瓦片对齐的 Cesium ApproximateTerrainHeights min/max。
+ * 如果高度表尚未初始化，则返回 Cesium 默认范围，保证调用方总能得到可用的
+ * shadow-volume 高度窗口，而不是抛错。
  *
- * **Suitable for the rectangle primitive only.** For polygons (including
- * arrows), prefer {@link getTerrainMinMaxHeightsForPolygon}: a polygon's
- * bbox can be wildly larger than its actual footprint, and the Cesium
- * tile-lookup algorithm falls back to a coarser tile (= much larger
- * geographic region, capturing far-away peaks) whenever the bbox straddles
- * a tile boundary. The per-vertex sampling variant avoids that fallback by
- * doing micro-bbox queries that always land inside a single max-depth tile.
+ * **仅适合矩形图元。** 对多边形(含箭头)，优先使用
+ * {@link getTerrainMinMaxHeightsForPolygon}:多边形 bbox 可能远大于真实覆盖范围，
+ * 且 Cesium 瓦片查询算法在 bbox 跨越瓦片边界时会回退到更粗瓦片
+ * (= 更大地理区域，可能包含远处高峰)。逐顶点采样版本通过 micro-bbox 查询避免该回退，
+ * 每次查询都落在单个最深层瓦片内。
  *
- * @param rectangleDegrees Plot rectangle in WGS84 degrees.
- * @returns Minimum and maximum terrain height in meters.
+ * @param rectangleDegrees WGS84 度制标绘矩形。
+ * @returns 最小与最大地形高度，单位米。
  */
 export function getTerrainMinMaxHeightsForRectangle(
 	rectangleDegrees: RectangleDegrees,
@@ -111,66 +105,49 @@ export function getTerrainMinMaxHeightsForRectangle(
 }
 
 /**
- * Micro-bbox half-side (degrees) used for per-vertex polygon sampling.
+ * 多边形逐顶点采样使用的 micro-bbox 半边长，单位度。
  *
- * Picked to be **much smaller than the deepest tile size** in the bundled
- * ApproximateTerrainHeights table (level 6 → 2.8125° per side). With this
- * half-side ≈ 5.6 cm at the equator, the 4 corners of a query rectangle
- * around any single sample point are guaranteed to share the same level-6
- * tile — so `getTileXYLevel` always returns the deepest (= smallest) tile
- * and we get the local-tile max instead of being forced back to a coarser
- * tile by an inadvertent boundary straddle.
+ * 该值被选为**远小于**随包 ApproximateTerrainHeights 表中最深瓦片尺寸
+ * (level 6，每边 2.8125°)。这个半边长在赤道约为 5.6 cm，因此任意采样点周围
+ * 查询矩形的 4 个角都能共享同一个 level-6 瓦片；`getTileXYLevel` 总能返回
+ * 最深(最小)瓦片，得到局部瓦片 max，而不会因为意外跨边界被迫回退到粗瓦片。
  *
- * Why so small (instead of just "small"): the Cesium algorithm requires
- * **all four corners** of the query rectangle to be in the SAME tile.
- * If a sample point happens to sit right on a tile boundary, even a 1e-3°
- * half-side may straddle. A 5e-7° half-side leaves the corners virtually
- * coincident, guaranteeing single-tile residency for any sample.
+ * 为什么要这么小(而不只是“小”)：Cesium 算法要求查询矩形的**四个角**都在同一瓦片。
+ * 如果采样点恰好落在瓦片边界上，即使 1e-3° 半边长也可能跨界。5e-7° 半边长
+ * 让四角几乎重合，从而保证任意采样都驻留在单瓦片内。
  */
 const POLYGON_VERTEX_QUERY_HALF_SIDE_DEGREES = 5e-7;
 
 /**
- * Queries Cesium ApproximateTerrainHeights for the tile-aligned min/max
- * inside a polygon **without** the bbox-fallback problem that biases
- * `getTerrainMinMaxHeightsForRectangle` for elongated / curved shapes.
+ * 查询多边形内部按瓦片对齐的 Cesium ApproximateTerrainHeights min/max，
+ * 同时避免 `getTerrainMinMaxHeightsForRectangle` 在细长/弯曲形状上产生的
+ * bbox 回退偏差。
  *
- * **Why the bbox path is wrong for polygons**:
- *   Cesium's `ApproximateTerrainHeights.getMinimumMaximumHeights` calls
- *   `getTileXYLevel(rectangle)` which finds the **deepest level at which
- *   all four corners share one tile** and returns the tile min/max for
- *   that level. When the rectangle straddles a deep-level tile boundary
- *   the algorithm falls back to a shallower (= geographically larger)
- *   tile, and the returned max is the max over that **larger** region.
+ * **为什么 bbox 路径不适合多边形**:
+ *   Cesium 的 `ApproximateTerrainHeights.getMinimumMaximumHeights` 会调用
+ *   `getTileXYLevel(rectangle)`，寻找**四个角共享同一瓦片的最深层级**，
+ *   并返回该层级瓦片的 min/max。当矩形跨越深层瓦片边界时，算法会回退到更浅
+ *   (= 地理范围更大)的瓦片，返回的 max 就变成该**更大**区域内的最大值。
  *
- *   Demo case (Mt Everest, lat 27.988°): the level-5 lat boundary is
- *   exactly at 28.125°. A curved arrow whose vertices span lat
- *   28.10°..28.15° straddles that boundary → falls back to level 4
- *   (11.25° × 11.25°, ~ half the Tibetan Plateau) → returned max
- *   includes Everest 8848m, even though the arrow itself never touches
- *   that peak. The arrow's shadow volume then extrudes to ~9km altitude
- *   and gets clipped by the camera's far plane at typical zoom altitudes,
- *   producing the curved fill-cut artefact.
+ *   demo 案例(珠穆朗玛峰，纬度 27.988°)：level-5 纬度边界正好在 28.125°。
+ *   若一个曲线箭头顶点横跨 28.10°..28.15°，就会跨过该边界，回退到 level 4
+ *   (11.25° x 11.25°，约半个青藏高原)，返回的 max 包含 8848m 的珠峰，
+ *   即使箭头本身从未触及该高峰。随后箭头 shadow volume 会挤出到约 9km 高度，
+ *   在典型缩放高度下被相机远裁剪面切掉，产生弯曲填充截断伪影。
  *
- * **The fix**: sample at each polygon vertex with a **micro-bbox** so
- * the per-query rectangle is small enough to always sit inside a single
- * level-6 tile (the deepest level in the bundled table). Take the
- * element-wise min/max across all samples. The resulting max is bounded
- * by the level-6 tiles **actually touched by the polygon vertices**,
- * not by whichever shallow tile happens to enclose the polygon's
- * full bbox.
+ * **修复方式**:在每个多边形顶点处使用 **micro-bbox** 采样，使每次查询矩形都足够小，
+ * 始终位于单个 level-6 瓦片(随包表中的最深层级)内。然后对所有样本取逐项 min/max。
+ * 得到的 max 只受多边形顶点**实际触及的 level-6 瓦片**约束，而不是受恰好包住
+ * 整体 bbox 的浅层瓦片约束。
  *
- * **What this still misses**: a peak that lies between two vertices in a
- * level-6 tile *not touched* by any vertex. For typical plot polygons
- * (arrows ≤ ~50 vertices, max edge length << level-6 tile width of
- * 2.8125° ≈ 313 km) the vertex set densely covers every level-6 tile
- * the polygon enters, so this is not a concern in practice. If callers
- * later need stricter coverage they can pre-densify the polygon
- * (e.g. via Catmull-Rom subdivision) before passing it in.
+ * **仍可能遗漏的情况**:某个高峰位于两个顶点之间，且所在 level-6 瓦片没有被任何顶点触及。
+ * 对典型标绘多边形(箭头约 ≤ 50 个顶点，最大边长远小于 level-6 瓦片宽度 2.8125°
+ * ≈ 313 km)，顶点集已经足够密集，能覆盖多边形进入的每个 level-6 瓦片，
+ * 实践中无需担心。若后续调用方需要更严格覆盖，可在传入前预加密多边形
+ * (例如通过 Catmull-Rom 细分)。
  *
- * @param points Polygon ring vertices in WGS84 degrees (at least 1 vertex).
- * @returns Element-wise min / max across per-vertex samples, with the
- *          adapter's default range as a fallback when nothing was sampled
- *          or the heights table is not initialized yet.
+ * @param points WGS84 度制多边形环顶点，至少 1 个。
+ * @returns 逐顶点样本的逐项 min/max；若没有样本或高度表尚未初始化，则回退到适配器默认范围。
  */
 export function getTerrainMinMaxHeightsForPolygon(
 	points: readonly LonLatPoint[],
@@ -190,11 +167,10 @@ export function getTerrainMinMaxHeightsForPolygon(
 		const lon = points[ i ][ 0 ];
 		const lat = points[ i ][ 1 ];
 
-		// Build a micro-rectangle centred on the vertex. Each corner sits
-		// 5e-7° away from the others — far less than any single level-6
-		// tile width (2.8125°), so `getTileXYLevel` resolves at level 6
-		// unless the vertex is literally on a level-6 tile boundary (in
-		// which case the +ε/-ε offset disambiguates).
+		// 构造以顶点为中心的 micro-rectangle。四角彼此仅相距 5e-7°，
+		// 远小于任意 level-6 瓦片宽度(2.8125°)，因此 `getTileXYLevel`
+		// 会解析到 level 6；除非顶点正好落在 level-6 瓦片边界上，
+		// 此时 +ε/-ε 偏移会帮助消除歧义。
 		const rectangle = Rectangle.fromDegrees(
 			lon - halfSide,
 			lat - halfSide,

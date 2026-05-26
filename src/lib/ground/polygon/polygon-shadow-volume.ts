@@ -68,7 +68,7 @@ export interface PolygonGeometryUserData {
 export function buildPolygonShadowVolumeGeometry(
 	options: PolygonShadowVolumeOptions,
 ): BufferGeometry {
-	// ── Step 1 · 默认值 ──
+	// ── 步骤 1 · 默认值 ──
 	const hierarchy = options.hierarchy;
 	const granularity =
 		options.granularity !== undefined
@@ -83,7 +83,7 @@ export function buildPolygonShadowVolumeGeometry(
 			? options.maximumHeight
 			: CESIUM_GLOBE_MINIMUM_ALTITUDE;
 
-	// ── Step 2 · 校验 ──
+	// ── 步骤 2 · 校验 ──
 	if ( hierarchy === undefined || hierarchy === null ) {
 		throw new Error( 'buildPolygonShadowVolumeGeometry: hierarchy is required.' );
 	}
@@ -108,7 +108,7 @@ export function buildPolygonShadowVolumeGeometry(
 		);
 	}
 
-	// ── Step 3 · 构造 prism ──
+	// ── 步骤 3 · 构造 prism ──
 	const extruded = constructExtrudedPolygonShadowVolume(
 		hierarchy,
 		granularity,
@@ -116,14 +116,14 @@ export function buildPolygonShadowVolumeGeometry(
 		maximumHeight,
 	);
 
-	// ── Step 4 · RTE 编码(Float64 → high/low Float32)──
+	// ── 步骤 4 · RTE 编码(Float64 → high/low Float32)──
 	// 与矩形阶段共用 math/rte-encoding.ts:encodePositionsToHighLowArrays。
 	// 每点 (px, py, pz) 拆为 (highX, highY, highZ) + (lowX, lowY, lowZ),
 	// GPU 端 `(p.high − eye.high) + (p.low − eye.low)` 算 RTE 偏移获得亚米精度。
 	const totalVertexCount = extruded.positions.length / 3;
 	const { high, low } = encodePositionsToHighLowArrays( extruded.positions );
 
-	// ── Step 5 · 装配 BufferGeometry ──
+	// ── 步骤 5 · 装配 BufferGeometry ──
 	const geometry = new BufferGeometry();
 	geometry.setAttribute(
 		'position3DHigh',
@@ -145,13 +145,13 @@ export function buildPolygonShadowVolumeGeometry(
 	);
 	geometry.setIndex( new BufferAttribute( extruded.indices, 1 ) );
 
-	// ── Step 6 · computeBoundingSphere(no-op) ──
+	// ── 步骤 6 · computeBoundingSphere(no-op) ──
 	// Three.js 默认从 `position` attribute 算 boundingSphere,但本几何只有
 	// `position3DHigh` / `position3DLow`,没有 `position` — 调用是 no-op。
 	// classification.ts 的 frustum culling 基于椭球与相机距离手动判定,不依赖此值。
 	geometry.computeBoundingSphere();
 
-	// ── Step 7 · userData 挂 polygonRectangle ──
+	// ── 步骤 7 · userData 挂 polygonRectangle ──
 	const userData: PolygonGeometryUserData = {
 		polygonRectangle: extruded.polygonRectangle,
 	};

@@ -106,7 +106,7 @@ function createCurvedArrowLocal(
 		options.curveSmoothingSegments ?? DEFAULT_CURVE_SMOOTHING_SEGMENTS;
 	const bodyTaperRatio = options.bodyTaperRatio ?? DEFAULT_BODY_TAPER_RATIO;
 
-	// ── Step 1:生成平滑脊线 ──
+	// ── 步骤 1:生成平滑脊线 ──
 	// 2 点 → 直线段密采(centripetalCatmullRomSamples 内部已处理 2 点退化);
 	// 3+ 点 → 严格通过控制点的 Centripetal Catmull-Rom。
 	const spineSamples = centripetalCatmullRomSamples(
@@ -116,7 +116,7 @@ function createCurvedArrowLocal(
 		return [];
 	}
 
-	// ── Step 2:总弧长与各种宽度 ──
+	// ── 步骤 2:总弧长与各种宽度 ──
 	const totalLen = wholeDistance( spineSamples );
 	if ( totalLen <= 0.0 ) {
 		// 所有控制点重合 → 无法构造箭头。
@@ -132,7 +132,7 @@ function createCurvedArrowLocal(
 		totalLen * HEAD_LENGTH_MAX_FRACTION,
 	);
 
-	// ── Step 3:定位精确颈点(沿脊线从末尾回退 headLength) ──
+	// ── 步骤 3:定位精确颈点(沿脊线从末尾回退 headLength) ──
 	const neck = findPointAlongPolylineFromEnd( spineSamples, headLength );
 	if ( neck === null ) {
 		// headLength 大于整条脊线 → 不可能(已 clamp),理论不可达;返回空保安。
@@ -155,12 +155,12 @@ function createCurvedArrowLocal(
 		return [];
 	}
 
-	// ── Step 4:逐点切线 + 90° 法线 ──
+	// ── 步骤 4:逐点切线 + 90° 法线 ──
 	// perpendicular = ( -ty, tx ) 是切线左手 90°(在 +y 朝上坐标系下指向"逻辑左")。
 	// 经纬度坐标系也是 +y 朝北的右手系,perp 朝"曲线行进方向的左侧"。
 	const tangents = computeTangents( bodySpine );
 
-	// ── Step 5:逐点半宽(尾→颈线性插值)──
+	// ── 步骤 5:逐点半宽(尾→颈线性插值)──
 	// 半宽 widthHalf(t) 在 t=0 处 = bodyHalfWidth,在 t=1 处:
 	//   - 若 bodyTaperRatio = 0:仍为 bodyHalfWidth(等宽,但末点强制覆盖为
 	//     neckHalfWidth 以保证与头部接缝平滑)。
@@ -196,7 +196,7 @@ function createCurvedArrowLocal(
 		rightSide[ i ] = [ sx - px * widthHalf, sy - py * widthHalf ];
 	}
 
-	// ── Step 6:头部 3 个新点(neckLeft/Right 已由 leftSide/rightSide 末点表示)──
+	// ── 步骤 6:头部 3 个新点(neckLeft/Right 已由 leftSide/rightSide 末点表示)──
 	// 头部翼展用 exactNeck 处的法线 × headHalfWidth(比 neckHalfWidth 更宽)。
 	const neckTx = tangents[ lastBodyIdx ][ 0 ];
 	const neckTy = tangents[ lastBodyIdx ][ 1 ];
@@ -219,7 +219,7 @@ function createCurvedArrowLocal(
 		controlPoints[ controlPoints.length - 1 ][ 1 ],
 	];
 
-	// ── Step 7:拼接最终多边形 ──
+	// ── 步骤 7:拼接最终多边形 ──
 	// 顺序(CCW):
 	//   leftSide(尾→颈) → headLeft → tip → headRight → rightSide 反向(颈→尾)
 	// leftSide[last] = neckLeft,rightSide[last] = neckRight,它们与 headLeft/

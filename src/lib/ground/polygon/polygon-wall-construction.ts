@@ -74,12 +74,12 @@ const _wallTopPosScratch = new Vector3();
  * 算法 5 步,顺序与 Cesium computeWallGeometry + scaleToGeodeticHeightExtruded +
  * computeAttributes(shadowVolume + wall 分支)一致:
  *
- *   Step 1 · 计算 perSideVertexCount
+ *   步骤 1 · 计算 perSideVertexCount
  *     遍历 length 条 edge(p1=ring[i], p2=ring[(i+1) % length]),
  *     累加 subdivideLineCount(p1, p2, minDistance) + 1(每条 edge 产 N+1 顶点),
  *     得到每一面(top 或 bot)的总顶点数。
  *
- *   Step 2 · 写 chord 顶点到双面 buffer
+ *   步骤 2 · 写 chord 顶点到双面 buffer
  *     对每条 edge:
  *       a. subdivideLine(p1, p2) → 一维 [p1.x, p1.y, p1.z, mid1.x, ..., mid_{N-1}.z]
  *          (注意:输出不含 p2 端点)
@@ -88,7 +88,7 @@ const _wallTopPosScratch = new Vector3();
  *          —— 但下一条 edge 的 subdivideLine 输出 p2(next.p1)再次,所以 wall 上
  *          相邻 edge 之间确实有"重复顶点对",由索引步骤的 corner-skipping 跳过)
  *
- *   Step 3 · 生成索引(使用 chord 位置,top == bottom,所以位置相等判定可识别 corner)
+ *   步骤 3 · 生成索引(使用 chord 位置,top == bottom,所以位置相等判定可识别 corner)
  *     for i in [0, perSideVertexCount):
  *       UL = i,UR = i + 1
  *       LL = UL + perSideVertexCount,LR = UR + perSideVertexCount
@@ -96,7 +96,7 @@ const _wallTopPosScratch = new Vector3();
  *       if equalsEpsilon(p_UL, p_UR, EPSILON10): continue  // corner / wrap-around 自动跳过
  *       否则写 2 个三角形:(UL, LL, UR) + (UR, LL, LR)
  *
- *   Step 4 · scaleToGeodeticHeightExtruded:把 chord 位置投到指定高度
+ *   步骤 4 · scaleToGeodeticHeightExtruded:把 chord 位置投到指定高度
  *     for i in [0, perSideFloatLength) step 3:
  *       chord = positions[i..i+3]            (原始 chord 位置,top 半,bot 半相同)
  *       surface = scaleToGeodeticSurface(chord)
@@ -105,7 +105,7 @@ const _wallTopPosScratch = new Vector3();
  *       positions[i + perSideFloatLength.. (bot)] = surface + minHeight * normal
  *     注:Cesium 用 chord 位置(非 surface)算 normal;细微差异但与 Cesium 一致。
  *
- *   Step 5 · extrudeDirection
+ *   步骤 5 · extrudeDirection
  *     top 半 = (0, 0, 0)(Float32Array 默认 0)
  *     bot 半 = -geodeticSurfaceNormal(top 半对应位置)
  *     Cesium 在 computeAttributes 的 shadowVolume + wall 分支里重新读取 top 半
@@ -132,7 +132,7 @@ export function constructPolygonWall(
 
 	const minDistance = chordLength( granularity, WGS84_RADII_X );
 
-	// ── Step 1 · 计算 perSideVertexCount ──
+	// ── 步骤 1 · 计算 perSideVertexCount ──
 	// Cesium L1081-1099 GEODESIC 分支:
 	//   numVertices += subdivideLineCount(p1, p2, minDistance);   // 累加每条 edge
 	// topEdgeLength = (numVertices + length) * 3                  // floats per side
@@ -147,7 +147,7 @@ export function constructPolygonWall(
 	const perSideFloatLength = perSideVertexCount * 3;
 	const totalFloatLength = perSideFloatLength * 2;
 
-	// ── Step 2 · 分配 buffer 并写 chord 位置到 top + bot 两个半 ──
+	// ── 步骤 2 · 分配 buffer 并写 chord 位置到 top + bot 两个半 ──
 	const positions = new Float64Array( totalFloatLength );
 
 	// subdivideLine 输出复用同一个临时 number[],避免每条 edge 都新建。
@@ -182,7 +182,7 @@ export function constructPolygonWall(
 		writeIndex++;
 	}
 
-	// ── Step 3 · 生成索引(用 chord 位置;corner-skipping 处理重复顶点对)──
+	// ── 步骤 3 · 生成索引(用 chord 位置;corner-skipping 处理重复顶点对)──
 	// indices count 公式(Cesium L1242-1245):
 	//   length(edgePositions) = perSideFloatLength * 2
 	//   indices count = length - positions.length * 6 = perSideFloatLength * 2 - length * 6
@@ -234,7 +234,7 @@ export function constructPolygonWall(
 		indices[ edgeIndex++ ] = LR;
 	}
 
-	// ── Step 4 · scaleToGeodeticHeightExtruded:chord → top(maxHeight)+ bot(minHeight)──
+	// ── 步骤 4 · scaleToGeodeticHeightExtruded:chord → top(maxHeight)+ bot(minHeight)──
 	// 严格匹配 Cesium PolygonGeometryLibrary.scaleToGeodeticHeightExtruded(L379-423):
 	//   n1 = geodeticSurfaceNormal(p)         (p = top 半 chord 位置)
 	//   p2 = scaleToGeodeticSurface(p)
@@ -281,7 +281,7 @@ export function constructPolygonWall(
 		positions[ i + 2 ] = _wallSurfaceScratch.z + _wallNormalScratch.z * maximumHeight;
 	}
 
-	// ── Step 5 · extrudeDirection:top 半 = 0,bot 半 = -geodeticSurfaceNormal(top_at_maxHeight)──
+	// ── 步骤 5 · extrudeDirection:top 半 = 0,bot 半 = -geodeticSurfaceNormal(top_at_maxHeight)──
 	// Cesium computeAttributes 在 shadowVolume + wall 分支中:
 	//   normal = ellipsoid.geodeticSurfaceNormal(position)   // position = 当前 top 半位置(at maxHeight)
 	//   extrudeNormals[bottomOffset] = -normal

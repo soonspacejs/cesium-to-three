@@ -1,19 +1,16 @@
 // ============================================================
 // primitives.ts
-// Layer: ground primitive construction (rectangle and polygon paths are now
-//        Cesium-free for geometry generation).
-// Role:  build rectangle and polygon shadow volumes using the native modules
-//        under math/, rectangle/, and polygon/. The classification runtime
-//        (classification.ts, materials.ts, depth.ts, terrain-log-depth.ts,
-//        terrain-heights.ts) keeps every precision fix bit-for-bit identical
-//        (Float64 MVP, LOG_DEPTH, dynamic czm_geometricToleranceOverMeter,
-//        LessEqualDepth stencil, terrain log-depth injection, ApproximateTerrainHeights
-//        window). The only additive change on the classification side is the
-//        polygon-stroke point-in-polygon path, which is on a separate shader
-//        branch keyed off `u_polygonBorderMode`.
-// Dependencies: Three.js debug meshes, native rectangle/polygon/math modules,
-//        classification primitive runtime, ApproximateTerrainHeights query.
-// Consumed by: public ground adapter and demos.
+// 层级:贴地图元构造层(矩形与多边形路径的几何生成已脱离 Cesium)。
+// 职责:使用 math/、rectangle/、polygon/ 下的本地模块构造矩形与多边形 shadow volume。
+//      classification 运行时(classification.ts、materials.ts、depth.ts、
+//      terrain-log-depth.ts、terrain-heights.ts)保持所有精度修复路径与 Cesium 对齐：
+//      Float64 MVP、LOG_DEPTH、动态 czm_geometricToleranceOverMeter、
+//      LessEqualDepth stencil、地形 log-depth 注入、ApproximateTerrainHeights 窗口。
+//      classification 侧唯一新增能力是 polygon 描边的 point-in-polygon 路径，
+//      它挂在 `u_polygonBorderMode` 控制的独立 shader 分支上。
+// 依赖:Three.js 调试网格、本地 rectangle/polygon/math 模块、
+//      classification 图元运行时、ApproximateTerrainHeights 查询。
+// 被消费:公开贴地适配器与 demo。
 // ============================================================
 
 import {
@@ -97,10 +94,10 @@ import type {
 } from './types';
 
 /**
- * Converts SoonSpace-style integer opacity into the normalized shader range.
+ * 将 SoonSpace 风格的整数不透明度转换为 shader 使用的归一化范围。
  *
- * @param opacity Percent opacity in the 0-100 store format.
- * @returns Clamped opacity in the 0-1 range used by Three uniforms.
+ * @param opacity 0-100 存储格式的不透明度百分比。
+ * @returns 限制到 0-1 范围后的 Three uniform 不透明度。
  */
 function normalizePercentOpacity( opacity: number ): number {
 	const safeOpacity = Number.isFinite( opacity ) ? opacity : 100.0;
@@ -108,9 +105,8 @@ function normalizePercentOpacity( opacity: number ): number {
 }
 
 /**
- * Converts the legacy `PolygonHierarchyDegrees` representation into the flat
- * (LonLatPoint[], LonLatPoint[][]) pair consumed by the native polygon
- * module.
+ * 将旧版 `PolygonHierarchyDegrees` 表示转换为本地 polygon 模块消费的
+ * 扁平 (LonLatPoint[], LonLatPoint[][]) 数据。
  */
 function polygonHierarchyDegreesToLonLatPoints(
 	hierarchy: PolygonHierarchyDegrees,
@@ -127,9 +123,8 @@ function polygonHierarchyDegreesToLonLatPoints(
 }
 
 /**
- * Adapts the native `PolygonHierarchy` (Vector3 ECEF) back to the public
- * `CartesianLike` shape so external callers reading
- * `primitive.polygonHierarchy.positions` get an unchanged contract.
+ * 将本地 `PolygonHierarchy`(Vector3 ECEF)适配回公开的 `CartesianLike` 形状，
+ * 保证外部调用方读取 `primitive.polygonHierarchy.positions` 时契约不变。
  */
 function polygonHierarchyToCartesianLike(
 	hierarchy: PolygonHierarchy,
@@ -148,8 +143,8 @@ function polygonHierarchyToCartesianLike(
 }
 
 /**
- * Centroid of a lon/lat ring. Used as the rotation pivot when an in-plane
- * polygon rotation is requested via `options.rotationDegrees`.
+ * 计算 lon/lat 环的中心点。`options.rotationDegrees` 请求平面内旋转时，
+ * 以该点作为旋转轴心。
  */
 function lonLatCentroid( points: readonly LonLatPoint[] ): LonLatPoint {
 	let lonSum = 0.0;
@@ -163,9 +158,8 @@ function lonLatCentroid( points: readonly LonLatPoint[] ): LonLatPoint {
 }
 
 /**
- * Rotates a lon/lat ring around a pivot. Approximate (small-area) rotation:
- * we treat lon/lat as flat 2-D coordinates around the pivot, which matches
- * what the reference project does for the demo polygon (radius < a few km).
+ * 围绕轴心旋转 lon/lat 环。这里使用小范围近似：把轴心附近的 lon/lat
+ * 当作平面 2D 坐标处理，与参考项目对 demo 多边形(半径数公里内)的做法一致。
  */
 function rotateLonLatPoints(
 	points: readonly LonLatPoint[],
@@ -191,9 +185,8 @@ function rotateLonLatPoints(
 }
 
 /**
- * Ground rectangle implemented with the native rectangle shadow-volume
- * pipeline. The classification command group is reused unchanged, preserving
- * every precision fix landed for the jitter issue.
+ * 使用本地 rectangle shadow-volume 管线实现的贴地矩形。
+ * classification 命令组保持复用，保留此前针对抖动问题落地的全部精度修复。
  */
 export class CesiumGroundRectanglePrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
@@ -207,8 +200,7 @@ export class CesiumGroundRectanglePrimitive {
 			Number.isFinite( options.strokeWidth ) ? options.strokeWidth : 0.0,
 			0.0,
 		);
-		// Rectangle follows the face contract: input points describe the fill
-		// rectangle, and strokeWidth grows the rendered face outward.
+		// 矩形遵循面图元契约：输入点描述填充矩形，strokeWidth 将实际渲染面向外扩张。
 		const renderRectangleDegrees = expandRectangleDegreesThroughMeters(
 			rectangleDegrees,
 			strokeWidthMeters,
@@ -230,18 +222,15 @@ export class CesiumGroundRectanglePrimitive {
 
 		const granularity = options.granularityRadians ?? ( Math.PI / 180.0 / 32.0 );
 
-		// Shadow-volume vertical window. Caller overrides win, otherwise fall
-		// back to the Cesium ±55km altitude window (CESIUM_GLOBE_MINIMUM_ALTITUDE).
+		// Shadow-volume 垂直窗口。调用方显式传入时优先使用，否则回退到 Cesium ±55km
+		// 高度窗口(CESIUM_GLOBE_MINIMUM_ALTITUDE)。
 		//
-		// Why a flat ±55km instead of an ApproximateTerrainHeights-tight box:
-		//   The shadow volume must STAY BIGGER than the camera's far frustum
-		//   slice at any altitude the user is going to fly through, otherwise
-		//   the far plane bites into the volume's top/sides and the Z-fail
-		//   stencil count for the affected fragments becomes incoherent (a
-		//   curved band where fill is missing — same artefact circle never
-		//   exhibits because its volume was already on this ±55km scale).
-		//   A 110km vertical extent is enough to keep the box fully outside
-		//   the frustum bounds at every realistic camera altitude.
+		// 为什么使用固定 ±55km，而不是 ApproximateTerrainHeights 给出的紧包围盒：
+		//   shadow volume 必须在用户可能飞行的任意相机高度下都大于远裁剪面的视锥切片。
+		//   否则远裁剪面会切到 volume 顶部/侧面，使受影响片元的 Z-fail stencil
+		//   计数失去一致性，出现填充缺失的弯曲带。圆形没有该伪影，是因为它的
+		//   volume 原本就在 ±55km 尺度。110km 垂直跨度足以让 box 在现实相机高度下
+		//   始终落在视锥边界之外。
 		const minimumHeight = options.minimumHeight ?? - CESIUM_GLOBE_MINIMUM_ALTITUDE;
 		let maximumHeight = options.maximumHeight ?? CESIUM_GLOBE_MINIMUM_ALTITUDE;
 		if ( maximumHeight <= minimumHeight ) {
@@ -300,32 +289,24 @@ export class CesiumGroundRectanglePrimitive {
 			this.debugSurface.frustumCulled = false;
 			this.debugSurface.renderOrder = ( options.renderOrder ?? 10 ) + 2;
 
-			// Move the debug surface to the non-pickable layer.
+			// 将 debug surface 放到不可拾取 layer。
 			//
-			// This is the only Cesium-ground mesh with a regular Three.js
-			// `position` attribute + a real bounding sphere — the shadow
-			// volume meshes use RTE-encoded `position3DHigh` /
-			// `position3DLow` so their boundingSphere is empty and they
-			// don't produce raycast hits in practice. The debug surface
-			// does, which makes GlobeControls (`EnvironmentControls._raycast`
-			// → `Raycaster.intersectObject(scene)`) treat it as terrain:
-			//   - `_updateZoomPoint`: zoomPoint lands on the surface at
-			//     debugSurfaceHeight (default 5000m); mouse-wheel zoom
-			//     asymptotically pulls the camera to that altitude and
-			//     gets stuck.
-			//   - `_getPointBelowCamera` / `adjustHeight = true`: returns
-			//     a hit at debugSurfaceHeight, pinning the camera above
-			//     the real terrain.
+			// 这是唯一拥有普通 Three.js `position` attribute 与真实 bounding sphere
+			// 的 Cesium-ground 网格；shadow volume 网格使用 RTE 编码的 `position3DHigh` /
+			// `position3DLow`，boundingSphere 为空，实践中不会产生 raycast 命中。
+			// debug surface 会被命中，导致 GlobeControls
+			// (`EnvironmentControls._raycast` → `Raycaster.intersectObject(scene)`)
+			// 把它当作地形：
+			//   - `_updateZoomPoint`:zoomPoint 落在 debugSurfaceHeight(默认 5000m)
+			//     的表面上，鼠标滚轮缩放会渐近地把相机拉到该高度并卡住。
+			//   - `_getPointBelowCamera` / `adjustHeight = true`:返回 debugSurfaceHeight
+			//     处的命中点，把相机钉在真实地形上方。
 			//
-			// Critically, Three.js's `Raycaster.intersect` does NOT honour
-			// `object.visible = false` — only `object.layers`. So toggling
-			// `debugSurface.visible` from the GUI does not stop raycasting;
-			// only a layer change does. We pin this mesh to
-			// CESIUM_GROUND_NON_PICKABLE_LAYER permanently because it's a
-			// debug-only visualization that should never participate in
-			// scene picking. The host camera must enable that layer
-			// (see ground-demo.ts `camera.layers.enable(...)`) so the
-			// mesh still renders.
+			// 关键点：Three.js 的 `Raycaster.intersect` 不认 `object.visible = false`，
+			// 只认 `object.layers`。因此从 GUI 切换 `debugSurface.visible` 不能阻止
+			// raycast，只有换 layer 才行。这个网格只是调试可视化，永远不应参与场景拾取，
+			// 所以固定放到 CESIUM_GROUND_NON_PICKABLE_LAYER。宿主相机必须启用该 layer
+			// (见 ground-demo.ts 的 `camera.layers.enable(...)`)以继续渲染该网格。
 			this.debugSurface.layers.set( CESIUM_GROUND_NON_PICKABLE_LAYER );
 
 			this.classification.group.add( this.debugSurface );
@@ -333,18 +314,18 @@ export class CesiumGroundRectanglePrimitive {
 	}
 
 	/**
-	 * Updates per-frame uniforms.
+	 * 更新逐帧 uniform。
 	 *
-	 * @param frameState Current Three-side frame state.
+	 * @param frameState 当前 Three 侧帧状态。
 	 */
 	public update( frameState: CesiumGroundFrameState ): void {
 		this.classification.update( frameState );
 	}
 
 	/**
-	 * Updates this rectangle's command-block render order.
+	 * 更新矩形命令块的渲染顺序。
 	 *
-	 * @param renderOrder Base order assigned to the front-stencil command.
+	 * @param renderOrder 分配给 front-stencil 命令的基础顺序。
 	 */
 	public setRenderOrder( renderOrder: number ): void {
 		this.classification.setRenderOrder( renderOrder );
@@ -354,7 +335,7 @@ export class CesiumGroundRectanglePrimitive {
 	}
 
 	/**
-	 * Releases resources.
+	 * 释放资源。
 	 */
 	public dispose(): void {
 		this.classification.dispose();
@@ -366,15 +347,15 @@ export class CesiumGroundRectanglePrimitive {
 }
 
 /**
- * Ground polygon implemented with the native polygon shadow-volume pipeline,
- * with stroke support via the classification primitive's polygon-border
- * uniforms (additive; no impact on the precision paths).
+ * 使用本地 polygon shadow-volume 管线实现的贴地多边形。
+ * 描边通过 classification 图元的 polygon-border uniform 支持，是附加能力，
+ * 不影响精度关键路径。
  *
- * Two call shapes are accepted:
- *   1. The new ref-style API: `points`, optional `holes` / `hole` /
- *      `rotationDegrees`, plus separate `fillColor` / `strokeColor` etc.
- *   2. The legacy `polygonHierarchyDegrees` form with `color` / `alpha`. The
- *      constructor detects which one is present and routes accordingly.
+ * 支持两种调用形态:
+ *   1. 新的 ref 风格 API:`points`、可选 `holes` / `hole` / `rotationDegrees`，
+ *      以及独立的 `fillColor` / `strokeColor` 等字段。
+ *   2. 旧版 `polygonHierarchyDegrees` 形态，搭配 `color` / `alpha`。
+ *      构造器会检测实际输入并路由到对应路径。
  */
 export class CesiumGroundPolygonPrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
@@ -383,7 +364,7 @@ export class CesiumGroundPolygonPrimitive {
 	public readonly hole: boolean;
 
 	public constructor( options: CesiumGroundPolygonOptions ) {
-		// Resolve the input shape — prefer the new ref-style API when present.
+		// 解析输入形态；存在新 ref 风格 API 时优先使用它。
 		const usingPlotSpec = Array.isArray( options.points ) && options.points.length > 0;
 		let outerLonLat: LonLatPoint[];
 		let holesLonLat: LonLatPoint[][];
@@ -411,14 +392,14 @@ export class CesiumGroundPolygonPrimitive {
 			: 0.0;
 		this.hole = options.hole === true;
 
-		// Apply in-plane rotation around the outer-ring centroid (matches ref demo).
+		// 围绕外环中心应用平面内旋转，与参考 demo 一致。
 		const rotationPivot = lonLatCentroid( outerLonLat );
 		const rotatedOuter = rotateLonLatPoints( outerLonLat, rotationPivot, this.rotationDegrees );
 		const rotatedHoles = holesLonLat.map(
 			( hole ) => rotateLonLatPoints( hole, rotationPivot, this.rotationDegrees ),
 		);
 
-		// Stroke width (meters) outward expansion → render-time outer ring.
+		// 描边宽度(米)向外扩张，得到实际渲染用外环。
 		const strokeWidthMeters = Math.max(
 			Number.isFinite( options.strokeWidth ) ? ( options.strokeWidth as number ) : 0.0,
 			0.0,
@@ -427,30 +408,26 @@ export class CesiumGroundPolygonPrimitive {
 			? polygonRenderBoundsThroughMeters( rotatedOuter, strokeWidthMeters )
 			: rotatedOuter.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
 
-		// The input polygon is the fill face. Stroke is classified outside this
-		// fill ring in the fragment shader by measuring distance to the same
-		// boundary. The render ring is only a conservative shell so the shader
-		// has fragments available for the outside stroke band.
+		// 输入多边形是填充面。描边由片元着色器测量到同一边界的距离，
+		// 在填充环外侧进行 classification。render ring 只是保守外壳，
+		// 让 shader 在外侧描边带上有片元可处理。
 		const fillHierarchy = polygonHierarchyFromLonLatPoints( rotatedOuter, rotatedHoles );
 		const renderHierarchy = polygonHierarchyFromLonLatPoints( renderOuter, rotatedHoles );
 		this.polygonHierarchy = polygonHierarchyToCartesianLike( fillHierarchy );
 
-		// Granularity default keeps parity with the prior adapter.
+		// 默认 granularity 与之前的适配器保持一致。
 		const granularity = options.granularityRadians ?? ( Math.PI / 180.0 / 32.0 );
 
-		// Shadow-volume vertical window. Same flat ±55km fallback the
-		// rectangle / circle primitives use (see rectangle constructor for
-		// the full reasoning) — terrain-aware tight boxes get bitten by the
-		// camera's far plane and trigger curved-band fill artefacts, the
-		// ±55km extent stays outside the frustum at every realistic camera
-		// altitude.
+		// Shadow-volume 垂直窗口。使用与矩形/圆形图元相同的固定 ±55km 回退
+		// (完整原因见矩形构造器)：地形感知的紧包围盒会被相机远裁剪面切到，
+		// 触发弯曲带状填充伪影；±55km 跨度在现实相机高度下始终位于视锥之外。
 		const minimumHeight = options.minimumHeight ?? - CESIUM_GLOBE_MINIMUM_ALTITUDE;
 		let maximumHeight = options.maximumHeight ?? CESIUM_GLOBE_MINIMUM_ALTITUDE;
 		if ( maximumHeight <= minimumHeight ) {
 			maximumHeight = minimumHeight + 1.0;
 		}
 
-		// One local call replaces the previous 6-step Cesium chain.
+		// 一个本地调用替代之前 6 步 Cesium 链路。
 		const threeGeometry = buildPolygonShadowVolumeGeometry( {
 			hierarchy: renderHierarchy,
 			granularity,
@@ -466,16 +443,15 @@ export class CesiumGroundPolygonPrimitive {
 			renderHierarchy,
 		);
 
-		// Polygon stroke planar reference points — the fill ring projected into
-		// the same SW-meter plane the fragment shader uses for uv decoding.
+		// 多边形描边的平面参考点：把填充环投影到片元着色器用于 uv 解码的同一 SW 米制平面。
 		const stylePoints = computePolygonPlanarStylePoints(
 			polygonRectangle,
 			renderHierarchy,
 			rotatedOuter,
 		);
 
-		// Fill color / alpha resolution: new API uses fillColor + fillOpacity
-		// (0..100 percent), legacy API uses color + alpha (0..1).
+		// 填充颜色/透明度解析：新 API 使用 fillColor + fillOpacity(0..100 百分比)，
+		// 旧 API 使用 color + alpha(0..1)。
 		let fillColorInput: Color | string | number;
 		let fillAlpha: number;
 		if ( usingPlotSpec ) {
@@ -506,33 +482,32 @@ export class CesiumGroundPolygonPrimitive {
 			),
 			strokeWidthMeters,
 		);
-		// Activate the polygon-stroke shader branch with the fill ring's planar
-		// meter coordinates. Three or more points enable polygon-border mode,
-		// fewer fall back to the rectangle axis-aligned border.
+		// 用填充环的平面米制坐标激活 polygon-stroke shader 分支。
+		// 三个及以上点启用 polygon-border 模式，更少点则回退到矩形轴对齐边框。
 		this.classification.setPolygonBorderPoints( stylePoints );
 		this.classification.setPolygonMiterStrokeMode( false );
 	}
 
 	/**
-	 * Updates per-frame uniforms.
+	 * 更新逐帧 uniform。
 	 *
-	 * @param frameState Current Three-side frame state.
+	 * @param frameState 当前 Three 侧帧状态。
 	 */
 	public update( frameState: CesiumGroundFrameState ): void {
 		this.classification.update( frameState );
 	}
 
 	/**
-	 * Updates this polygon's command-block render order.
+	 * 更新多边形命令块的渲染顺序。
 	 *
-	 * @param renderOrder Base order assigned to the front-stencil command.
+	 * @param renderOrder 分配给 front-stencil 命令的基础顺序。
 	 */
 	public setRenderOrder( renderOrder: number ): void {
 		this.classification.setRenderOrder( renderOrder );
 	}
 
 	/**
-	 * Releases resources.
+	 * 释放资源。
 	 */
 	public dispose(): void {
 		this.classification.dispose();
@@ -540,16 +515,14 @@ export class CesiumGroundPolygonPrimitive {
 }
 
 /**
- * Ground circle implemented with the native circle shadow-volume pipeline.
+ * 使用本地 circle shadow-volume 管线实现的贴地圆。
  *
- * Plot-spec options are the same shape the reference project uses
- * (`center` + `radius` + stroke/fill/visible, plus optional decoration:
- * `ringCount`, `ringGapMeters`, `sectorStartDegrees`, `sectorAngleDegrees`,
- * `stRotationRadians`, `granularityRadians`, `height` / `extrudedHeight` for
- * the shadow-volume window, and `renderOrder`/`fragmentCull` knobs). The
- * fragment shader's circle branch is activated via
- * `classification.setCircleBorderStyle(...)`; nothing on the LOG_DEPTH or
- * Float64 paths is touched.
+ * plot-spec 选项与参考项目保持同形：`center` + `radius` + stroke/fill/visible，
+ * 以及可选装饰字段 `ringCount`、`ringGapMeters`、`sectorStartDegrees`、
+ * `sectorAngleDegrees`、`stRotationRadians`、`granularityRadians`，
+ * shadow-volume 窗口高度 `height` / `extrudedHeight`，以及
+ * `renderOrder` / `fragmentCull` 控制项。片元着色器的 circle 分支通过
+ * `classification.setCircleBorderStyle(...)` 激活；LOG_DEPTH 与 Float64 路径不受影响。
  */
 export class CesiumGroundCirclePrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
@@ -577,8 +550,8 @@ export class CesiumGroundCirclePrimitive {
 			Number.isFinite( options.strokeWidth ) ? options.strokeWidth : 0.0,
 			0.0,
 		);
-		// Circle follows the same face contract: options.radius is the fill
-		// radius; the rendered shadow volume radius includes the outside stroke.
+		// 圆形遵循同一面图元契约：options.radius 是填充半径；
+		// 实际渲染的 shadow volume 半径包含外侧描边。
 		const renderRadiusMeters = fillRadiusMeters + strokeWidthMeters;
 
 		const requestedRingCount = options.ringCount ?? 1.0;
@@ -610,10 +583,9 @@ export class CesiumGroundCirclePrimitive {
 			)
 			: Math.PI / 180.0;
 
-		// Shadow-volume vertical window. Caller-supplied minimum/maximumHeight
-		// wins; otherwise fall back to the Cesium ±55 km altitude window. We
-		// skip ApproximateTerrainHeights here because the circle plot lives
-		// in a small disc and the ±55 km fallback already covers it cleanly.
+		// Shadow-volume 垂直窗口。调用方传入的 minimum/maximumHeight 优先；
+		// 否则回退到 Cesium ±55km 高度窗口。这里跳过 ApproximateTerrainHeights，
+		// 因为圆形标绘位于小圆盘内，±55km 回退已经足够覆盖。
 		const minimumHeight = options.minimumHeight ?? - CESIUM_GLOBE_MINIMUM_ALTITUDE;
 		let maximumHeight = options.maximumHeight ?? CESIUM_GLOBE_MINIMUM_ALTITUDE;
 		if ( maximumHeight <= minimumHeight ) {
@@ -667,25 +639,25 @@ export class CesiumGroundCirclePrimitive {
 	}
 
 	/**
-	 * Updates per-frame uniforms.
+	 * 更新逐帧 uniform。
 	 *
-	 * @param frameState Current Three-side frame state.
+	 * @param frameState 当前 Three 侧帧状态。
 	 */
 	public update( frameState: CesiumGroundFrameState ): void {
 		this.classification.update( frameState );
 	}
 
 	/**
-	 * Updates this circle's command-block render order.
+	 * 更新圆形命令块的渲染顺序。
 	 *
-	 * @param renderOrder Base order assigned to the front-stencil command.
+	 * @param renderOrder 分配给 front-stencil 命令的基础顺序。
 	 */
 	public setRenderOrder( renderOrder: number ): void {
 		this.classification.setRenderOrder( renderOrder );
 	}
 
 	/**
-	 * Releases resources.
+	 * 释放资源。
 	 */
 	public dispose(): void {
 		this.classification.dispose();
@@ -789,21 +761,21 @@ export class CesiumGroundPointPrimitive {
 	}
 
 	/**
-	 * Updates per-frame uniforms on the underlying primitive.
+	 * 更新底层图元的逐帧 uniform。
 	 */
 	public update( frameState: CesiumGroundFrameState ): void {
 		this.delegate.update( frameState );
 	}
 
 	/**
-	 * Updates this point's command-block render order.
+	 * 更新点图元命令块的渲染顺序。
 	 */
 	public setRenderOrder( renderOrder: number ): void {
 		this.delegate.setRenderOrder( renderOrder );
 	}
 
 	/**
-	 * Releases resources.
+	 * 释放资源。
 	 */
 	public dispose(): void {
 		this.delegate.dispose();

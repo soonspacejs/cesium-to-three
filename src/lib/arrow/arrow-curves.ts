@@ -64,7 +64,7 @@ export function centripetalCatmullRomSamples(
 		return linearSegmentSamples( controlPoints[ 0 ], controlPoints[ 1 ], segmentSamples );
 	}
 
-	// ── Step 1:两端 mirror 虚拟点 ──
+	// ── 步骤 1:两端 mirror 虚拟点 ──
 	// 端点处的 CR 段需要"前一段"和"后一段"的存在;mirror 提供这两段的
 	// 虚拟控制点,使端点切线沿首/末段方向延伸而不是任意翻转。
 	const p0First = controlPoints[ 0 ];
@@ -82,7 +82,7 @@ export function centripetalCatmullRomSamples(
 
 	const extended: LonLatPoint[] = [ mirrorStart, ...controlPoints, mirrorEnd ];
 
-	// ── Step 2/3:遍历每相邻 4 个点 (P0,P1,P2,P3) 采样段 P1→P2 ──
+	// ── 步骤 2/3:遍历每相邻 4 个点 (P0,P1,P2,P3) 采样段 P1→P2 ──
 	const output: LonLatPoint[] = [];
 	const safeSegmentSamples = Math.max( Math.floor( segmentSamples ), 1 );
 	const totalSegments = controlPoints.length - 1;

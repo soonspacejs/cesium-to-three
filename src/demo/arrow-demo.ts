@@ -1,38 +1,29 @@
 // ============================================================
 // arrow-demo.ts
-// Layer: demo arrow plotting subsystem.
-// Role:  encapsulate all 5 special-shape arrows (fine arrow, assault
-//        direction arrow, attack arrow, swallowtail attack arrow, curved
-//        arrow) as a self-contained set of `CesiumGroundPolygonPrimitive`
-//        instances plus a complete lil-gui surface. Each arrow type lives in
-//        its own folder with the full option set from
-//        `src/lib/arrow/arrow-types.ts` exposed as numeric sliders / colour
-//        pickers, plus a JSON text field for the control points that mirrors
-//        the rectangle + polygon pattern in `ground-demo.ts`.
+// 层级:演示用箭头标绘子系统。
+// 职责:把 5 类特殊形状箭头(fine arrow、assault direction arrow、attack arrow、
+//        swallowtail attack arrow、curved arrow)封装成一组自包含的
+//        `CesiumGroundPolygonPrimitive` 实例,并提供完整 lil-gui 操作面板。
+//        每个箭头类型都有自己的文件夹,暴露 `src/lib/arrow/arrow-types.ts`
+//        中完整选项集的数值滑块 / 颜色选择器,以及一个控制点 JSON 文本框;
+//        该文本框行为与 `ground-demo.ts` 中矩形 + 多边形模式一致。
 //
-//        Design goals:
-//          - Zero geometry knowledge in this file. All math lives in
-//            `src/lib/arrow`; this module only consumes `LonLatPoint[]`
-//            output rings and feeds them straight to
-//            CesiumGroundPolygonPrimitive.
-//          - Each arrow primitive is fully reconstructable when any
-//            geometry-affecting option changes. Stroke / fill / visibility
-//            / render order edits are applied without rebuilding geometry.
-//          - The 5 arrows share the host's `Passes` (front stencil / back
-//            stencil / color) toggle and the `fragmentCull` flag through
-//            `applyPassVisibility(...)` and `applyFragmentCull(...)` hooks,
-//            so the existing `applyGroundDebugSettings()` host pipeline
-//            stays a single source of truth for shared render state.
-//          - Plot orders are routed through the host's
-//            `PlotOrderRegistry<DemoPlotId>` so arrows participate in the
-//            same global render order pool as the rectangle / polygon /
-//            circle primitives.
+//        设计目标:
+//          - 本文件不承载几何知识。所有数学都在 `src/lib/arrow` 中;本模块只消费
+//            `LonLatPoint[]` 输出环,并直接交给 CesiumGroundPolygonPrimitive。
+//          - 任意影响几何的选项变化时,每个箭头图元都可完整重建。描边 / 填充 /
+//            可见性 / 渲染顺序修改无需重建几何即可应用。
+//          - 5 个箭头通过 `applyPassVisibility(...)` 与 `applyFragmentCull(...)`
+//            hook 共享宿主的 `Passes`(front stencil / back stencil / color)
+//            开关和 `fragmentCull` 标志,让现有 `applyGroundDebugSettings()`
+//            宿主管线继续作为共享渲染状态的唯一来源。
+//          - 标绘顺序通过宿主 `PlotOrderRegistry<DemoPlotId>` 路由,使箭头与
+//            矩形 / 多边形 / 圆图元参与同一个全局渲染顺序池。
 //
-// Dependencies: src/lib/arrow (5 factories + option types),
-//               src/lib/ground (CesiumGroundPolygonPrimitive +
-//               CesiumGroundFrameState), demo plot-utils
-//               (PlotOrderRegistry, plotOrderToRenderOrder).
-// Consumed by: src/demo/ground-demo.ts.
+// 依赖:src/lib/arrow(5 个工厂 + 选项类型)、src/lib/ground
+//      (CesiumGroundPolygonPrimitive + CesiumGroundFrameState)、demo plot-utils
+//      (PlotOrderRegistry、plotOrderToRenderOrder)。
+// 被消费:src/demo/ground-demo.ts。
 // ============================================================
 
 import { Color, type Scene } from 'three';
@@ -58,9 +49,9 @@ import {
 } from '../lib/ground';
 import { plotOrderToRenderOrder } from './plot-utils';
 
-// ── Arrow plot identifier union ──
-// These ids are exported so the host `DemoPlotId` in ground-demo.ts can be
-// widened to include them, sharing one `PlotOrderRegistry` instance.
+// ── 箭头标绘标识联合类型 ──
+// 导出这些 id,让 ground-demo.ts 中的宿主 `DemoPlotId` 可扩展并包含它们,
+// 从而共享同一个 `PlotOrderRegistry` 实例。
 export type ArrowPlotId =
 	| 'fineArrow'
 	| 'assaultDirection'
@@ -81,28 +72,24 @@ type ArrowKind =
 	| 'curvedArrow';
 
 /**
- * Minimal registry shape consumed by this module.
+ * 本模块消费的最小 registry 结构。
  *
- * The host owns a `PlotOrderRegistry<DemoPlotId>` where `DemoPlotId` is the
- * widened union of rectangle / polygon / circle + every {@link ArrowPlotId}.
- * That class is generic in `PlotId` and its private `Map<PlotId, ...>`
- * fields make it invariant under TypeScript's nominal-private-field rule,
- * so a `PlotOrderRegistry<DemoPlotId>` is not assignable to a
- * `PlotOrderRegistry<ArrowPlotId>` even though `ArrowPlotId ⊂ DemoPlotId`.
+ * 宿主拥有一个 `PlotOrderRegistry<DemoPlotId>`,其中 `DemoPlotId` 是
+ * 矩形 / 多边形 / 圆 + 全部 {@link ArrowPlotId} 扩展后的联合类型。
+ * 该类对 `PlotId` 泛型化,而它的私有 `Map<PlotId, ...>` 字段会触发
+ * TypeScript 名义私有字段规则下的不变性,所以即使 `ArrowPlotId ⊂ DemoPlotId`,
+ * `PlotOrderRegistry<DemoPlotId>` 也不能赋值给 `PlotOrderRegistry<ArrowPlotId>`。
  *
- * The fix is structural: declare an interface that lists only the two
- * methods this module touches. Method-parameter bivariance under method
- * shorthand means a registry parameterized over a superset of ArrowPlotId
- * is still assignable to this interface (the wider method accepts
- * narrower input). No `unknown` casts at the call site needed.
+ * 修复方式是结构化:声明一个只列出本模块使用的两个方法的接口。方法简写下的
+ * 方法参数双变性意味着,以 ArrowPlotId 超集参数化的 registry 仍可赋值给此接口
+ * (更宽的方法接受更窄输入)。调用点无需 `unknown` cast。
  */
 export interface ArrowPlotOrderRegistry {
 	register( plotId: ArrowPlotId, preferredPlotOrder?: number ): number;
 	update( plotId: ArrowPlotId, preferredPlotOrder: number ): number;
 }
 
-// Ordered list used to iterate entries deterministically (GUI order, info
-// lines order, dispose order). Kept in sync with `ArrowPlotId`.
+// 有序列表用于确定性遍历 entry(GUI 顺序、信息行顺序、dispose 顺序),并与 `ArrowPlotId` 保持同步。
 const ARROW_PLOT_IDS: readonly ArrowPlotId[] = [
 	'fineArrow',
 	'assaultDirection',
@@ -116,7 +103,7 @@ const ARROW_PLOT_IDS: readonly ArrowPlotId[] = [
 	'largeCurvedArrow',
 ];
 
-// ── Per-arrow human label for the GUI folder + info panel ──
+// ── 每个箭头用于 GUI 文件夹 + 信息面板的人类可读标签 ──
 const ARROW_LABELS: Record<ArrowPlotId, string> = {
 	fineArrow: 'Fine Arrow',
 	assaultDirection: 'Assault Direction',
@@ -130,7 +117,7 @@ const ARROW_LABELS: Record<ArrowPlotId, string> = {
 	largeCurvedArrow: 'Large Curved Arrow',
 };
 
-// ── Per-arrow distinct fill colours so each is identifiable at a glance ──
+// ── 每个箭头使用不同填充色,便于一眼区分 ──
 const ARROW_FILL_COLORS: Record<ArrowPlotId, string> = {
 	fineArrow: '#ffaa00',
 	assaultDirection: '#ff4488',
@@ -144,16 +131,15 @@ const ARROW_FILL_COLORS: Record<ArrowPlotId, string> = {
 	largeCurvedArrow: '#55f0cc',
 };
 
-// ── Shared default stroke / fill state ──
+// ── 共享默认描边 / 填充状态 ──
 const DEFAULT_STROKE_COLOR = '#ffffff';
 const DEFAULT_STROKE_OPACITY = 95.0;
 const DEFAULT_STROKE_WIDTH_METERS = 0.35;
 const DEFAULT_FILL_OPACITY = 70.0;
 
-// ── Initial plot orders ──
-// Rectangle/Polygon/Circle host take 0/1/2. Arrows occupy 3..7. The
-// `PlotOrderRegistry` will re-allocate if these collide with a user-edited
-// order, so these numbers are only the *preferred* starting orders.
+// ── 初始标绘顺序 ──
+// Rectangle/Polygon/Circle 宿主占用 0/1/2。箭头占用 3..7。如果这些值与用户编辑后的
+// 顺序冲突,`PlotOrderRegistry` 会重新分配,所以这些数字只是 *首选* 起始顺序。
 const PREFERRED_PLOT_ORDERS: Record<ArrowPlotId, number> = {
 	fineArrow: 3,
 	assaultDirection: 4,
@@ -167,10 +153,9 @@ const PREFERRED_PLOT_ORDERS: Record<ArrowPlotId, number> = {
 	largeCurvedArrow: 15,
 };
 
-// ── Per-arrow default factory options ──
-// These mirror the constants in `src/lib/arrow/shapes/*.ts`. Exposing them
-// here lets the GUI start at the same defaults the factories use, so a
-// "reset" is simply: refresh the page.
+// ── 每个箭头的默认工厂选项 ──
+// 这些值镜像 `src/lib/arrow/shapes/*.ts` 中的常量。把它们暴露在这里,
+// 可让 GUI 从工厂同款默认值启动,因此"重置"只需要刷新页面。
 const DEFAULT_FINE_ARROW_OPTIONS: Required<FineArrowOptions> = {
 	tailWidthFactor: 0.10,
 	neckWidthFactor: 0.20,
@@ -222,9 +207,8 @@ const DEFAULT_CURVED_ARROW_OPTIONS: Required<CurvedArrowOptions> = {
 };
 
 /**
- * Per-arrow demo entry — owns one CesiumGroundPolygonPrimitive plus all GUI
- * state. The discriminated union over `kind` lets `rebuildArrow` dispatch
- * to the correct factory without type assertions.
+ * 单个箭头 demo entry:持有一个 CesiumGroundPolygonPrimitive 以及全部 GUI 状态。
+ * 基于 `kind` 的可辨识联合让 `rebuildArrow` 无需类型断言即可分派到正确工厂。
  */
 interface BaseArrowEntry {
 	readonly id: ArrowPlotId;
@@ -287,14 +271,12 @@ interface ArrowEntryByKind {
 }
 
 /**
- * Builds the initial control-point set for every arrow type at a 1:1 test
- * scale: each arrow body spans ~10 m, and the 5 arrows are spawned at
- * distinct lon/lat slots around the host's rectangle centre so they don't
- * overlap one another or the rectangle/polygon/circle. The spread radius
- * is on the order of 40-60 m so a typical close-up camera (altitude
- * ~50-200 m) can fit the whole scene without zooming back out.
+ * 以 1:1 测试尺度为每种箭头构建初始控制点集合:每个箭头主体跨度约 10 m,
+ * 5 个箭头生成在宿主矩形中心附近不同的 lon/lat 位置,避免彼此或与矩形 /
+ * 多边形 / 圆重叠。散布半径约 40-60 m,因此常见近景相机(高度约 50-200 m)
+ * 无需拉远即可容纳整个场景。
  *
- * Layout (at lat 28°, 1° lon ≈ 98 km, 1° lat ≈ 111 km):
+ * 布局(纬度 28° 处,1° lon ≈ 98 km,1° lat ≈ 111 km):
  *
  *           curved (NW, S-shape spans ~30 m)
  *
@@ -306,18 +288,17 @@ interface ArrowEntryByKind {
  *
  *           assaultDirection (SW, ~12 m pointer west)
  *
- * @param centerLon   Longitude of the host demo's rectangle centre.
- * @param centerLat   Latitude of the host demo's rectangle centre.
- * @returns Control-point set per arrow type. Each set already satisfies
- *          the arrow factory's minimum-point requirement.
+ * @param centerLon   宿主 demo 矩形中心经度。
+ * @param centerLat   宿主 demo 矩形中心纬度。
+ * @returns 每种箭头类型的控制点集合。每个集合都已满足对应箭头工厂的最小点数要求。
  */
 function buildInitialControlPoints(
 	centerLon: number,
 	centerLat: number,
 ): Record<ArrowPlotId, LonLatPoint[]> {
-	// Convenience constants for "N metres in degrees" at lat 28°. lat is
-	// independent (111 km/°), lon shrinks with cos(lat) ≈ cos(28°) ≈ 0.883
-	// at this latitude (1 m ≈ 1.02e-5 deg lon, 1 m ≈ 9.01e-6 deg lat).
+	// 纬度 28° 处 "N 米对应多少度" 的便捷常量。lat 基本独立(111 km/°),
+	// lon 会随 cos(lat) 缩小;在此纬度 cos(28°) ≈ 0.883
+	// (1 m ≈ 1.02e-5 度 lon,1 m ≈ 9.01e-6 度 lat)。
 	const mLon = 1.02e-5;
 	const mLat = 9.01e-6;
 
@@ -402,15 +383,14 @@ function buildInitialControlPoints(
 }
 
 /**
- * Validates and parses a JSON text field into an array of `[lon, lat]` pairs.
- * Mirrors the rectangle / polygon parse helpers in ground-demo.ts so error
- * messages stay consistent across the demo.
+ * 校验并解析 JSON 文本字段,输出 `[lon, lat]` 点对数组。它镜像 ground-demo.ts
+ * 中的矩形 / 多边形解析辅助函数,让整个 demo 的错误信息保持一致。
  *
- * @param value         JSON text typed in lil-gui.
- * @param label         Human-readable arrow name used in error messages.
- * @param minimumPoints Per-arrow minimum control-point count.
- * @returns Validated lon/lat array.
- * @throws Error if the input fails any structural / numeric check.
+ * @param value         lil-gui 中输入的 JSON 文本。
+ * @param label         错误信息中使用的人类可读箭头名称。
+ * @param minimumPoints 每个箭头类型的最小控制点数量。
+ * @returns 校验后的 lon/lat 数组。
+ * @throws 当输入未通过结构或数值检查时抛出 Error。
  */
 function parseArrowPointsText(
 	value: string,
@@ -438,8 +418,8 @@ function parseArrowPointsText(
 }
 
 /**
- * Per-arrow minimum control-point count, derived from each factory's
- * documented contract in `src/lib/arrow/README.md`.
+ * 每个箭头类型的最小控制点数量,来自 `src/lib/arrow/README.md` 中记录的
+ * 各工厂契约。
  */
 const ARROW_MINIMUM_POINTS: Record<ArrowPlotId, number> = {
 	fineArrow: 2,
@@ -455,12 +435,11 @@ const ARROW_MINIMUM_POINTS: Record<ArrowPlotId, number> = {
 };
 
 /**
- * Calls the right arrow factory for the entry's `kind` discriminant.
- * Returns an empty array when the input is degenerate (so the caller can
- * skip primitive construction without throwing).
+ * 根据 entry 的 `kind` 判别字段调用正确的箭头工厂。输入退化时返回空数组,
+ * 让调用方可以跳过图元构造而不抛错。
  *
- * @param entry Arrow entry containing parsed points + current options.
- * @returns Closed CCW polygon ring; empty when the input is degenerate.
+ * @param entry 包含已解析点与当前选项的箭头 entry。
+ * @returns 闭合的逆时针多边形环;输入退化时为空。
  */
 function computeArrowRing( entry: ArrowEntry ): ArrowPolygon {
 	switch ( entry.kind ) {
@@ -492,30 +471,29 @@ function computeArrowRing( entry: ArrowEntry ): ArrowPolygon {
 }
 
 /**
- * Options consumed by the arrow subsystem constructor.
+ * 箭头子系统构造函数消费的选项。
  */
 export interface ArrowSubsystemOptions {
-	/** Three.js scene to which classification groups are added / removed. */
+	/** 添加 / 移除 classification group 的 Three.js scene。 */
 	scene: Scene;
-	/** Parent lil-gui where the per-arrow folders are appended. */
+	/** 用于追加每个箭头文件夹的父级 lil-gui。 */
 	parentGui: GUI;
 	/**
-	 * Plot order registry the host owns. The registry's PlotId union must
-	 * include {@link ArrowPlotId}; in practice the host widens its own
-	 * `DemoPlotId` to include arrow ids and passes the typed registry in.
+	 * 宿主持有的标绘顺序 registry。registry 的 PlotId 联合类型必须包含
+	 * {@link ArrowPlotId};实际使用中宿主会把自己的 `DemoPlotId` 扩展为包含箭头 id,
+	 * 再把带类型的 registry 传入。
 	 *
-	 * Typed as the minimal structural shape {@link ArrowPlotOrderRegistry}
-	 * to side-step the host registry's invariant generic parameter (see the
-	 * interface JSDoc above for the variance reasoning).
+	 * 这里标注为最小结构形状 {@link ArrowPlotOrderRegistry},用于绕过宿主
+	 * registry 不变泛型参数的限制(方差推理见上方接口 JSDoc)。
 	 */
 	plotOrderRegistry: ArrowPlotOrderRegistry;
-	/** Longitude of the host rectangle centre — anchors initial control points. */
+	/** 宿主矩形中心经度,用于锚定初始控制点。 */
 	centerLongitude: number;
-	/** Latitude of the host rectangle centre — anchors initial control points. */
+	/** 宿主矩形中心纬度,用于锚定初始控制点。 */
 	centerLatitude: number;
-	/** Initial value of the host's `fragmentCull` toggle. */
+	/** 宿主 `fragmentCull` 开关的初始值。 */
 	fragmentCull: boolean;
-	/** Initial state of the host's `Passes` toggle group. */
+	/** 宿主 `Passes` 开关组的初始状态。 */
 	passVisibility: {
 		frontStencil: boolean;
 		backStencil: boolean;
@@ -699,8 +677,8 @@ export class ArrowSubsystem {
 	}
 
 	/**
-	 * Reapplies fill / stroke / visibility / render-order to every primitive,
-	 * without rebuilding geometry. Use after broad state changes.
+	 * 重新应用每个图元的填充 / 描边 / 可见性 / 渲染顺序,不重建几何。
+	 * 适合在大范围状态变化后调用。
 	 */
 	public applyAllSettings(): void {
 		for ( const entry of this.orderedEntries ) {
@@ -709,10 +687,9 @@ export class ArrowSubsystem {
 	}
 
 	/**
-	 * Returns one line of info text per arrow, used to enrich the host's
-	 * fixed info-panel block.
+	 * 为每个箭头返回一行信息文本,用于补充宿主固定信息面板。
 	 *
-	 * @returns Lines like `"Fine Arrow: on / order 3 / pts 2 / ring 8"`.
+	 * @returns 每行包含箭头标签、开关状态、顺序、控制点数量与输出环点数。
 	 */
 	public getInfoLines(): string[] {
 		return this.orderedEntries.map( ( entry ) => {
@@ -728,7 +705,7 @@ export class ArrowSubsystem {
 	}
 
 	/**
-	 * Removes classification groups from the scene + disposes all primitives.
+	 * 从 scene 中移除 classification group,并释放全部图元。
 	 */
 	public dispose(): void {
 		for ( const entry of this.orderedEntries ) {
@@ -743,18 +720,16 @@ export class ArrowSubsystem {
 	// ── Entry / primitive lifecycle ────────────────────────────────────
 
 	/**
-	 * Allocates one ArrowEntry with default shared state. The concrete
-	 * `kind` + `options` types are upcast via the caller's `as` because the
-	 * generic `BaseArrowEntry` shape doesn't carry the discriminant.
-	 *
-	 * @param id          Stable plot id used by render-order registration.
-	 * @param kind        Arrow geometry kind (drives the factory dispatch).
-	 * @param points      Initial control points (already validated to satisfy
-	 *                    the per-kind minimum).
-	 * @param plotOrder   Unique plot order pre-allocated from the registry.
-	 * @param options     Default factory options snapshot for this kind.
-	 * @param strokeWidth Default stroke width in meters.
-	 * @returns A loosely-typed base entry to be downcast by the caller.
+	 * 使用默认共享状态分配一个 ArrowEntry。具体 `kind` + `options` 类型由调用方
+	 * 通过 `as` 向上转型,因为通用 `BaseArrowEntry` 形状本身不携带判别字段。
+ *
+	 * @param id          用于渲染顺序注册的稳定 plot id。
+	 * @param kind        箭头几何类型(驱动工厂分派)。
+	 * @param points      初始控制点(已校验满足对应类型的最小点数)。
+	 * @param plotOrder   从 registry 预分配的唯一标绘顺序。
+	 * @param options     此类型的默认工厂选项快照。
+	 * @param strokeWidth 默认描边宽度,单位米。
+	 * @returns 可由调用方向下转换的宽松类型 base entry。
 	 */
 	private createEntry(
 		id: ArrowPlotId,
@@ -783,8 +758,7 @@ export class ArrowSubsystem {
 			strokeColor: DEFAULT_STROKE_COLOR,
 			strokeOpacity: DEFAULT_STROKE_OPACITY,
 			strokeWidth,
-			// Cast through unknown: the options shape varies by kind and the
-			// caller does the final `as FineArrowEntry` style downcast.
+			// 通过 unknown 转换:options 形状随 kind 变化,调用方负责最终的 `as FineArrowEntry` 式向下转换。
 			options: { ...options },
 			primitive: null,
 		} as unknown as ArrowEntry;
@@ -792,15 +766,13 @@ export class ArrowSubsystem {
 	}
 
 	/**
-	 * Disposes the entry's current primitive (if any), regenerates the arrow
-	 * ring via the appropriate factory, and rebuilds the primitive. The
-	 * scene graph is updated atomically so the screen never shows a
-	 * half-constructed arrow.
-	 *
-	 * @param entry Arrow entry whose geometry or points changed.
+	 * 释放 entry 当前图元(如存在),通过对应工厂重新生成箭头环,并重建图元。
+	 * scene graph 会原子更新,避免屏幕显示半构造状态的箭头。
+ *
+	 * @param entry 几何或点位发生变化的箭头 entry。
 	 */
 	private rebuildPrimitive( entry: ArrowEntry ): void {
-		// Tear down the previous primitive first.
+		// 先拆除旧图元。
 		if ( entry.primitive ) {
 			this.scene.remove( entry.primitive.classification.group );
 			entry.primitive.dispose();
@@ -809,9 +781,8 @@ export class ArrowSubsystem {
 
 		const ring = computeArrowRing( entry );
 		if ( ring.length < 3 ) {
-			// Degenerate input → no primitive. The GUI text field still keeps
-			// the user-entered JSON so they can fix it; the info panel will
-			// report `ring 0`.
+			// 退化输入 -> 不创建图元。GUI 文本框仍保留用户输入的 JSON 以便修正;
+			// 信息面板会报告 `ring 0`。
 			console.warn(
 				`[arrow-demo] ${ entry.label }: degenerate input, primitive skipped.`,
 			);
@@ -835,10 +806,10 @@ export class ArrowSubsystem {
 	}
 
 	/**
-	 * Reapplies fill / stroke / visibility / render-order / pass visibility /
-	 * fragment-cull for a single entry without rebuilding geometry.
-	 *
-	 * @param entry Arrow entry whose non-geometry state changed.
+	 * 为单个 entry 重新应用填充 / 描边 / 可见性 / 渲染顺序 / pass 可见性 /
+	 * fragment-cull,不重建几何。
+ *
+	 * @param entry 非几何状态发生变化的箭头 entry。
 	 */
 	private applyEntrySettings( entry: ArrowEntry ): void {
 		const primitive = entry.primitive;
@@ -869,12 +840,10 @@ export class ArrowSubsystem {
 	// ── Plot order ─────────────────────────────────────────────────────
 
 	/**
-	 * Pushes an edited plot order back into the registry. The registry may
-	 * reject a clash by returning the original order; this method writes
-	 * the *registry's chosen* order back into the entry so the lil-gui
-	 * `.listen()` field reflects reality.
-	 *
-	 * @param entry Arrow entry whose plot order GUI value changed.
+	 * 把编辑后的标绘顺序推回 registry。registry 可能通过返回原顺序来拒绝冲突;
+	 * 本方法会把 *registry 选择的* 顺序写回 entry,让 lil-gui `.listen()` 字段反映真实状态。
+ *
+	 * @param entry plot order GUI 值发生变化的箭头 entry。
 	 */
 	private applyEntryPlotOrder( entry: ArrowEntry ): void {
 		entry.plotOrder = this.registry.update( entry.id, entry.plotOrder );
@@ -884,12 +853,11 @@ export class ArrowSubsystem {
 	// ── GUI construction ───────────────────────────────────────────────
 
 	/**
-	 * Installs one collapsed lil-gui folder per arrow under the parent GUI.
-	 * Each folder carries the shape's full option set as numeric sliders
-	 * plus the shared fill / stroke / visibility controls. Folders start
-	 * closed so the GUI stays manageable; users open them on demand.
-	 *
-	 * @param parentGui Host lil-gui instance from ground-demo.ts.
+	 * 在父 GUI 下为每个箭头安装一个默认折叠的 lil-gui 文件夹。每个文件夹都包含
+	 * 该形状的完整数值滑块选项集,以及共享填充 / 描边 / 可见性控件。
+	 * 文件夹默认关闭,避免 GUI 过长;用户按需展开。
+ *
+	 * @param parentGui 来自 ground-demo.ts 的宿主 lil-gui 实例。
 	 */
 	private installGuiFolders( parentGui: GUI ): void {
 		const arrowsRoot = parentGui.addFolder( 'Arrows' );
@@ -914,12 +882,11 @@ export class ArrowSubsystem {
 	}
 
 	/**
-	 * Builds the common (shared) controls (visible / plot order / points
-	 * JSON / fill / stroke) for one arrow entry. Returns a callback the
-	 * shape-specific installer can call after wiring its own sliders.
-	 *
-	 * @param folder Folder created by the caller (one folder per arrow).
-	 * @param entry  Arrow entry the folder edits.
+	 * 为一个箭头 entry 构建通用(共享)控件:visible / plot order / points JSON /
+	 * fill / stroke。返回一个回调,供形状专用安装器在接好自己的滑块后调用。
+ *
+	 * @param folder 调用方创建的文件夹(每个箭头一个)。
+	 * @param entry  此文件夹编辑的箭头 entry。
 	 */
 	private installSharedControls( folder: GUI, entry: ArrowEntry ): void {
 		folder
@@ -965,11 +932,11 @@ export class ArrowSubsystem {
 	}
 
 	/**
-	 * Applies a JSON text edit to the entry's `points` field, with rollback
-	 * on parse error (matches the host rectangle / polygon GUI behaviour).
-	 *
-	 * @param entry Arrow entry receiving new points.
-	 * @param value Raw JSON text from the lil-gui field.
+	 * 把 JSON 文本编辑应用到 entry 的 `points` 字段;解析失败时回滚
+	 * (匹配宿主矩形 / 多边形 GUI 行为)。
+ *
+	 * @param entry 接收新点位的箭头 entry。
+	 * @param value 来自 lil-gui 字段的原始 JSON 文本。
 	 */
 	private applyPointsJsonEdit( entry: ArrowEntry, value: string ): void {
 		try {

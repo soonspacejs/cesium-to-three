@@ -219,7 +219,7 @@ export function expandPolygonPointsThroughMeters(
 		return result;
 	}
 
-	// Step 1 · centroid(度) → ENU 矩阵 + 逆矩阵
+	// 步骤 1 · centroid(度) → ENU 矩阵 + 逆矩阵
 	const centroid = computePolygonCentroidDegrees( points );
 	_expandCenterCartographic.longitude = centroid[ 0 ] * Math.PI / 180.0;
 	_expandCenterCartographic.latitude = centroid[ 1 ] * Math.PI / 180.0;
@@ -229,7 +229,7 @@ export function expandPolygonPointsThroughMeters(
 	eastNorthUpToFixedFrame( _expandCenterCartesian, _expandEnuMatrix );
 	_expandInverseEnu.copy( _expandEnuMatrix ).invert();
 
-	// Step 2 · 全部顶点投到 ENU 平面 (e, n)。本地数组,后续算法只关心 x/y。
+	// 步骤 2 · 全部顶点投到 ENU 平面 (e, n)。本地数组,后续算法只关心 x/y。
 	const enuVerts: number[] = new Array( n * 2 );
 	for ( let i = 0; i < n; i++ ) {
 		const point = points[ i ];
@@ -242,7 +242,7 @@ export function expandPolygonPointsThroughMeters(
 		enuVerts[ 2 * i + 1 ] = _expandPointEnu.y;
 	}
 
-	// Step 3 · winding 检测(shoelace),决定外法线的"右手 90°"是 +1 还是 -1
+	// 步骤 3 · winding 检测(shoelace),决定外法线的"右手 90°"是 +1 还是 -1
 	let signedArea2 = 0.0;
 	for ( let i = 0; i < n; i++ ) {
 		const ax = enuVerts[ 2 * i ];
@@ -253,7 +253,7 @@ export function expandPolygonPointsThroughMeters(
 	}
 	const windingSign = signedArea2 >= 0.0 ? 1.0 : -1.0;
 
-	// Step 4 · 逐顶点 miter 偏移
+	// 步骤 4 · 逐顶点 miter 偏移
 	const N = safeWidthMeters;
 	const offsetX: number[] = new Array( n );
 	const offsetY: number[] = new Array( n );
@@ -354,7 +354,7 @@ export function expandPolygonPointsThroughMeters(
 		offsetY[ i ] = cy + miterLength * bisUnitY;
 	}
 
-	// Step 5 · 反向投影 ENU → ECEF → cartographic → 度
+	// 步骤 5 · 反向投影 ENU → ECEF → cartographic → 度
 	const result: LonLatPoint[] = new Array( n );
 	for ( let i = 0; i < n; i++ ) {
 		_expandPointEnu.set( offsetX[ i ], offsetY[ i ], 0.0 );

@@ -1,9 +1,9 @@
 // ============================================================
-// math/enu-frame.ts — East-North-Up 局部坐标系到 ECEF 的 4×4 矩阵
+// math/enu-frame.ts — 东-北-上(ENU)局部坐标系到 ECEF 的 4×4 矩阵
 // 层级:L0(零依赖数学基础)
 // 职责:在 ECEF 原点构造 ENU 基底,生成 4×4 列主序矩阵,使得
 //      M · (e, n, u, 1)^T = ECEF 位置
-//      其中 (e, n, u) 是该原点处的局部 East-North-Up 坐标(米)。
+//      其中 (e, n, u) 是该原点处的局部东-北-上坐标(米)。
 //      完整实现 Cesium 的三个分支:零点退化 / 极点 / 一般情况。
 // 依赖:Three.js Matrix4 + Vector3、math/ellipsoid.ts、math/constants.ts
 // 被消费:rectangle/rectangle-helpers.ts、rectangle/rectangle-extents.ts
@@ -23,7 +23,7 @@ const _enuNorth = new Vector3();
 const _enuUp = new Vector3();
 
 /**
- * 在给定 ECEF 原点构造 ENU(East-North-Up)→ ECEF 变换矩阵。
+ * 在给定 ECEF 原点构造 ENU(东-北-上)→ ECEF 变换矩阵。
  *
  * 输出矩阵 M 的列布局:
  *   列 0:east  基底(单位向量)

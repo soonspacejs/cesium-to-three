@@ -725,9 +725,9 @@ export function runGroundDemo(): void {
 	debugSettings.largePolylinePlotOrder = plotOrderRegistry.register( 'largePolyline', debugSettings.largePolylinePlotOrder );
 
 	/**
-	 * Returns the current fill rectangle derived from the public points field.
-	 *
-	 * @returns Rectangle in WGS84 degrees.
+	 * 返回从公开 points 字段推导出的当前填充矩形。
+ *
+	 * @returns WGS84 度制矩形。
 	 */
 	function getCurrentRectangleDegrees(): { west: number; south: number; east: number; north: number } {
 		let west = Number.POSITIVE_INFINITY;
@@ -746,19 +746,19 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Serializes rectangle points into the compact GUI text field.
-	 *
-	 * @returns JSON string with four [lon, lat] corner points.
+	 * 把矩形点序列序列化到紧凑 GUI 文本字段。
+ *
+	 * @returns 包含四个 [lon, lat] 角点的 JSON 字符串。
 	 */
 	function stringifyRectanglePoints(): string {
 		return JSON.stringify( debugSettings.points );
 	}
 
 	/**
-	 * Parses the public points GUI text into four WGS84 lon/lat points.
-	 *
-	 * @param value JSON text typed in lil-gui.
-	 * @returns Validated lon/lat points.
+	 * 把公开 points GUI 文本解析为四个 WGS84 lon/lat 点。
+ *
+	 * @param value lil-gui 中输入的 JSON 文本。
+	 * @returns 校验后的 lon/lat 点。
 	 */
 	function parseRectanglePointsText( value: string ): LonLatPoint[] {
 		const parsed = JSON.parse( value ) as unknown;
@@ -783,28 +783,28 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Serializes polygon points into the compact GUI text field.
-	 *
-	 * @returns JSON string with [lon, lat] polygon vertices.
+	 * 把多边形点序列序列化到紧凑 GUI 文本字段。
+ *
+	 * @returns 包含 [lon, lat] 多边形顶点的 JSON 字符串。
 	 */
 	function stringifyPolygonPoints(): string {
 		return JSON.stringify( debugSettings.polygonPoints );
 	}
 
 	/**
-	 * Serializes polygon hole rings into the compact GUI text field.
-	 *
-	 * @returns JSON string with one or more hole rings.
+	 * 把多边形洞环序列化到紧凑 GUI 文本字段。
+ *
+	 * @returns 包含一个或多个洞环的 JSON 字符串。
 	 */
 	function stringifyPolygonHoles(): string {
 		return JSON.stringify( debugSettings.polygonHoles );
 	}
 
 	/**
-	 * Creates a default editable hole by scaling the current polygon inward.
-	 *
-	 * @param points Outer polygon vertices in WGS84 lon/lat degrees.
-	 * @returns A smaller ring that starts inside the current polygon.
+	 * 通过向内缩放当前多边形创建默认可编辑洞。
+ *
+	 * @param points WGS84 lon/lat 度制外环多边形顶点。
+	 * @returns 位于当前多边形内部的较小环。
 	 */
 	function createDefaultPolygonHolePoints( points: readonly LonLatPoint[] ): LonLatPoint[] {
 		if ( points.length < 3 ) {
@@ -829,10 +829,10 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Parses the public polygon points GUI text.
-	 *
-	 * @param value JSON text typed in lil-gui.
-	 * @returns Validated lon/lat polygon points.
+	 * 解析公开 polygon points GUI 文本。
+ *
+	 * @param value lil-gui 中输入的 JSON 文本。
+	 * @returns 校验后的 lon/lat 多边形点。
 	 */
 	function parsePolygonPointsText( value: string ): LonLatPoint[] {
 		const parsed = JSON.parse( value ) as unknown;
@@ -857,11 +857,11 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Parses one polygon ring from a GUI JSON value.
-	 *
-	 * @param parsed Unknown JSON value representing a ring.
-	 * @param label Human-readable label used in validation errors.
-	 * @returns Validated lon/lat ring.
+	 * 从 GUI JSON 值解析一个多边形环。
+ *
+	 * @param parsed 表示环的未知 JSON 值。
+	 * @param label 校验错误中使用的人类可读标签。
+	 * @returns 校验后的 lon/lat 环。
 	 */
 	function parsePolygonRingValue( parsed: unknown, label: string ): LonLatPoint[] {
 		if ( ! Array.isArray( parsed ) || parsed.length < 3 ) {
@@ -884,10 +884,10 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Parses the public polygon holes GUI text.
-	 *
-	 * @param value JSON text typed in lil-gui.
-	 * @returns Validated hole rings in WGS84 lon/lat degrees.
+	 * 解析公开 polygon holes GUI 文本。
+ *
+	 * @param value lil-gui 中输入的 JSON 文本。
+	 * @returns 校验后的 WGS84 lon/lat 度制洞环。
 	 */
 	function parsePolygonHolesText( value: string ): LonLatPoint[][] {
 		const parsed = JSON.parse( value ) as unknown;
@@ -1114,9 +1114,8 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Normalizes circle GUI values before geometry rebuilds. Mirrors the
-	 * reference project's clamps so radius / heights / granularity stay
-	 * in valid ranges regardless of which slider was edited.
+	 * 几何重建前归一化圆 GUI 值。它镜像参考项目的 clamp 规则,确保无论编辑哪个滑块,
+	 * radius / heights / granularity 都保持在有效范围内。
 	 */
 	function normalizeCircleDebugSettings(): void {
 		debugSettings.circleCenterLon = Number.isFinite( debugSettings.circleCenterLon )
@@ -1168,7 +1167,7 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Normalizes polygon GUI values before geometry is rebuilt.
+	 * 几何重建前归一化多边形 GUI 值。
 	 */
 	function normalizePolygonDebugSettings(): void {
 		debugSettings.polygonRotationDegrees = Number.isFinite( debugSettings.polygonRotationDegrees )
@@ -1185,9 +1184,9 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Creates a shadow-volume rectangle from the current GUI settings.
-	 *
-	 * @returns Ground rectangle primitive wired for classification and debugging.
+	 * 根据当前 GUI 设置创建阴影体矩形。
+ *
+	 * @returns 已接入 classification 与调试路径的贴地矩形图元。
 	 */
 	function createGroundRectangle(): CesiumGroundRectanglePrimitive {
 		return new CesiumGroundRectanglePrimitive( {
@@ -1207,9 +1206,9 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Creates a shadow-volume circle from the current GUI settings.
-	 *
-	 * @returns Ground circle primitive using the native shadow-volume builder.
+	 * 根据当前 GUI 设置创建阴影体圆。
+ *
+	 * @returns 使用原生阴影体构建器的贴地圆图元。
 	 */
 	function createGroundCircle(): CesiumGroundCirclePrimitive {
 		normalizeCircleDebugSettings();
@@ -1239,9 +1238,9 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Creates a shadow-volume polygon from the current GUI settings.
-	 *
-	 * @returns Ground polygon primitive using the native shadow-volume builder.
+	 * 根据当前 GUI 设置创建阴影体多边形。
+ *
+	 * @returns 使用原生阴影体构建器的贴地多边形图元。
 	 */
 	function createGroundPolygon(): CesiumGroundPolygonPrimitive {
 		normalizePolygonDebugSettings();
@@ -1263,9 +1262,9 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Creates the large-scale rectangle companion primitive.
-	 *
-	 * @returns Ground rectangle spanning kilometers instead of meters.
+	 * 创建大尺度矩形伴随图元。
+ *
+	 * @returns 跨度为公里级而非米级的贴地矩形。
 	 */
 	function createLargeGroundRectangle(): CesiumGroundRectanglePrimitive {
 		syncLargeRectanglePointsFromMeters();
@@ -1284,9 +1283,9 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Creates the large-scale polygon companion primitive.
-	 *
-	 * @returns Ground polygon spanning kilometers instead of meters.
+	 * 创建大尺度多边形伴随图元。
+ *
+	 * @returns 跨度为公里级而非米级的贴地多边形。
 	 */
 	function createLargeGroundPolygon(): CesiumGroundPolygonPrimitive {
 		syncLargePolygonPointsFromMeters();
@@ -1306,9 +1305,9 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Creates the large-scale circle companion primitive.
-	 *
-	 * @returns Ground circle with a 5 km default radius.
+	 * 创建大尺度圆伴随图元。
+ *
+	 * @returns 默认半径为 5 km 的贴地圆。
 	 */
 	function createLargeGroundCircle(): CesiumGroundCirclePrimitive {
 		debugSettings.largeCircleRadius = Number.isFinite( debugSettings.largeCircleRadius )
@@ -1839,10 +1838,9 @@ export function runGroundDemo(): void {
 			debugSettings.largePolylineArrowWidthPixels,
 		);
 
-		// Shared render-state knobs (fragment culling + 3-pass visibility) must
-		// reach every arrow primitive too; defer until the subsystem exists so
-		// the very first applyGroundDebugSettings() (called before subsystem
-		// construction) is still a no-op for arrows.
+		// 共享渲染状态旋钮(fragment culling + 3-pass 可见性)也必须传到每个箭头图元。
+		// 延迟到子系统存在后再执行,这样首次 applyGroundDebugSettings()
+		// (在子系统构造前调用)对箭头仍是 no-op。
 		if ( arrowSubsystem ) {
 			arrowSubsystem.applyFragmentCull( debugSettings.fragmentCull );
 			arrowSubsystem.applyPassVisibility( {
@@ -2166,18 +2164,16 @@ export function runGroundDemo(): void {
 	}
 
 	/**
-	 * Creates the lil-gui control surface for render-pass diagnosis.
+	 * 创建用于 render-pass 诊断的 lil-gui 控制面板。
 	 */
 	function createGroundDebugGui(): GUI {
 		const gui = new GUI( { title: 'Cesium Ground Debug' } );
 		gui.domElement.style.right = '16px';
 		gui.domElement.style.top = '16px';
 
-		// "Camera" folder at the top of the GUI hosts navigation shortcuts.
-		// Right now there's only the "fly to plot" button — wraps a no-arg
-		// function inside an object literal because lil-gui renders any
-		// `gui.add(obj, key)` whose value is a function as a clickable
-		// button. Useful because the default 720km altitude view shows
+		// GUI 顶部的 "Camera" 文件夹承载导航快捷操作。目前只有 "fly to plot" 按钮:
+		// 把无参函数包装到对象字面量中,因为 lil-gui 会把任何值为函数的
+		// `gui.add(obj, key)` 渲染为可点击按钮。默认 720km 高度视图会显示
 		// nothing of the ~10 m primitives, and scrolling all the way down
 		// with the mouse wheel takes dozens of seconds.
 		const cameraFolder = gui.addFolder( 'Camera' );
@@ -2492,20 +2488,15 @@ export function runGroundDemo(): void {
 	applyGroundDebugSettings();
 	const debugGui = createGroundDebugGui();
 
-	// ── Arrow subsystem ─────────────────────────────────────────────────
-	// The 5 special-shape arrows (fine / assault direction / attack /
-	// swallowtail / curved) live in their own subsystem so this file does
-	// not need to know any arrow geometry. Construction happens after
-	// debugGui so the arrows can attach their folder to the same GUI; it
-	// also shares the demo's PlotOrderRegistry, so the arrows participate
-	// in the same global render-order pool as the rectangle / polygon /
-	// circle primitives above.
+	// ── 箭头子系统 ─────────────────────────────────────────────────
+	// 5 类特殊形状箭头(fine / assault direction / attack / swallowtail / curved)
+	// 放在独立子系统中,因此本文件无需了解任何箭头几何。构造发生在 debugGui 之后,
+	// 这样箭头可以把自己的文件夹挂到同一个 GUI;它还共享 demo 的 PlotOrderRegistry,
+	// 让箭头与上方矩形 / 多边形 / 圆图元参与同一个全局渲染顺序池。
 	//
-	// Currently gated by `ENABLE_ARROW_SUBSYSTEM` for an isolation test: if
-	// the curved-band fill cut reproduces with this flag false (i.e. only
-	// rectangle + polygon + circle in the scene, each at distinct lon/lat),
-	// the bug is intrinsic to the ground primitive pipeline and not
-	// something arrow-side code introduced.
+	// 当前由 `ENABLE_ARROW_SUBSYSTEM` 门控,用于隔离测试:如果此 flag 为 false
+	// (也就是场景中只剩位于不同 lon/lat 的 rectangle + polygon + circle)时仍能复现
+	// 弧带填充裁切,说明问题内生于贴地图元管线,不是箭头侧代码引入的。
 	if ( ENABLE_ARROW_SUBSYSTEM ) {
 		arrowSubsystem = new ArrowSubsystem( {
 			scene,
@@ -2683,8 +2674,7 @@ export function runGroundDemo(): void {
 
 		const assetIdReported = readStringEnv( 'VITE_CESIUM_ION_ASSET_ID', '96188' );
 		const assetIdLabel = assetIdReported === '1' ? '96188' : assetIdReported;
-		// Arrow info lines, one per arrow type. Joined with `\n` so the
-		// fixed info panel stays a single flat text block.
+		// 每种箭头类型一行信息。用 `\n` 拼接,让固定信息面板保持单个扁平文本块。
 		const arrowInfoBlock = arrowSubsystem
 			? arrowSubsystem.getInfoLines().map( ( line ) => `${ line }\n` ).join( '' )
 			: '';

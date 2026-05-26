@@ -1,16 +1,14 @@
 // ============================================================
 // terrain-log-depth.ts
-// Layer: Cesium-to-Three terrain depth shim.
-// Role: inject Cesium-compatible log-depth GLSL into Three.js MeshStandard
-//       (or any onBeforeCompile-friendly) material, so the main framebuffer's
-//       depth values are written in the same `log2((w - near) + 1) /
-//       log2((far - near) + 1)` space the shadow-volume color command samples.
-//       Without this shim, terrain depth (linear in NDC) and shadow-volume
-//       depth (Cesium log depth) live in different spaces and the
-//       LESS_OR_EQUAL stencil pass would mis-fire on every fragment.
-// Dependencies: Three.js Material / Shader hooks.
-// Consumed by: demo terrain wiring (tiles.ts) and any external host that
-//       feeds non-Cesium depth into the ground classification pipeline.
+// 层级:Cesium-to-Three 地形深度适配层。
+// 职责:向 Three.js MeshStandard(或任何支持 onBeforeCompile 的)材质注入
+//      Cesium 兼容的 log-depth GLSL，使主帧缓冲深度写入
+//      `log2((w - near) + 1) / log2((far - near) + 1)` 空间，
+//      与 shadow-volume color 命令采样的深度空间一致。若没有此适配层，
+//      地形深度(NDC 线性)与 shadow-volume 深度(Cesium log depth)会处在不同空间，
+//      LESS_OR_EQUAL stencil pass 会在每个片元上误判。
+// 依赖:Three.js Material / Shader hook。
+// 被消费:demo 地形接线(tiles.ts)，以及所有向贴地 classification 管线提供非 Cesium 深度的外部宿主。
 // ============================================================
 
 import { Vector3, type Material, type WebGLRenderer } from 'three';
@@ -24,9 +22,8 @@ interface ShaderLike {
 type OnBeforeCompileFn = ( shader: ShaderLike, renderer: WebGLRenderer ) => void;
 
 /**
- * Shared log-depth uniform references. Three.js materials reuse the same
- * `{value}` boxes by reference; updating these once per frame propagates to
- * every material that has been augmented via {@link applyCesiumLogDepthToMaterial}.
+ * 共享 log-depth uniform 引用。Three.js 材质按引用复用同一组 `{value}` 容器；
+ * 每帧更新一次即可同步到所有通过 {@link applyCesiumLogDepthToMaterial} 增强过的材质。
  */
 export const terrainLogDepthUniforms = {
 	czm_currentFrustum: { value: new Vector3( 1.0, 1.0, 0.0 ) },
@@ -35,11 +32,11 @@ export const terrainLogDepthUniforms = {
 };
 
 /**
- * Refreshes the shared terrain log-depth uniforms for the active frustum.
- * Must be called once per frame, before the main scene render.
+ * 刷新当前视锥使用的共享地形 log-depth uniform。
+ * 必须在主场景渲染前每帧调用一次。
  *
- * @param near Camera near plane (meters).
- * @param far Camera far plane (meters).
+ * @param near 相机近裁剪面，单位米。
+ * @param far 相机远裁剪面，单位米。
  */
 export function updateTerrainLogDepthUniforms( near: number, far: number ): void {
 	terrainLogDepthUniforms.czm_currentFrustum.value.set( near, far, 0.0 );
@@ -67,9 +64,8 @@ uniform float czm_farDepthFromNearPlusOne;
 uniform float czm_oneOverLog2FarDepthFromNearPlusOne;
 `;
 
-// Cesium-equivalent log-depth write, clamping near/far instead of discarding
-// so terrain still rasterizes when it slightly oversteps the frustum due to
-// log-depth precision rounding.
+// 与 Cesium 等价的 log-depth 写入。这里在 near/far 处 clamp 而不是 discard，
+// 让地形因 log-depth 精度舍入而轻微越过视锥时仍能栅格化。
 const TERRAIN_FRAGMENT_WRITE = /* glsl */ `
 	{
 		float czm_logDepth = v_depthFromNearPlusOne;
@@ -83,11 +79,10 @@ const TERRAIN_FRAGMENT_WRITE = /* glsl */ `
 	}
 `;
 
-// Type-only view of a Three.js Material with our custom userData marker. We
-// use an intersection type rather than `interface extends Material` so we do
-// not redeclare `onBeforeCompile` against Three's stricter (non-optional)
-// signature — the runtime assignment goes through the relaxed `OnBeforeCompileFn`
-// shape declared above and is cast at the assignment site below.
+// 带自定义 userData 标记的 Three.js Material 类型视图。这里使用交叉类型，
+// 而不是 `interface extends Material`，避免用 Three 更严格的非可选签名重新声明
+// `onBeforeCompile`。运行时赋值走上方更宽松的 `OnBeforeCompileFn` 形状，
+// 并在下方赋值点进行 cast。
 type CesiumLogDepthFlaggedMaterial = Material & {
 	userData: {
 		cesiumLogDepthApplied?: boolean;
@@ -96,16 +91,15 @@ type CesiumLogDepthFlaggedMaterial = Material & {
 };
 
 /**
- * Replaces the first occurrence of `pattern` in `source` and verifies that the
- * replacement actually happened. Throws when the source has drifted away from
- * Three.js stock chunks, so a silent layout regression is caught loudly
- * during development rather than producing broken depth values at runtime.
+ * 替换 `source` 中第一次出现的 `pattern`，并校验替换确实发生。
+ * 当源码已偏离 Three.js 标准 chunk 时抛错，使布局回归在开发期显式暴露，
+ * 而不是到运行时才产生错误深度值。
  *
- * @param source Original GLSL source.
- * @param pattern Match to replace (string or regex).
- * @param replacement Replacement payload.
- * @param context Context name used in the thrown error.
- * @returns Replaced source.
+ * @param source 原始 GLSL 源码。
+ * @param pattern 要替换的匹配项，字符串或正则。
+ * @param replacement 替换内容。
+ * @param context 抛错时使用的上下文名称。
+ * @returns 完成替换后的源码。
  */
 function replaceOnce(
 	source: string,
@@ -121,10 +115,10 @@ function replaceOnce(
 }
 
 /**
- * Injects Cesium log-depth output into a Three.js material's shader, chained
- * after any caller-supplied `onBeforeCompile`. Idempotent.
+ * 向 Three.js 材质 shader 注入 Cesium log-depth 输出，并串接在调用方已有的
+ * `onBeforeCompile` 之后。该操作幂等。
  *
- * @param material Three.js material to augment.
+ * @param material 需要增强的 Three.js 材质。
  */
 export function applyCesiumLogDepthToMaterial( material: Material ): void {
 	const flagged = material as CesiumLogDepthFlaggedMaterial;
@@ -181,17 +175,14 @@ export function applyCesiumLogDepthToMaterial( material: Material ): void {
 			`${ TERRAIN_FRAGMENT_WRITE }\n}`,
 		);
 	};
-	// Three.js types declare onBeforeCompile against
-	// `WebGLProgramParametersWithUniforms`. Our internal `ShaderLike` shape is
-	// structurally compatible (same `uniforms / vertexShader / fragmentShader`
-	// fields). Cast at assignment so the relaxed inner type does not leak into
-	// Three.js's stricter signature.
+	// Three.js 类型把 onBeforeCompile 声明为接收 `WebGLProgramParametersWithUniforms`。
+	// 我们内部的 `ShaderLike` 结构兼容(同样具备 `uniforms / vertexShader / fragmentShader`
+	// 字段)。在赋值处 cast，避免宽松内部类型泄漏到 Three.js 更严格的签名中。
 	flagged.onBeforeCompile = nextOnBeforeCompile as unknown as Material[ 'onBeforeCompile' ];
 
-	// Force Three.js to recompile this material with the augmented shader.
+	// 强制 Three.js 用增强后的 shader 重新编译该材质。
 	flagged.needsUpdate = true;
-	// Cache key uniqueness: the modified shader text differs from stock, so
-	// Three.js's WebGLPrograms cache must not merge us with non-log-depth
-	// MeshStandardMaterial variants on the same defines.
+	// 缓存键必须唯一：修改后的 shader 文本不同于原版，Three.js WebGLPrograms 缓存
+	// 不能把它与相同 defines 下的非 log-depth MeshStandardMaterial 变体合并。
 	flagged.customProgramCacheKey = () => 'cesium-log-depth-v1';
 }

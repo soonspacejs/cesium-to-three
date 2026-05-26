@@ -1,13 +1,12 @@
 // ============================================================
 // polygon/polygon-offset.ts
-// Layer: polygon stroke render-ring construction.
-// Role: build a robust outward offset ring in a local ENU meter plane. This
-//       path is used by polygon classification primitives before the shadow
-//       volume is built, so stroke geometry and shader fill tests stay in the
-//       same meter coordinate frame for concave arrow shapes.
-// Dependencies: Three.js Matrix4/Vector3, ground math cartographic/ellipsoid
-//       helpers, ENU frame helpers, matrix point transform.
-// Consumed by: primitives.ts.
+// 层级:polygon 描边渲染环构造。
+// 职责:在局部 ENU 米制平面中构造鲁棒的外扩 offset ring。polygon classification
+//      图元会在构造 shadow volume 前使用该路径，使凹形箭头的描边几何与
+//      shader 填充测试保持在同一个米制坐标框架中。
+// 依赖:Three.js Matrix4/Vector3、ground math cartographic/ellipsoid 辅助函数、
+//      ENU 坐标框架辅助函数、矩阵点变换。
+// 被消费:primitives.ts。
 // ============================================================
 
 import { Matrix4, Vector3 } from 'three';
@@ -93,16 +92,15 @@ function enuPointToLonLat( eastMeters: number, northMeters: number ): LonLatPoin
 }
 
 /**
- * Builds a conservative render shell for shader-driven polygon strokes.
+ * 为 shader 驱动的多边形描边构造保守渲染外壳。
  *
- * The shader now clips the stroke by true point-to-edge distance, so the
- * render geometry only needs to cover the fill ring plus the requested stroke
- * band. A local-meter AABB is deliberately more stable than offsetting a
- * concave arrow outline, where miters can self-intersect and clip the fill.
+ * shader 现在会按真实 point-to-edge 距离裁剪描边，因此渲染几何只需覆盖填充环
+ * 加请求的描边带。这里有意使用局部米制 AABB，它比直接 offset 凹形箭头轮廓更稳定；
+ * 后者的 miter 可能自交并裁掉填充。
  *
- * @param points Polygon fill ring in WGS84 degrees.
- * @param borderWidthMeters Requested outside stroke width in meters.
- * @returns Four lon/lat corners of a local ENU render shell.
+ * @param points WGS84 度制多边形填充环。
+ * @param borderWidthMeters 请求的外侧描边宽度，单位米。
+ * @returns 局部 ENU 渲染外壳的四个 lon/lat 角点。
  */
 export function polygonRenderBoundsThroughMeters(
 	points: readonly LonLatPoint[],
@@ -153,16 +151,15 @@ export function polygonRenderBoundsThroughMeters(
 }
 
 /**
- * Expands a lon/lat polygon by intersecting adjacent offset edge lines.
+ * 通过相邻 offset 边线求交来扩张 lon/lat 多边形。
  *
- * The older bisector-length formula becomes unstable on concave arrow
- * vertices: the miter sign can flip and push the render shell through the
- * fill ring. Intersecting the two parallel edge offsets works for both
- * convex and concave joins and then clamps only very sharp miters.
+ * 旧的角平分线长度公式在凹形箭头顶点上不稳定：miter 符号可能翻转，
+ * 把渲染外壳推穿填充环。对两条平行 offset 边求交可同时处理凸/凹连接，
+ * 之后只需 clamp 特别尖锐的 miter。
  *
- * @param points Polygon fill ring in WGS84 degrees.
- * @param borderWidthMeters Requested outside stroke width in meters.
- * @returns Offset render ring in WGS84 degrees.
+ * @param points WGS84 度制多边形填充环。
+ * @param borderWidthMeters 请求的外侧描边宽度，单位米。
+ * @returns WGS84 度制 offset 渲染环。
  */
 function offsetPolygonRingThroughMeters(
 	points: readonly LonLatPoint[],
@@ -234,12 +231,9 @@ function offsetPolygonRingThroughMeters(
 		const isConvexJoin = cross * windingSign > 1e-9;
 
 		if ( isOutwardOffset && ! isConvexJoin ) {
-			// Concave joins cannot be represented by a single miter point:
-			// the intersection of the two outward offset lines lies on the
-			// wrong side of the fill ring and makes the stroke shell cross the
-			// arrow head/neck. Keep both offset edge endpoints and connect
-			// them with a short bevel segment so the render shell still wraps
-			// the fill without inventing a giant triangle.
+			// 凹连接无法用单个 miter 点表示：两条外扩 offset 线的交点会落到填充环错误侧，
+			// 使描边外壳穿过箭头头部/颈部。这里保留两个 offset 边端点，并用短 bevel 段连接，
+			// 让渲染外壳仍包住填充区域，同时不生成巨大的三角形。
 			offset.push( line1X, line1Y, line2X, line2Y );
 			continue;
 		}

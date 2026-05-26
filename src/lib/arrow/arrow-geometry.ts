@@ -37,16 +37,15 @@ const RADIANS_TO_DEGREES = 180.0 / Math.PI;
 const COINCIDENT_TOLERANCE = 1e-9;
 
 /**
- * Runs an arrow generator in a local WGS84 east/north meter plane.
+ * 在局部 WGS84 east/north 米制平面中运行箭头生成器。
  *
- * Arrow formulas are Euclidean: widths, lengths, and angles must share the
- * same unit. Public callers provide WGS84 degrees, so this helper projects
- * the controls to a local meter frame before shape construction and converts
- * the resulting ring back to lon/lat degrees.
+ * 箭头公式是欧氏几何:宽度、长度、角度必须共享同一单位。公开调用方传入
+ * WGS84 度制坐标,所以本辅助函数会先把控制点投影到局部米制坐标框架中
+ * 构造形状,再把输出环转换回 lon/lat 度。
  *
- * @param controlPoints Public WGS84 [lon, lat] control points in degrees.
- * @param createLocalRing Factory that consumes local [east, north] meters.
- * @returns The factory output converted back to WGS84 degrees.
+ * @param controlPoints 公开 WGS84 [lon, lat] 控制点,单位度。
+ * @param createLocalRing 消费局部 [east, north] 米制坐标的工厂函数。
+ * @returns 转换回 WGS84 度制后的工厂输出。
  */
 export function createArrowInLocalMeterPlane(
 	controlPoints: readonly LonLatPoint[],

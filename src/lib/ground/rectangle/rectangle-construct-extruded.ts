@@ -4,7 +4,7 @@
 // 职责:把矩形顶面 cap 升级为完整的 shadow volume prism:
 //      - 顶面顶点(从 cap 复制 → scaleToGeodeticHeight 升到 maximumHeight)
 //      - 底面顶点(cap 原地降到 minimumHeight,索引 winding 反向)
-//      - 四条墙顶点(West→South→East→North 顺时针,每位置 top+bottom 一对)
+//      - 四条墙顶点(西→南→东→北顺时针,每位置 top+bottom 一对)
 //      - extrudeDirection 属性(top 半 = 0,bottom 半 = -normal)
 //      - 合并索引(顶 + 底 + 墙,墙索引带顶点偏移)
 //
