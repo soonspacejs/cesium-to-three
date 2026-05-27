@@ -226,7 +226,8 @@ ${ LOG_DEPTH_VERTEX_HELPERS }
 
 // ── 贴地线 VS 专用 czm 量 + 线 uniform（guard by CESIUM_THREE_POLYLINE 仅在
 //    polyline 材质里编译生效；stencil / color / text 编译时这一整段被剔除，
-//    与既有材质字节级一致，零回归）。──
+//    与既有材质字节级一致，零回归）。箭头相关 uniform 也放进来——线材质 FS
+//    需要它们来做 OPEN arrow V 形收口裁剪，箭头材质自然也用得到。──
 #ifdef CESIUM_THREE_POLYLINE
 const float czm_sceneMode2D = 2.0;
 #define czm_orthographicIn3D 0.0
@@ -238,6 +239,12 @@ uniform float czm_pixelRatio;
 uniform float u_lineWidthPixels;
 uniform float u_lineWidthMode;
 uniform float u_lineWidthMeters;
+// 线 + 箭头共享 uniform（线 FS 也用 u_arrow* 算 OPEN clip）
+uniform float u_arrowWidthMode;         // 0 = 屏幕像素 / 1 = 世界米
+uniform float u_arrowLengthPixels;
+uniform float u_arrowHalfWidthPixels;
+uniform float u_arrowLengthMeters;
+uniform float u_arrowHalfWidthMeters;
 #define GLOBE_MINIMUM_ALTITUDE 55000.0
 
 // POLYLINE_VS 在 EC 内用 czm_planeDistance 选「离当前顶点更近的斜接平面」
@@ -248,14 +255,8 @@ ${ cesiumMetersPerPixel }
 #endif
 
 // ── 线端箭头扩展（guard 在 CESIUM_THREE_POLYLINE_ARROW；仅 arrowhead 材质
-//    编译时生效。这些 uniform 也写进 SharedUniforms，对线材质（无 ARROW
-//    define）是 inactive uniform，与 u_circle*/u_polygon* 同模式零回归）。──
+//    编译时生效。箭头专用的 macro 留这里；公共 uniform 上移到 POLYLINE 块）──
 #ifdef CESIUM_THREE_POLYLINE_ARROW
-uniform float u_arrowWidthMode;         // 0 = 屏幕像素 / 1 = 世界米
-uniform float u_arrowLengthPixels;
-uniform float u_arrowHalfWidthPixels;
-uniform float u_arrowLengthMeters;
-uniform float u_arrowHalfWidthMeters;
 uniform vec4  u_arrowColor;
 #define ARROW_BOX_PADDING 1.35
 #define ARROW_TOP_RISE_METERS 1000.0
@@ -402,7 +403,9 @@ ${ LOG_DEPTH_FRAGMENT_HELPERS }
 //    czm_viewport / czm_frustumPlanes / czm_currentFrustum 已在 FS prefix
 //    基础块里；这里只补 czm_sceneMode（FS 原本没有，metersPerPixel 依赖）、
 //    czm_pixelRatio 等线专属量，以及 u_color（基础 FS prefix 不含——其它
-//    材质走 v_color varying；线材质 PER_INSTANCE_COLOR 路径直接读 uniform）。──
+//    材质走 v_color varying；线材质 PER_INSTANCE_COLOR 路径直接读 uniform）。
+//    箭头相关 uniform 也放在这里——线 FS 用它们做 OPEN arrow V 形收口裁剪，
+//    箭头 FS 也用同一份声明（两者都定义 CESIUM_THREE_POLYLINE）。──
 #ifdef CESIUM_THREE_POLYLINE
 const float czm_sceneMode2D = 2.0;
 #define czm_orthographicIn3D 0.0
@@ -411,22 +414,27 @@ uniform float czm_pixelRatio;
 uniform vec4 u_color;
 uniform float u_lineWidthMode;
 uniform float u_lineWidthMeters;
-uniform float u_lineWidthPixels;       // 箭头 FS 算 aOffset 时要读，line FS 不用
+uniform float u_lineWidthPixels;
 uniform float u_lineDashEnabled;
 uniform float u_lineDashLengthMeters;
 uniform float u_lineGapLengthMeters;
 uniform float u_lineTotalMeters;
+// 线 + 箭头共享 uniform
+uniform float u_arrowWidthMode;
+uniform float u_arrowLengthPixels;
+uniform float u_arrowHalfWidthPixels;
+uniform float u_arrowLengthMeters;
+uniform float u_arrowHalfWidthMeters;
+// 线 FS 专用：是否对起 / 终端做 arrow V 形收口裁剪
+// （> 0.5 启用；arrowMode 包含对应端时启用，与 style 无关）
+uniform float u_lineArrowClipEndEnabled;
+uniform float u_lineArrowClipStartEnabled;
 
 ${ cesiumMetersPerPixel }
 #endif
 
 // ── 线端箭头 FS uniform（仅 arrowhead 材质编译）。──
 #ifdef CESIUM_THREE_POLYLINE_ARROW
-uniform float u_arrowWidthMode;
-uniform float u_arrowLengthPixels;
-uniform float u_arrowHalfWidthPixels;
-uniform float u_arrowLengthMeters;
-uniform float u_arrowHalfWidthMeters;
 uniform vec4  u_arrowColor;
 uniform float u_arrowStrokeHalfPixels;  // open 样式：斜边笔宽（像素）
 #endif
@@ -1168,6 +1176,49 @@ void main() {
 	float t = ( widthwiseDistance + halfMaxWidth ) / ( 2.0 * halfMaxWidth );
 	t = clamp( t, 0.0, 1.0 );
 
+	// 9.5) Arrow V 形收口裁剪：在线**全局**起 / 终端的 Lm 米内，把允许的
+	//      横向半宽线性收窄到 Wm·(distFromGlobalEnd / Lm) 之内——视觉上线段
+	//      在端点处收成一个尖角，正好嵌进箭头（SOLID / OPEN 都用同套 V 形
+	//      外轮廓，所以这道裁剪对所有 style 通用）。
+	//      用全局 s × u_lineTotalMeters 算「沿线到端点的米距离」，避免多段
+	//      polyline 在中间段的 distanceFromStart / End 误触发裁剪。
+	//      Lm / Wm 跟随 u_arrowWidthMode：world 直接用米、screen 用 px×mpp(P)。
+	//      仅在 u_lineArrowClip*Enabled > 0.5 时执行——对应端没有箭头时跳过。
+	if ( u_lineArrowClipEndEnabled > 0.5 ) {
+		float arrowLm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+			u_arrowLengthMeters,
+			u_arrowLengthPixels * czm_metersPerPixel( eyeCoordinate )
+		);
+		float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+			u_arrowHalfWidthMeters,
+			u_arrowHalfWidthPixels * czm_metersPerPixel( eyeCoordinate )
+		);
+		float distFromGlobalEnd = ( 1.0 - s ) * u_lineTotalMeters;
+		if ( distFromGlobalEnd < arrowLm && arrowLm > 0.0 ) {
+			float allowedHalfWidth = arrowWm * ( distFromGlobalEnd / arrowLm );
+			if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
+				discard;
+			}
+		}
+	}
+	if ( u_lineArrowClipStartEnabled > 0.5 ) {
+		float arrowLm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+			u_arrowLengthMeters,
+			u_arrowLengthPixels * czm_metersPerPixel( eyeCoordinate )
+		);
+		float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+			u_arrowHalfWidthMeters,
+			u_arrowHalfWidthPixels * czm_metersPerPixel( eyeCoordinate )
+		);
+		float distFromGlobalStart = s * u_lineTotalMeters;
+		if ( distFromGlobalStart < arrowLm && arrowLm > 0.0 ) {
+			float allowedHalfWidth = arrowWm * ( distFromGlobalStart / arrowLm );
+			if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
+				discard;
+			}
+		}
+	}
+
 	vec4 col = u_color;
 
 	// 10) 虚线：沿线米相位 mod(along, period) > dash → discard。
@@ -1303,55 +1354,17 @@ void main() {
 		u_arrowHalfWidthPixels * mpp
 	) * ARROW_BOX_PADDING;
 
-	// 3.5) 线段半宽（米，tip 处 mpp）；把箭头三角形顶点向 -back 方向外延 aOffset
-	//      米，让箭头在线段端点处的宽度恰好等于 lineHalfWidth，盖住线段的两侧
-	//      「肩膀」（线段宽度 > 1 px 时端点像素旁边总有 ±lineHalfWidth 的露头）。
-	//      公式推导：希望 width(端点) = Wm · aOffset / (Lm + aOffset) = lineHalfWidth
-	//      → aOffset = lineHalfWidth · Lm / (Wm − lineHalfWidth)。
-	//      边界保护：Wm <= lineHalfWidth 时（线比箭头粗，几何上无解）退化为
-	//      aOffset = Lm，让箭头整体平移到端点之外，至少端点不再露线肩。
-	//      额外乘 ARROW_BOX_PADDING：FS 用 mpp(P) 算 aOffset_FS、VS 用 mpp(tip)
-	//      算 aOffset_VS，两者比例和 Lm/Wm 同步而 1.35× 已经隐含在 Lm/Wm 里被
-	//      抵消，这里再补一次确保盒子始终能盖住 FS 的外延端面。
-	//
-	//      *关键决策*：lineHalfW 跟随 **箭头自己的 widthMode**（不是线的）。
-	//      箭头 'screen' → lineHalfW = u_lineWidthPixels × mpp（aOffset 像素恒定，
-	//                       整个箭头形态屏幕恒定，与 Cesium Billboard sizeInMeters=
-	//                       false 一致）。
-	//      箭头 'world'  → lineHalfW = u_lineWidthMeters × 0.5（aOffset 米恒定，
-	//                       与线 world 模式视觉一致）。
-	//      这样箭头和它自己的 aOffset 永远同尺度，不会出现「箭头像素恒定但 aOffset
-	//      跟着相机变」的视觉不协调。混搭（如线 world + 箭头 screen）合法但
-	//      aOffset 用「u_lineWidthPixels 当作箭头侧的等效线宽」算，与 Cesium 把
-	//      Polyline.width（像素）+ 像素 billboard 标记搭配的语义一致。
-	//
-	//      *边界保护*：aOffset 公式分母是 (Wm − lineHalfW)，当箭头基底宽 Wm 略大于
-	//      线半宽（例：Wm=12m, lineHalfW=11.5m）时分母极小、aOffset 爆到几百米，
-	//      箭头被拉成长条吞掉半个屏幕（用户截图实测）。用 min(formula, Lm) 把
-	//      aOffset 卡死在一个箭头长度内：
-	//        • Wm ≥ 2·lineHalfW：formula ≤ Lm，cap 不触发，端点处宽度精确 = lineHalfW。
-	//        • lineHalfW < Wm < 2·lineHalfW：formula > Lm，cap 触发，aOffset = Lm，
-	//          端点处宽度 = Wm/2 < lineHalfW（线两侧略露一点肩，但不再爆值）。
-	//        • Wm ≤ lineHalfW：max(..,1e-6) 让 formula 变成天文数字，cap 拉回 Lm，
-	//          与「箭头比线还窄」的退化语义一致。
-	//      用户想让端点完全无肩 → 需保证 arrowWidth ≥ 2 × lineWidth（按各自 mode 算）。
-	//
-	//      *open 样式跳过外延*：open 是只画两条斜边、内部透明的「笔画 V」。如果
-	//      仍按 solid 同款 aOffset 把 apex 推到端点之外，端点到 chevron apex 之间
-	//      的「内部」是空的——线段里走完到端点，chevron 边线再从外面斜回来碰头，
-	//      中间一段裸露三角形特别难看（用户截图）。open 强制 aOffset = 0：chevron
-	//      尖刺正好落在线端点上，避免裸露三角。代价是线两侧会露一点 lineHalfW
-	//      宽的肩（open 笔画风格的固有特性，无法用「让箭头更宽盖住」的方式回避）。
-#ifdef ARROW_OPEN
+	// 3.5) 箭头 apex 落在线端点上（aOffset = 0）。
+	//      早期版本曾按 lineHalfW * Lm / (Wm - lineHalfW) 把 apex 推到端点
+	//      之外、想用箭头宽度盖住线段端点的「肩膀」露头，但这条公式把箭头长度
+	//      隐式耦合到了线宽：用户调整 arrowWidth 时分母变化、aOffset 突变，
+	//      触发 min(.., Lm) cap 时整个箭头长度甚至会从 Lm 跳到 2*Lm，视觉上
+	//      变得「调宽度时长度也乱跳」（用户实测反馈）。
+	//      所以这里直接 aOffset=0：箭头长度只跟 Lm 走，不耦合线宽。代价是
+	//      SOLID 端点处宽度从 0 起步、Wm*(a/Lm) 没那么快盖到 ±lineHalfW，可能
+	//      露出几像素的「线肩」；这块由 line FS 的 OPEN 收口裁剪去补（在
+	//      POLYLINE_FS §9.5），不再让箭头自身长度做这件事。
 	float aOffset = 0.0;
-#else
-	float lineHalfW = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
-		u_lineWidthMeters * 0.5,
-		u_lineWidthPixels * 0.5 * mpp
-	);
-	float aOffsetRaw = lineHalfW * Lm / max( Wm - lineHalfW, 1e-6 );
-	float aOffset = min( aOffsetRaw, Lm ) * ARROW_BOX_PADDING;
-#endif
 
 	// 4) 切平面内挤出盒底面四角：tip + back·((aCoef·Lm) − [aCoef=0]·aOffset)
 	//    + right·(bSign·Wm)。aCoef=0 的 4 角再额外向 -back 推 aOffset 米，
@@ -1438,32 +1451,18 @@ void main() {
 		u_arrowHalfWidthPixels * mpp
 	);
 
-	// 5.5) 把三角形「顶点」从 a=0 外延到 a=-aOffset（端点之外）：让 a=0
-	//      处的箭头宽度 = lineHalfWidth，盖住线段两侧的 ±lineHalfWidth 肩膀；
-	//      VS 已经把盒子的 -back 端面同步外延了 aOffset 米，能保证 FS 的
-	//      所有目标像素都被 box 覆盖到。aOffset 公式与 VS 同口径，lineHalfW
-	//      也跟随 **u_arrowWidthMode**（不是 u_lineWidthMode）；同样套 min(.., Lm)
-	//      上限避免 Wm 略大于 lineHalfW 时 aOffset 爆值（详见 VS §3.5 注释）。
-	//      open 样式同 VS 跳过外延（aOffset=0），chevron apex 落在端点上，避免
-	//      端点到 apex 之间的裸露空三角。
-#ifdef ARROW_OPEN
+	// 5.5) 箭头 apex 落在线端点（aOffset = 0）。详见 VS §3.5 的注释——之前那条
+	//      lineHalfW * Lm / (Wm - lineHalfW) 公式让 arrowWidth 拖动时长度突变，
+	//      已剥离。线肩问题由 line FS 收口裁剪兜底。
 	float aOffset = 0.0;
-#else
-	float lineHalfW = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
-		u_lineWidthMeters * 0.5,
-		u_lineWidthPixels * 0.5 * mpp
-	);
-	float aOffsetRaw = lineHalfW * Lm / max( Wm - lineHalfW, 1e-6 );
-	float aOffset = min( aOffsetRaw, Lm );
-#endif
 	// 等效新坐标：apex 在 aShift=0（a=-aOffset），base 在 aShift=LmShift（a=Lm）。
 	float aShift   = a + aOffset;
 	float LmShift  = Lm + aOffset;
 
 	// 6) 三角形成员判定（用 aShift / LmShift；几何意义不变，只是 apex 外移了）。
 #ifdef ARROW_OPEN
-	// 开口雪佛龙：只画三角形两条斜边附近的笔宽内像素。
-	// edge = |b| - Wm·(aShift/LmShift) 的「垂直距离」（除以斜边的长度比 LmShift/sqrt(LmShift²+Wm²)）。
+	// 开口雪佛龙：只画三角形两条斜边附近的笔宽内像素。V 形保留完整作为边界，
+	// 让线 FS 在端点附近按 V 形收口（线 FS 自带 arrow Lm/Wm uniform 做裁剪）。
 	float lineFactor = LmShift / sqrt( LmShift * LmShift + Wm * Wm );
 	float edgeDistance = abs( abs( b ) - Wm * ( aShift / LmShift ) ) * lineFactor;
 	if ( aShift < 0.0 || aShift > LmShift || edgeDistance > u_arrowStrokeHalfPixels * mpp ) {

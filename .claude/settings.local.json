@@ -36,7 +36,9 @@
       "Bash(cp /tmp/cesium-pkg/engine/Source/Shaders/PolylineShadowVolumeFS.glsl \"D:/my/code/cesium-to-three/.claude-tmp-polyline-design/cesium-PolylineShadowVolumeFS.glsl\")",
       "Bash(ls \"D:/my/explore/cesium/\" 2>&1 | head -20)",
       "Bash(unzip -o \"D:/my/explore/cesium/packages.zip\" -d \"D:/my/explore/cesium/packages-unzipped/\")",
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "Bash(powershell -Command \"Expand-Archive -Path 'C:\\\\Users\\\\WIN11\\\\Downloads\\\\files.zip' -DestinationPath 'C:\\\\Users\\\\WIN11\\\\Downloads\\\\files_extracted' -Force\")",
+      "Bash(ls \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files_extracted\" -la)"
     ]
   }
 }

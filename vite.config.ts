@@ -16,8 +16,9 @@ export default defineConfig( ( { mode } ) => {
 
 	return {
 		server: {
-			port: 5170,
-			open: true,
+			port: 5180,
+			strictPort: true,
+			open: false,
 			host: '0.0.0.0',
 		},
 		build: {

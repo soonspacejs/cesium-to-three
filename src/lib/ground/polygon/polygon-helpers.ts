@@ -337,10 +337,14 @@ export function expandPolygonPointsThroughMeters(
 		}
 
 		// MITER LIMIT:锐角(小 θ)处 miterLength 会爆炸。clamp 到 N × ratio,
-		// 视觉上把"尖锐尖端"变成"截断尖端",避免荒谬几何延伸。比值 4.0 对应
-		// θ ≈ 28.96°(2 arcsin(1/4))之下才会触发 clamp,比箭头头部典型角度
-		// (~30°)略松,默认箭头形态下基本不会被钳。
-		const MITER_LIMIT_RATIO = 4.0;
+		// 视觉上把"尖锐尖端"变成"截断尖端",避免荒谬几何延伸。
+		// **1.5** 对齐 CSS / SVG stroke 的工业默认 miter-limit:锐角顶点
+		// (interior < ~83°)就自动 bevel,不再让 miter 把 tailLeft / swallowtailPnt
+		// 之类的尖角顶点甩到 4×strokeWidth 之外,避免邻边交叉形成 notch
+		// (用户在 swallowtailAttack 拐角看到的内陷三角即此原因)。
+		// 原 4.0 对箭头头部 (~30° 内角) 不触发 clamp,但对 swallowtail V 的
+		// tailLeft (interior ~45°-50°) 已经接近爆炸边缘,各自实测验证。
+		const MITER_LIMIT_RATIO = 1.5;
 		const miterCap = N * MITER_LIMIT_RATIO;
 		if ( miterLength > miterCap ) {
 			miterLength = miterCap;

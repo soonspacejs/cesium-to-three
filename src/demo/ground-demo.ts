@@ -621,6 +621,9 @@ export function runGroundDemo(): void {
 		polylineArrowWidthMode: 'world',
 		polylineArrowLengthPixels: 18,
 		polylineArrowWidthPixels: 16,
+		// world 模式下匹配 widthMeters=5 的线粗，跟库默认 30/24 一致。
+		polylineArrowLengthMeters: 30,
+		polylineArrowWidthMeters: 24,
 		// 折线大比例尺：5 段、~50 km 总长、screen 模式 3 px 屏宽（远视角不消失）。
 		largePolylineVisible: true,
 		largePolylinePlotOrder: 14,
@@ -1523,6 +1526,8 @@ export function runGroundDemo(): void {
 			arrowWidthMode: debugSettings.polylineArrowWidthMode,
 			arrowLengthPixels: debugSettings.polylineArrowLengthPixels,
 			arrowWidthPixels: debugSettings.polylineArrowWidthPixels,
+			arrowLengthMeters: debugSettings.polylineArrowLengthMeters,
+			arrowWidthMeters: debugSettings.polylineArrowWidthMeters,
 		} );
 	}
 
@@ -1828,10 +1833,14 @@ export function runGroundDemo(): void {
 		);
 		groundPolyline.setRenderOrder( plotOrderToRenderOrder( debugSettings.polylinePlotOrder ) );
 		groundPolyline.setVisible( debugSettings.polylineVisible );
-		// 箭头尺寸（屏宽像素）可热改不重建；mode / style 走 GUI rebuild。
+		// 箭头尺寸（屏宽像素 + 世界米）可热改不重建；mode / style 走 GUI rebuild。
 		groundPolyline.setArrowSize(
 			debugSettings.polylineArrowLengthPixels,
 			debugSettings.polylineArrowWidthPixels,
+		);
+		groundPolyline.setArrowSizeMeters(
+			debugSettings.polylineArrowLengthMeters,
+			debugSettings.polylineArrowWidthMeters,
 		);
 
 		// ── 折线大比例尺 ── 同上。
@@ -2351,12 +2360,24 @@ export function runGroundDemo(): void {
 			groundPolyline.setArrowStyle( debugSettings.polylineArrowStyle );
 		} );
 		// 箭头尺寸模式（对应 Cesium `Billboard.sizeInMeters`）：screen 像素恒定 /
-		// world 世界米恒定。切到 world 时随相机透视，远小近大。
+		// world 世界米恒定。两套尺寸滑块（px / m）按当前 mode 互斥 show——切到哪
+		// 边显示哪边，避免拽到「不生效」的那组困惑。
+		const polylineArrowLenPxCtl = polylineFolder.add( debugSettings, 'polylineArrowLengthPixels', 4.0, 60.0, 1.0 ).name( 'arrow len px' ).onChange( applyGroundDebugSettings );
+		const polylineArrowWidthPxCtl = polylineFolder.add( debugSettings, 'polylineArrowWidthPixels', 4.0, 60.0, 1.0 ).name( 'arrow width px' ).onChange( applyGroundDebugSettings );
+		const polylineArrowLenMCtl = polylineFolder.add( debugSettings, 'polylineArrowLengthMeters', 1.0, 200.0, 1.0 ).name( 'arrow len m' ).onChange( applyGroundDebugSettings );
+		const polylineArrowWidthMCtl = polylineFolder.add( debugSettings, 'polylineArrowWidthMeters', 1.0, 200.0, 1.0 ).name( 'arrow width m' ).onChange( applyGroundDebugSettings );
+		const syncPolylineArrowSizeVisibility = () => {
+			const isWorld = debugSettings.polylineArrowWidthMode === 'world';
+			polylineArrowLenPxCtl.show( ! isWorld );
+			polylineArrowWidthPxCtl.show( ! isWorld );
+			polylineArrowLenMCtl.show( isWorld );
+			polylineArrowWidthMCtl.show( isWorld );
+		};
+		syncPolylineArrowSizeVisibility();
 		polylineFolder.add( debugSettings, 'polylineArrowWidthMode', widthModeOptions ).name( 'arrow widthMode' ).onChange( () => {
 			groundPolyline.setArrowWidthMode( debugSettings.polylineArrowWidthMode );
+			syncPolylineArrowSizeVisibility();
 		} );
-		polylineFolder.add( debugSettings, 'polylineArrowLengthPixels', 4.0, 60.0, 1.0 ).name( 'arrow len px' ).onChange( applyGroundDebugSettings );
-		polylineFolder.add( debugSettings, 'polylineArrowWidthPixels', 4.0, 60.0, 1.0 ).name( 'arrow width px' ).onChange( applyGroundDebugSettings );
 		polylineFolder.close();
 
 		const largeFolder = gui.addFolder( 'Large Scale' );
@@ -2471,15 +2492,23 @@ export function runGroundDemo(): void {
 		largePolylineFolder.add( debugSettings, 'largePolylineArrowStyle', arrowStyleOptions ).name( 'arrow style' ).onChange( () => {
 			largeGroundPolyline.setArrowStyle( debugSettings.largePolylineArrowStyle );
 		} );
-		// 箭头尺寸模式（对应 Cesium `Billboard.sizeInMeters`）
+		// 箭头尺寸 mode + px/m 互斥 show（同 polyline）。
+		const largePolylineArrowLenPxCtl = largePolylineFolder.add( debugSettings, 'largePolylineArrowLengthPixels', 4.0, 80.0, 1.0 ).name( 'arrow len px' ).onChange( applyGroundDebugSettings );
+		const largePolylineArrowWidthPxCtl = largePolylineFolder.add( debugSettings, 'largePolylineArrowWidthPixels', 4.0, 80.0, 1.0 ).name( 'arrow width px' ).onChange( applyGroundDebugSettings );
+		const largePolylineArrowLenMCtl = largePolylineFolder.add( debugSettings, 'largePolylineArrowLengthMeters', 50.0, 3000.0, 50.0 ).name( 'arrow len m' ).onChange( applyGroundDebugSettings );
+		const largePolylineArrowWidthMCtl = largePolylineFolder.add( debugSettings, 'largePolylineArrowWidthMeters', 50.0, 3000.0, 50.0 ).name( 'arrow width m' ).onChange( applyGroundDebugSettings );
+		const syncLargePolylineArrowSizeVisibility = () => {
+			const isWorld = debugSettings.largePolylineArrowWidthMode === 'world';
+			largePolylineArrowLenPxCtl.show( ! isWorld );
+			largePolylineArrowWidthPxCtl.show( ! isWorld );
+			largePolylineArrowLenMCtl.show( isWorld );
+			largePolylineArrowWidthMCtl.show( isWorld );
+		};
+		syncLargePolylineArrowSizeVisibility();
 		largePolylineFolder.add( debugSettings, 'largePolylineArrowWidthMode', widthModeOptions ).name( 'arrow widthMode' ).onChange( () => {
 			largeGroundPolyline.setArrowWidthMode( debugSettings.largePolylineArrowWidthMode );
+			syncLargePolylineArrowSizeVisibility();
 		} );
-		largePolylineFolder.add( debugSettings, 'largePolylineArrowLengthPixels', 4.0, 80.0, 1.0 ).name( 'arrow len px' ).onChange( applyGroundDebugSettings );
-		largePolylineFolder.add( debugSettings, 'largePolylineArrowWidthPixels', 4.0, 80.0, 1.0 ).name( 'arrow width px' ).onChange( applyGroundDebugSettings );
-		// world 模式下的米尺寸（widthMode='world' 时生效）。范围按 widthMeters=200 量级开。
-		largePolylineFolder.add( debugSettings, 'largePolylineArrowLengthMeters', 50.0, 3000.0, 50.0 ).name( 'arrow len m' ).onChange( applyGroundDebugSettings );
-		largePolylineFolder.add( debugSettings, 'largePolylineArrowWidthMeters', 50.0, 3000.0, 50.0 ).name( 'arrow width m' ).onChange( applyGroundDebugSettings );
 		largePolylineFolder.close();
 
 		largeFolder.close();

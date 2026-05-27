@@ -176,6 +176,9 @@ export interface GroundDebugSettings {
 	polylineArrowWidthMode: CesiumGroundLineWidthMode;
 	polylineArrowLengthPixels: number;
 	polylineArrowWidthPixels: number;
+	// world 模式下用米（arrowWidthMode='world' 时生效）
+	polylineArrowLengthMeters: number;
+	polylineArrowWidthMeters: number;
 
 	// 折线标绘（大比例尺：km 长度）
 	largePolylineVisible: boolean;

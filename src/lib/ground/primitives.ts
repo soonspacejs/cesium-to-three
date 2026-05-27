@@ -1049,6 +1049,7 @@ export class CesiumGroundPolylinePrimitive {
 		}
 		this.disposeArrowMesh();
 		this.options.arrowMode = newMode;
+		this.syncLineArrowClipUniforms();
 		if ( newMode === ARROW_MODE.NONE ) {
 			return;
 		}
@@ -1079,6 +1080,22 @@ export class CesiumGroundPolylinePrimitive {
 			newStyle === 'open',
 		);
 		this.arrowMesh.material = this.arrowMaterial;
+	}
+
+	/**
+	 * 把 `u_lineArrowClip{Start,End}Enabled` 同步成「对应端是否有箭头」的逻辑值。
+	 * `setArrowMode` 改变端数时必须调一遍——否则线 FS 的 V 形收口会停留在
+	 * 上一个状态（拔掉箭头还在收口、加上箭头不收口）。
+	 * 与 style 无关（SOLID / OPEN 共享同一套 V 形几何边界）。
+	 */
+	private syncLineArrowClipUniforms(): void {
+		const mode = this.options.arrowMode;
+		const hasEnd = mode === ARROW_MODE.RIGHT || mode === ARROW_MODE.BOTH;
+		const hasStart = mode === ARROW_MODE.LEFT || mode === ARROW_MODE.BOTH;
+		( this.uniforms.u_lineArrowClipEndEnabled as { value: number } ).value =
+			hasEnd ? 1.0 : 0.0;
+		( this.uniforms.u_lineArrowClipStartEnabled as { value: number } ).value =
+			hasStart ? 1.0 : 0.0;
 	}
 
 	/**
@@ -1242,5 +1259,15 @@ function createPolylineUniforms(
 		u_arrowHalfWidthMeters: { value: options.arrowWidthMeters * 0.5 },
 		u_arrowColor: { value: new Vector4( color.r, color.g, color.b, safeAlpha ) },
 		u_arrowStrokeHalfPixels: { value: options.arrowStrokeWidthPixels * 0.5 },
+		// 线 FS 用，arrowMode 包含对应端时启用 V 形收口裁剪（与 style 无关，
+		// SOLID 三角和 OPEN chevron 共享同一套 V 形外轮廓）。
+		u_lineArrowClipEndEnabled: {
+			value: options.arrowMode === ARROW_MODE.RIGHT || options.arrowMode === ARROW_MODE.BOTH
+				? 1.0 : 0.0,
+		},
+		u_lineArrowClipStartEnabled: {
+			value: options.arrowMode === ARROW_MODE.LEFT || options.arrowMode === ARROW_MODE.BOTH
+				? 1.0 : 0.0,
+		},
 	} as unknown as SharedUniforms;
 }
