@@ -47,6 +47,7 @@ export interface ResolvedLineOptions {
 	debugVolume: boolean;
 	arrowMode: ArrowMode;
 	arrowStyle: ArrowStyle;
+	arrowWidthMode: LineWidthMode;
 	arrowLengthPixels: number;
 	arrowWidthPixels: number;
 	arrowLengthMeters: number;
@@ -224,6 +225,12 @@ export function resolvePublicLineOptions(
 	// ── 箭头选项 ──
 	const arrowMode = parseArrowMode( options.arrowMode );
 	const arrowStyle = parseArrowStyle( options.arrowStyle );
+	// 箭头尺寸模式：默认 'world'（世界米恒定，与线/面 world 模式视觉一致——
+	// 远小近大，跟着相机透视）。要像素恒定（Cesium Billboard sizeInMeters=false
+	// 同义）显式传 'screen'。与线 widthMode 独立可设。
+	const arrowWidthMode = parseWidthMode( options.arrowWidthMode ?? 'world' );
+	// 箭头尺寸默认硬编码（screen 18×16 px / world 30×24 m）。**业务层**自己根据
+	// 线宽决定合适比例（大宽线要大箭头、细线要小箭头）——库层不假设业务比例。
 	const arrowLengthPixels = options.arrowLengthPixels ?? 18.0;
 	const arrowWidthPixels = options.arrowWidthPixels ?? 16.0;
 	const arrowLengthMeters = options.arrowLengthMeters ?? 30.0;
@@ -288,6 +295,7 @@ export function resolvePublicLineOptions(
 		debugVolume: options.debugVolume === true,
 		arrowMode,
 		arrowStyle,
+		arrowWidthMode,
 		arrowLengthPixels,
 		arrowWidthPixels,
 		arrowLengthMeters,

@@ -618,6 +618,7 @@ export function runGroundDemo(): void {
 		// 默认终点端有箭头，方便看「箭头跟着线方向走」。
 		polylineArrowMode: 'right',
 		polylineArrowStyle: 'solid',
+		polylineArrowWidthMode: 'world',
 		polylineArrowLengthPixels: 18,
 		polylineArrowWidthPixels: 16,
 		// 折线大比例尺：5 段、~50 km 总长、screen 模式 3 px 屏宽（远视角不消失）。
@@ -637,8 +638,13 @@ export function runGroundDemo(): void {
 		// 大比例尺折线两端都加箭头展示。
 		largePolylineArrowMode: 'both',
 		largePolylineArrowStyle: 'solid',
+		largePolylineArrowWidthMode: 'world',
 		largePolylineArrowLengthPixels: 22,
 		largePolylineArrowWidthPixels: 20,
+		// world 模式下匹配 widthMeters=200 的线粗，~4:1 length / ~3:1 width
+		// 比例让箭头与线视觉成比例（业务侧决定，库层不假设）。
+		largePolylineArrowLengthMeters: 800,
+		largePolylineArrowWidthMeters: 600,
 		// 文字标绘 1:1：metersPerPixel=1.0 即「1 纹素 = 1 米」字面意义比例尺。
 		// 默认 content 含 \n 演示横排换行；anchor 放在矩形正北 ~30 m。
 		textVisible: true,
@@ -1514,6 +1520,7 @@ export function runGroundDemo(): void {
 			debugVolume: debugSettings.polylineDebugVolume,
 			arrowMode: debugSettings.polylineArrowMode,
 			arrowStyle: debugSettings.polylineArrowStyle,
+			arrowWidthMode: debugSettings.polylineArrowWidthMode,
 			arrowLengthPixels: debugSettings.polylineArrowLengthPixels,
 			arrowWidthPixels: debugSettings.polylineArrowWidthPixels,
 		} );
@@ -1540,8 +1547,11 @@ export function runGroundDemo(): void {
 			debugVolume: debugSettings.largePolylineDebugVolume,
 			arrowMode: debugSettings.largePolylineArrowMode,
 			arrowStyle: debugSettings.largePolylineArrowStyle,
+			arrowWidthMode: debugSettings.largePolylineArrowWidthMode,
 			arrowLengthPixels: debugSettings.largePolylineArrowLengthPixels,
 			arrowWidthPixels: debugSettings.largePolylineArrowWidthPixels,
+			arrowLengthMeters: debugSettings.largePolylineArrowLengthMeters,
+			arrowWidthMeters: debugSettings.largePolylineArrowWidthMeters,
 		} );
 	}
 
@@ -1836,6 +1846,10 @@ export function runGroundDemo(): void {
 		largeGroundPolyline.setArrowSize(
 			debugSettings.largePolylineArrowLengthPixels,
 			debugSettings.largePolylineArrowWidthPixels,
+		);
+		largeGroundPolyline.setArrowSizeMeters(
+			debugSettings.largePolylineArrowLengthMeters,
+			debugSettings.largePolylineArrowWidthMeters,
 		);
 
 		// 共享渲染状态旋钮(fragment culling + 3-pass 可见性)也必须传到每个箭头图元。
@@ -2336,6 +2350,11 @@ export function runGroundDemo(): void {
 		polylineFolder.add( debugSettings, 'polylineArrowStyle', arrowStyleOptions ).name( 'arrow style' ).onChange( () => {
 			groundPolyline.setArrowStyle( debugSettings.polylineArrowStyle );
 		} );
+		// 箭头尺寸模式（对应 Cesium `Billboard.sizeInMeters`）：screen 像素恒定 /
+		// world 世界米恒定。切到 world 时随相机透视，远小近大。
+		polylineFolder.add( debugSettings, 'polylineArrowWidthMode', widthModeOptions ).name( 'arrow widthMode' ).onChange( () => {
+			groundPolyline.setArrowWidthMode( debugSettings.polylineArrowWidthMode );
+		} );
 		polylineFolder.add( debugSettings, 'polylineArrowLengthPixels', 4.0, 60.0, 1.0 ).name( 'arrow len px' ).onChange( applyGroundDebugSettings );
 		polylineFolder.add( debugSettings, 'polylineArrowWidthPixels', 4.0, 60.0, 1.0 ).name( 'arrow width px' ).onChange( applyGroundDebugSettings );
 		polylineFolder.close();
@@ -2452,8 +2471,15 @@ export function runGroundDemo(): void {
 		largePolylineFolder.add( debugSettings, 'largePolylineArrowStyle', arrowStyleOptions ).name( 'arrow style' ).onChange( () => {
 			largeGroundPolyline.setArrowStyle( debugSettings.largePolylineArrowStyle );
 		} );
+		// 箭头尺寸模式（对应 Cesium `Billboard.sizeInMeters`）
+		largePolylineFolder.add( debugSettings, 'largePolylineArrowWidthMode', widthModeOptions ).name( 'arrow widthMode' ).onChange( () => {
+			largeGroundPolyline.setArrowWidthMode( debugSettings.largePolylineArrowWidthMode );
+		} );
 		largePolylineFolder.add( debugSettings, 'largePolylineArrowLengthPixels', 4.0, 80.0, 1.0 ).name( 'arrow len px' ).onChange( applyGroundDebugSettings );
 		largePolylineFolder.add( debugSettings, 'largePolylineArrowWidthPixels', 4.0, 80.0, 1.0 ).name( 'arrow width px' ).onChange( applyGroundDebugSettings );
+		// world 模式下的米尺寸（widthMode='world' 时生效）。范围按 widthMeters=200 量级开。
+		largePolylineFolder.add( debugSettings, 'largePolylineArrowLengthMeters', 50.0, 3000.0, 50.0 ).name( 'arrow len m' ).onChange( applyGroundDebugSettings );
+		largePolylineFolder.add( debugSettings, 'largePolylineArrowWidthMeters', 50.0, 3000.0, 50.0 ).name( 'arrow width m' ).onChange( applyGroundDebugSettings );
 		largePolylineFolder.close();
 
 		largeFolder.close();

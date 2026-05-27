@@ -173,6 +173,7 @@ export interface GroundDebugSettings {
 	polylineDebugVolume: boolean;
 	polylineArrowMode: CesiumGroundArrowMode;
 	polylineArrowStyle: CesiumGroundArrowStyle;
+	polylineArrowWidthMode: CesiumGroundLineWidthMode;
 	polylineArrowLengthPixels: number;
 	polylineArrowWidthPixels: number;
 
@@ -192,8 +193,13 @@ export interface GroundDebugSettings {
 	largePolylineDebugVolume: boolean;
 	largePolylineArrowMode: CesiumGroundArrowMode;
 	largePolylineArrowStyle: CesiumGroundArrowStyle;
+	largePolylineArrowWidthMode: CesiumGroundLineWidthMode;
 	largePolylineArrowLengthPixels: number;
 	largePolylineArrowWidthPixels: number;
+	// world 模式下用米——线本身 200m 宽，箭头如果留库默认 30×24m 就像针尖
+	// 看不出来；demo（业务层）按线粗派生合理大小。
+	largePolylineArrowLengthMeters: number;
+	largePolylineArrowWidthMeters: number;
 
 	// 文字标绘（1:1 比例尺）
 	textVisible: boolean;

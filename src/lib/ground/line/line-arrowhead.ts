@@ -15,12 +15,20 @@
 
 import { BufferAttribute, BufferGeometry, Vector3 } from 'three';
 
+import {
+	APPROXIMATE_TERRAIN_DEFAULT_MAX_HEIGHT,
+	APPROXIMATE_TERRAIN_DEFAULT_MIN_HEIGHT,
+} from '../constants';
 import { createCartographic } from '../math/cartographic';
 import {
 	cartographicToCartesian,
 	geodeticSurfaceNormal,
 } from '../math/ellipsoid';
 import { encodeVec3RTE } from '../math/rte-encoding';
+import {
+	getTerrainMinMaxHeightsForRectangle,
+	isApproximateTerrainHeightsReady,
+} from '../terrain-heights';
 
 import type { DensifiedLine } from './line-types';
 
@@ -42,12 +50,16 @@ export type ArrowMode = typeof ARROW_MODE[ keyof typeof ARROW_MODE ];
 export type ArrowStyle = 'solid' | 'open';
 
 /**
- * 端点局部标架（ECEF 三向单位向量 + 尖端 ECEF 位置）。
+ * 端点局部标架（ECEF 三向单位向量 + 尖端 ECEF 位置 + 端点处地形高度窗口）。
  *
- * - `tip` 是端点在地表（h=0）的 ECEF 位置。FS 把地形点 `P` 投到这个标架。
+ * - `tip` 是端点在椭球面（h=0）的 ECEF 位置。FS 把地形点 `P` 投到这个标架。
  * - `back` 指向线内部（首段正方向 / 末段反方向），构成「沿线长」轴。
  * - `right` 端点处的右法线，构成「横向」轴。
  * - `up` 椭球面法线，配合 VS 把盒子竖直挤成「穿过地表的薄墙」。
+ * - `terrainMinHeight` / `terrainMaxHeight` 端点附近的地形高度范围（米）。
+ *   箭头盒子在 VS 里 顶 / 底 沿 `up` 推到这两个高度——**必须覆盖实际地形高度**，
+ *   否则盒子在 alt=0 的投影与「FS 重建地形点」的屏幕位置错位，箭头表现为
+ *   「随缩放变形」「顶部冒出线段」等 alignment 伪影（尼泊尔 5 km 地形是典型场景）。
  *
  * 三个方向向量应正交（`back ⟂ right ⟂ up`），由调用方保证。
  */
@@ -56,6 +68,8 @@ export interface EndpointFrame {
 	back: [ number, number, number ];
 	right: [ number, number, number ];
 	up: [ number, number, number ];
+	terrainMinHeight: number;
+	terrainMaxHeight: number;
 }
 
 // 8 顶点角点系数 (aCoef ∈ {0,1}, bSign ∈ {-1,+1}, topBottomSide ∈ {-1,+1})。
@@ -105,12 +119,51 @@ function readVec3FromFlat(
 }
 
 /**
+ * 端点处查 `ApproximateTerrainHeights` 得到地形高度窗口。小范围 ~5e-7 度
+ * 的微 rectangle，落到 level-6 单 tile，与线 segment 用的同套查询。table 没
+ * 初始化时回退到 [-1000, 9000]（覆盖地球绝大多数地形）。
+ *
+ * @param longitudeDegrees 端点经度（度）。
+ * @param latitudeDegrees  端点纬度（度）。
+ * @returns                terrain min / max（米）。
+ */
+function queryEndpointTerrainHeights(
+	longitudeDegrees: number,
+	latitudeDegrees: number,
+): { minHeight: number; maxHeight: number } {
+	if ( ! isApproximateTerrainHeightsReady() ) {
+		// table 未加载时回退到 Cesium 同款默认窗口：
+		//   min = -100 km（覆盖马里亚纳海沟 ~-11 km 并留余量）
+		//   max =  +9 km（覆盖珠峰 ~8.85 km）
+		// 这两个值就是 `terrain-heights.ts` 里 `ApproximateTerrainHeights._defaultMin/MaxTerrainHeight`
+		// 的项目常量。调用方 demo 一般先 `initializeApproximateTerrainHeights`。
+		return {
+			minHeight: APPROXIMATE_TERRAIN_DEFAULT_MIN_HEIGHT,
+			maxHeight: APPROXIMATE_TERRAIN_DEFAULT_MAX_HEIGHT,
+		};
+	}
+	const halfSize = 5.0e-7;
+	const rect = {
+		west: longitudeDegrees - halfSize,
+		east: longitudeDegrees + halfSize,
+		south: latitudeDegrees - halfSize,
+		north: latitudeDegrees + halfSize,
+	};
+	const terrain = getTerrainMinMaxHeightsForRectangle( rect );
+	return {
+		minHeight: terrain.minimumTerrainHeight,
+		maxHeight: terrain.maximumTerrainHeight,
+	};
+}
+
+/**
  * 从密集线数据算出 start / end 两端的标架。每端：
  *
  * - `tip = cartographic(lon, lat, h=0)` 反投影到 ECEF（与线 ecStart 同源）。
  * - `back` = 指向相邻内点的方向（首段正方向 / 末段反方向）。
  * - `right` = 端点处密集线给出的几何法线（首末点的 `normals[]`）。
  * - `up` = `geodeticSurfaceNormal(tip)`，与端点切平面正交。
+ * - `terrainMinHeight` / `terrainMaxHeight` 端点附近的地形高度窗口。
  *
  * @param wall 加密后的密集线数据（来自 buildWallArrays）。
  * @returns    起 / 终两端的标架。
@@ -127,7 +180,9 @@ export function computeEndpointFrames(
 	// cartographicsArray 顺序：[lat0, lon0, lat1, lon1, ...]（与 Cesium 一致）。
 	const cartos = wall.cartographicsArray;
 
-	// ── 起点端：tip = cartographic(lon0, lat0, 0)，back = normalize(bottom[1] - bottom[0]) ──
+	// ── 起点端：tip = cartographic(lon0, lat0, 0)；先算 up，再把 chord
+	//    (bottom[1] - bottom[0]) 投影到 tip 的切平面得到 back（消除「弦相对
+	//    切线下沉」造成的 frame 非正交，详见下方注释）。 ──
 	_scratchCarto.longitude = cartos[ 1 ];
 	_scratchCarto.latitude = cartos[ 0 ];
 	_scratchCarto.height = 0.0;
@@ -137,9 +192,29 @@ export function computeEndpointFrames(
 		_scratchVecA.x, _scratchVecA.y, _scratchVecA.z,
 	];
 
+	const startUp = geodeticSurfaceNormal( _scratchVecA, _scratchUp );
+	if ( startUp === undefined ) {
+		throw new Error( 'CesiumGroundPolyline: failed to derive geodetic up at start tip.' );
+	}
+	const startUpArr: [ number, number, number ] = [ startUp.x, startUp.y, startUp.z ];
+
 	readVec3FromFlat( wall.bottomPositionsArray, 0, _scratchVecB ); // bottom[0]
 	readVec3FromFlat( wall.bottomPositionsArray, 1, _scratchVecC ); // bottom[1]
 	_scratchVecC.sub( _scratchVecB ).normalize();
+	// 把 chord 投影到 tip 的切平面（消除「弦相对切线的下沉」，幅度 ≈ 段长 / 2R）。
+	// 不投影时 chord 在 tip 处带一个沿 -up 的微小分量；FS 在 terrain 端点像素算
+	//   a = dot(P - tip, back) = dot(H·up + horizontal, back)
+	//     = H·dot(up, back) + dot(horizontal, back)
+	// 中的 H·dot(up, back) 会变成 -H·(L/2R)（H = 端点 terrain 高度，L = 段长，
+	// R ≈ 6.4e6 m）。10 km 段 + 5 km 地形 → a ≈ -3.9 m，让端点像素 a 偏负、
+	// 被 `a < 0` discard。后果有两个：
+	//   1) 端点像素 / 箭头 a=0 边界错位 → 「线段冒过箭头顶部」的几像素小尾巴
+	//      （用户报的「大比例尺下顶部冒线段」）。
+	//   2) 这个 3D 偏移在屏幕上的投影随相机位置变化 → 箭头看起来「随相机远近
+	//      移位 / 缩放」（用户报的「跟随相机远近变化而不是固定」）。
+	// 投影后 back ⟂ up（与 rightDir 一致，computeRightNormal 也是切平面内的
+	// 单位向量），三向量正交，箭头顶端的 a=0 边界精确落在端点 lon/lat 上空。
+	_scratchVecC.addScaledVector( startUp, - _scratchVecC.dot( startUp ) ).normalize();
 	const startBackArr: [ number, number, number ] = [
 		_scratchVecC.x, _scratchVecC.y, _scratchVecC.z,
 	];
@@ -149,21 +224,26 @@ export function computeEndpointFrames(
 		_scratchVecB.x, _scratchVecB.y, _scratchVecB.z,
 	];
 
-	const startUp = geodeticSurfaceNormal( _scratchVecA, _scratchUp );
-	if ( startUp === undefined ) {
-		throw new Error( 'CesiumGroundPolyline: failed to derive geodetic up at start tip.' );
-	}
-	const startUpArr: [ number, number, number ] = [ startUp.x, startUp.y, startUp.z ];
+	// 端点处地形高度窗口（用与线 segment 同样的 ApproximateTerrainHeights 路径）。
+	// cartos 顺序是 [lat, lon, ...] 弧度，要转度数才能查 rectangle。
+	const RAD2DEG = 180.0 / Math.PI;
+	const startTerrain = queryEndpointTerrainHeights(
+		cartos[ 1 ] * RAD2DEG,
+		cartos[ 0 ] * RAD2DEG,
+	);
 
 	const startFrame: EndpointFrame = {
 		tip: startTipArr,
 		back: startBackArr,
 		right: startRightArr,
 		up: startUpArr,
+		terrainMinHeight: startTerrain.minHeight,
+		terrainMaxHeight: startTerrain.maxHeight,
 	};
 
-	// ── 终点端：tip = cartographic(lon_{N-1}, lat_{N-1}, 0)，
-	//    back = normalize(bottom[N-2] - bottom[N-1])（指向线内部） ──
+	// ── 终点端：tip = cartographic(lon_{N-1}, lat_{N-1}, 0)；同起点端，
+	//    chord (bottom[N-2] - bottom[N-1]) 投影到切平面后作为 back（指向
+	//    线内部）。同样的「弦下沉」问题在末端也存在，必须做投影。 ──
 	_scratchCarto.longitude = cartos[ ( N - 1 ) * 2 + 1 ];
 	_scratchCarto.latitude = cartos[ ( N - 1 ) * 2 ];
 	_scratchCarto.height = 0.0;
@@ -173,9 +253,16 @@ export function computeEndpointFrames(
 		_scratchVecA.x, _scratchVecA.y, _scratchVecA.z,
 	];
 
+	const endUp = geodeticSurfaceNormal( _scratchVecA, _scratchUp );
+	if ( endUp === undefined ) {
+		throw new Error( 'CesiumGroundPolyline: failed to derive geodetic up at end tip.' );
+	}
+	const endUpArr: [ number, number, number ] = [ endUp.x, endUp.y, endUp.z ];
+
 	readVec3FromFlat( wall.bottomPositionsArray, N - 1, _scratchVecB ); // bottom[N-1]
 	readVec3FromFlat( wall.bottomPositionsArray, N - 2, _scratchVecC ); // bottom[N-2]
 	_scratchVecC.sub( _scratchVecB ).normalize();
+	_scratchVecC.addScaledVector( endUp, - _scratchVecC.dot( endUp ) ).normalize();
 	const endBackArr: [ number, number, number ] = [
 		_scratchVecC.x, _scratchVecC.y, _scratchVecC.z,
 	];
@@ -185,17 +272,18 @@ export function computeEndpointFrames(
 		_scratchVecB.x, _scratchVecB.y, _scratchVecB.z,
 	];
 
-	const endUp = geodeticSurfaceNormal( _scratchVecA, _scratchUp );
-	if ( endUp === undefined ) {
-		throw new Error( 'CesiumGroundPolyline: failed to derive geodetic up at end tip.' );
-	}
-	const endUpArr: [ number, number, number ] = [ endUp.x, endUp.y, endUp.z ];
+	const endTerrain = queryEndpointTerrainHeights(
+		cartos[ ( N - 1 ) * 2 + 1 ] * RAD2DEG,
+		cartos[ ( N - 1 ) * 2 ] * RAD2DEG,
+	);
 
 	const endFrame: EndpointFrame = {
 		tip: endTipArr,
 		back: endBackArr,
 		right: endRightArr,
 		up: endUpArr,
+		terrainMinHeight: endTerrain.minHeight,
+		terrainMaxHeight: endTerrain.maxHeight,
 	};
 
 	return { startFrame, endFrame };
@@ -232,6 +320,7 @@ export function buildArrowHeadGeometry(
 	const rightDir = new Float32Array( vertexCount * 3 );
 	const upDir = new Float32Array( vertexCount * 3 );
 	const corner = new Float32Array( vertexCount * 3 );
+	const terrainHeights = new Float32Array( vertexCount * 2 );  // (minHeight, maxHeight)
 	const indices = new Uint16Array( boxes * 36 );
 
 	for ( let f = 0; f < boxes; f++ ) {
@@ -241,6 +330,7 @@ export function buildArrowHeadGeometry(
 
 		for ( let j = 0; j < 8; j++ ) {
 			const vi = ( f * 8 + j ) * 3;
+			const ti = ( f * 8 + j ) * 2;
 			tipHigh[ vi ] = _tipHi.x; tipHigh[ vi + 1 ] = _tipHi.y; tipHigh[ vi + 2 ] = _tipHi.z;
 			tipLow[ vi ] = _tipLo.x; tipLow[ vi + 1 ] = _tipLo.y; tipLow[ vi + 2 ] = _tipLo.z;
 			backDir[ vi ] = fr.back[ 0 ];
@@ -256,6 +346,8 @@ export function buildArrowHeadGeometry(
 			corner[ vi ] = c[ 0 ];
 			corner[ vi + 1 ] = c[ 1 ];
 			corner[ vi + 2 ] = c[ 2 ];
+			terrainHeights[ ti ] = fr.terrainMinHeight;
+			terrainHeights[ ti + 1 ] = fr.terrainMaxHeight;
 		}
 		for ( let k = 0; k < 36; k++ ) {
 			indices[ f * 36 + k ] = ARROW_BOX_INDICES[ k ] + f * 8;
@@ -269,6 +361,7 @@ export function buildArrowHeadGeometry(
 	g.setAttribute( 'arrowRightDir', new BufferAttribute( rightDir, 3 ) );
 	g.setAttribute( 'arrowUpDir', new BufferAttribute( upDir, 3 ) );
 	g.setAttribute( 'arrowCorner', new BufferAttribute( corner, 3 ) );
+	g.setAttribute( 'arrowTerrainHeights', new BufferAttribute( terrainHeights, 2 ) );
 	g.setIndex( new BufferAttribute( indices, 1 ) );
 	return g;
 }

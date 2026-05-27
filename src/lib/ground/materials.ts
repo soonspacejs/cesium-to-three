@@ -411,6 +411,7 @@ uniform float czm_pixelRatio;
 uniform vec4 u_color;
 uniform float u_lineWidthMode;
 uniform float u_lineWidthMeters;
+uniform float u_lineWidthPixels;       // 箭头 FS 算 aOffset 时要读，line FS 不用
 uniform float u_lineDashEnabled;
 uniform float u_lineDashLengthMeters;
 uniform float u_lineGapLengthMeters;
@@ -1264,7 +1265,8 @@ in vec3 arrowTipLow;
 in vec3 arrowBackDir;
 in vec3 arrowRightDir;
 in vec3 arrowUpDir;
-in vec3 arrowCorner;            // (aCoef, bSign, topBottomSide)
+in vec3 arrowCorner;             // (aCoef, bSign, topBottomSide)
+in vec2 arrowTerrainHeights;     // (minHeight, maxHeight) 端点处地形高度窗口（米）
 
 out vec3 v_arrowTipEC;
 out vec3 v_arrowBackEC;
@@ -1283,10 +1285,14 @@ void main() {
 	v_arrowBackEC  = backEC;
 	v_arrowRightEC = rightEC;
 
-	// 3) 像素 → 米：用尖端处 metersPerPixel 代表整个小箭头，乘保险放大系数
-	//    ARROW_BOX_PADDING——因为 FS 用「地形点处的」metersPerPixel 算三角形，
-	//    与 tipEC 处的 mpp 略有差异；盒子放大 1.35× 确保 FS 三角形恒落在盒覆盖
-	//    的屏幕像素内。
+	// 3) 像素 → 米：盒子放大 ARROW_BOX_PADDING 倍包住 FS 三角形。
+	//    *关键*：tip 在 alt=0（椭球面），相机若高于 tip 又看着地形，则 mpp(tipEC)
+	//    用的是「相机到 tip」的远距离 → 盒子米数大。FS 用 mpp(P) 用的是「相机到
+	//    地形」的近距离 → 三角形米数小。两者错位会造成「箭头跟着缩放变大」「顶部
+	//    冒线段」等 alignment 伪影。我们仍用 mpp(tipEC) 算盒子大小（盒子和 tip 都
+	//    在 alt=0 平面），但通过 §5 把盒子竖直拉到 terrain 高度窗口，**让盒子在
+	//    屏幕上贯穿 tip 和 terrain 两个高度的投影**，从而覆盖 FS 三角形会出现的
+	//    屏幕像素。
 	float mpp = max( 0.0, czm_metersPerPixel( tipEC ) );
 	float Lm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
 		u_arrowLengthMeters,
@@ -1297,27 +1303,86 @@ void main() {
 		u_arrowHalfWidthPixels * mpp
 	) * ARROW_BOX_PADDING;
 
-	// 4) 切平面内挤出盒底面四角：tip + back·(aCoef·Lm) + right·(bSign·Wm)。
+	// 3.5) 线段半宽（米，tip 处 mpp）；把箭头三角形顶点向 -back 方向外延 aOffset
+	//      米，让箭头在线段端点处的宽度恰好等于 lineHalfWidth，盖住线段的两侧
+	//      「肩膀」（线段宽度 > 1 px 时端点像素旁边总有 ±lineHalfWidth 的露头）。
+	//      公式推导：希望 width(端点) = Wm · aOffset / (Lm + aOffset) = lineHalfWidth
+	//      → aOffset = lineHalfWidth · Lm / (Wm − lineHalfWidth)。
+	//      边界保护：Wm <= lineHalfWidth 时（线比箭头粗，几何上无解）退化为
+	//      aOffset = Lm，让箭头整体平移到端点之外，至少端点不再露线肩。
+	//      额外乘 ARROW_BOX_PADDING：FS 用 mpp(P) 算 aOffset_FS、VS 用 mpp(tip)
+	//      算 aOffset_VS，两者比例和 Lm/Wm 同步而 1.35× 已经隐含在 Lm/Wm 里被
+	//      抵消，这里再补一次确保盒子始终能盖住 FS 的外延端面。
+	//
+	//      *关键决策*：lineHalfW 跟随 **箭头自己的 widthMode**（不是线的）。
+	//      箭头 'screen' → lineHalfW = u_lineWidthPixels × mpp（aOffset 像素恒定，
+	//                       整个箭头形态屏幕恒定，与 Cesium Billboard sizeInMeters=
+	//                       false 一致）。
+	//      箭头 'world'  → lineHalfW = u_lineWidthMeters × 0.5（aOffset 米恒定，
+	//                       与线 world 模式视觉一致）。
+	//      这样箭头和它自己的 aOffset 永远同尺度，不会出现「箭头像素恒定但 aOffset
+	//      跟着相机变」的视觉不协调。混搭（如线 world + 箭头 screen）合法但
+	//      aOffset 用「u_lineWidthPixels 当作箭头侧的等效线宽」算，与 Cesium 把
+	//      Polyline.width（像素）+ 像素 billboard 标记搭配的语义一致。
+	//
+	//      *边界保护*：aOffset 公式分母是 (Wm − lineHalfW)，当箭头基底宽 Wm 略大于
+	//      线半宽（例：Wm=12m, lineHalfW=11.5m）时分母极小、aOffset 爆到几百米，
+	//      箭头被拉成长条吞掉半个屏幕（用户截图实测）。用 min(formula, Lm) 把
+	//      aOffset 卡死在一个箭头长度内：
+	//        • Wm ≥ 2·lineHalfW：formula ≤ Lm，cap 不触发，端点处宽度精确 = lineHalfW。
+	//        • lineHalfW < Wm < 2·lineHalfW：formula > Lm，cap 触发，aOffset = Lm，
+	//          端点处宽度 = Wm/2 < lineHalfW（线两侧略露一点肩，但不再爆值）。
+	//        • Wm ≤ lineHalfW：max(..,1e-6) 让 formula 变成天文数字，cap 拉回 Lm，
+	//          与「箭头比线还窄」的退化语义一致。
+	//      用户想让端点完全无肩 → 需保证 arrowWidth ≥ 2 × lineWidth（按各自 mode 算）。
+	//
+	//      *open 样式跳过外延*：open 是只画两条斜边、内部透明的「笔画 V」。如果
+	//      仍按 solid 同款 aOffset 把 apex 推到端点之外，端点到 chevron apex 之间
+	//      的「内部」是空的——线段里走完到端点，chevron 边线再从外面斜回来碰头，
+	//      中间一段裸露三角形特别难看（用户截图）。open 强制 aOffset = 0：chevron
+	//      尖刺正好落在线端点上，避免裸露三角。代价是线两侧会露一点 lineHalfW
+	//      宽的肩（open 笔画风格的固有特性，无法用「让箭头更宽盖住」的方式回避）。
+#ifdef ARROW_OPEN
+	float aOffset = 0.0;
+#else
+	float lineHalfW = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+		u_lineWidthMeters * 0.5,
+		u_lineWidthPixels * 0.5 * mpp
+	);
+	float aOffsetRaw = lineHalfW * Lm / max( Wm - lineHalfW, 1e-6 );
+	float aOffset = min( aOffsetRaw, Lm ) * ARROW_BOX_PADDING;
+#endif
+
+	// 4) 切平面内挤出盒底面四角：tip + back·((aCoef·Lm) − [aCoef=0]·aOffset)
+	//    + right·(bSign·Wm)。aCoef=0 的 4 角再额外向 -back 推 aOffset 米，
+	//    让盒子的 -back 端面盖到 tip 之外的「外延三角形顶点」屏幕区域。
 	float aCoef = arrowCorner.x;
 	float bSign = arrowCorner.y;
 	float tb    = arrowCorner.z;
+	float aPosition = aCoef * Lm + czm_branchFreeTernary( aCoef < 0.5, - aOffset, 0.0 );
 	vec3 positionEC = tipEC.xyz
-		+ backEC * ( aCoef * Lm )
+		+ backEC * aPosition
 		+ rightEC * ( bSign * Wm );
 
-	// 5) 竖直薄墙：顶沿(tb>0)抬 ARROW_TOP_RISE_METERS，底沿(tb<0)按视距下延
-	//    （与线一致：min(GLOBE_MINIMUM_ALTITUDE, geometricToleranceOverMeter·视距)）。
-	//    保证薄墙穿过地表、FS 在箭头屏幕区域被调用。
+	// 5) 竖直薄墙：把盒子顶/底沿 up 推到端点处的「地形高度窗口」——与线 segment
+	//    用同套 ApproximateTerrainHeights 数据。**这是修复「箭头随缩放变形」
+	//    的关键**：tip 在椭球面（h=0），但 FS 重建的地形点在 terrain（如尼泊尔
+	//    5 km），盒子必须竖直贯穿这两个高度，FS 才能在地形屏幕像素跑到。底沿
+	//    再按视距额外下延一点（与线一致），覆盖远视距下地形起伏。
+	float minH = arrowTerrainHeights.x;
+	float maxH = arrowTerrainHeights.y;
 	float viewDist = length( tipRTE.xyz );
-	float drop = min(
+	float extraDrop = min(
 		GLOBE_MINIMUM_ALTITUDE,
 		czm_geometricToleranceOverMeter * viewDist
 	);
-	positionEC += upEC * czm_branchFreeTernary(
+	// tb > 0 → 顶沿推到 maxH；tb < 0 → 底沿推到 minH 再额外下延。
+	float altOffset = czm_branchFreeTernary(
 		tb > 0.0,
-		ARROW_TOP_RISE_METERS,
-		- drop
+		maxH,
+		minH - extraDrop
 	);
+	positionEC += upEC * altOffset;
 
 	// 6) 投影 + depthClamp + log-depth（与线同协议，必须配对）。
 	gl_Position = czm_depthClamp( czm_projection * vec4( positionEC, 1.0 ) );
@@ -1373,13 +1438,35 @@ void main() {
 		u_arrowHalfWidthPixels * mpp
 	);
 
-	// 6) 三角形成员判定。
+	// 5.5) 把三角形「顶点」从 a=0 外延到 a=-aOffset（端点之外）：让 a=0
+	//      处的箭头宽度 = lineHalfWidth，盖住线段两侧的 ±lineHalfWidth 肩膀；
+	//      VS 已经把盒子的 -back 端面同步外延了 aOffset 米，能保证 FS 的
+	//      所有目标像素都被 box 覆盖到。aOffset 公式与 VS 同口径，lineHalfW
+	//      也跟随 **u_arrowWidthMode**（不是 u_lineWidthMode）；同样套 min(.., Lm)
+	//      上限避免 Wm 略大于 lineHalfW 时 aOffset 爆值（详见 VS §3.5 注释）。
+	//      open 样式同 VS 跳过外延（aOffset=0），chevron apex 落在端点上，避免
+	//      端点到 apex 之间的裸露空三角。
+#ifdef ARROW_OPEN
+	float aOffset = 0.0;
+#else
+	float lineHalfW = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+		u_lineWidthMeters * 0.5,
+		u_lineWidthPixels * 0.5 * mpp
+	);
+	float aOffsetRaw = lineHalfW * Lm / max( Wm - lineHalfW, 1e-6 );
+	float aOffset = min( aOffsetRaw, Lm );
+#endif
+	// 等效新坐标：apex 在 aShift=0（a=-aOffset），base 在 aShift=LmShift（a=Lm）。
+	float aShift   = a + aOffset;
+	float LmShift  = Lm + aOffset;
+
+	// 6) 三角形成员判定（用 aShift / LmShift；几何意义不变，只是 apex 外移了）。
 #ifdef ARROW_OPEN
 	// 开口雪佛龙：只画三角形两条斜边附近的笔宽内像素。
-	// edge = |b| - Wm·(a/Lm) 的「垂直距离」（除以斜边的长度比 Lm/sqrt(Lm²+Wm²)）。
-	float lineFactor = Lm / sqrt( Lm * Lm + Wm * Wm );
-	float edgeDistance = abs( abs( b ) - Wm * ( a / Lm ) ) * lineFactor;
-	if ( a < 0.0 || a > Lm || edgeDistance > u_arrowStrokeHalfPixels * mpp ) {
+	// edge = |b| - Wm·(aShift/LmShift) 的「垂直距离」（除以斜边的长度比 LmShift/sqrt(LmShift²+Wm²)）。
+	float lineFactor = LmShift / sqrt( LmShift * LmShift + Wm * Wm );
+	float edgeDistance = abs( abs( b ) - Wm * ( aShift / LmShift ) ) * lineFactor;
+	if ( aShift < 0.0 || aShift > LmShift || edgeDistance > u_arrowStrokeHalfPixels * mpp ) {
 #ifdef DEBUG_SHOW_VOLUME
 		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
 		return;
@@ -1388,8 +1475,9 @@ void main() {
 #endif
 	}
 #else
-	// 实心三角（默认）：0 ≤ a ≤ Lm 且 |b| ≤ Wm·(a/Lm)（基底向尖端线性收窄）。
-	if ( a < 0.0 || a > Lm || abs( b ) > Wm * ( a / Lm ) ) {
+	// 实心三角（默认）：0 ≤ aShift ≤ LmShift 且 |b| ≤ Wm·(aShift/LmShift)
+	// （基底向 apex 线性收窄；apex 落在 a=-aOffset 即端点之外 aOffset 米）。
+	if ( aShift < 0.0 || aShift > LmShift || abs( b ) > Wm * ( aShift / LmShift ) ) {
 #ifdef DEBUG_SHOW_VOLUME
 		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
 		return;

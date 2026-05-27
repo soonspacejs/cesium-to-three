@@ -269,6 +269,19 @@ export interface CesiumGroundPolylineOptions {
 	arrowMode?: CesiumGroundArrowMode;
 	/** 箭头形态：'solid' 实心三角 / 'open' 开口雪佛龙。默认 'solid'。 */
 	arrowStyle?: CesiumGroundArrowStyle;
+	/**
+	 * 箭头尺寸模式（默认 'world'，与线 / 面世界模式视觉一致——远小近大）。
+	 * 对应 Cesium `Billboard.sizeInMeters` 语义：
+	 *   - 'world'  = 世界米恒定，远小近大随相机透视（默认，用 `arrowLengthMeters`
+	 *     / `arrowWidthMeters`，shader 直接当米用）。
+	 *   - 'screen' = 屏幕像素恒定，不随相机远近变化（用 `arrowLengthPixels` /
+	 *     `arrowWidthPixels`，shader 端 `pixels × czm_metersPerPixel(P)` 转成米；
+	 *     与 Cesium Billboard `sizeInMeters=false` 同义）。
+	 * 与 `widthMode` 独立——通常 `screen` 配 `screen` / `world` 配 `world` 视觉
+	 * 一致，但混搭也合法（例：线在 world 模式按米渲、箭头在 screen 模式恒定像素，
+	 * 类似 Cesium 里 `Polyline.width`+像素 billboard 标记的组合）。
+	 */
+	arrowWidthMode?: CesiumGroundLineWidthMode;
 	/** 箭头沿线长（屏幕像素，默认 18）。 */
 	arrowLengthPixels?: number;
 	/** 箭头基底全宽（屏幕像素，默认 16）。 */

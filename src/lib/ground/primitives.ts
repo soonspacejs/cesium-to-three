@@ -1101,6 +1101,19 @@ export class CesiumGroundPolylinePrimitive {
 	}
 
 	/**
+	 * 改箭头尺寸模式（'screen' = 屏幕像素恒定，'world' = 世界米恒定）。
+	 * 与线 widthMode 独立，对应 Cesium `Billboard.sizeInMeters` 语义。
+	 *
+	 * @param mode 'screen' or 'world'。
+	 */
+	public setArrowWidthMode( mode: 'screen' | 'world' ): void {
+		const enumMode = mode === 'world' ? LineWidthMode.WORLD : LineWidthMode.SCREEN;
+		( this.uniforms.u_arrowWidthMode as { value: number } ).value =
+			enumMode === LineWidthMode.WORLD ? 1.0 : 0.0;
+		this.options.arrowWidthMode = enumMode;
+	}
+
+	/**
 	 * 改箭头屏幕像素尺寸（沿线长 + 基底全宽）。world 模式用 `setArrowSizeMeters`。
 	 *
 	 * @param lengthPixels 沿线长（屏幕像素）。
@@ -1216,7 +1229,13 @@ function createPolylineUniforms(
 		u_lineTotalMeters: { value: length3D },
 
 		// ── 线端箭头 7 件套（线材质里这些 uniform 是 inactive，无副作用） ──
-		u_arrowWidthMode: { value: 0.0 },   // 始终用屏幕像素恒定，与线宽屏宽语义一致
+		// 箭头尺寸模式：与 Cesium `Billboard.sizeInMeters` 同义——0 = 屏幕像素恒定
+		// （默认，对应 'screen'），1 = 世界米恒定（对应 'world'）。与线 widthMode
+		// 解耦，调用方可独立控制；shader 端的分支用 `czm_branchFreeTernary` 切换
+		// `Lm = u_arrowLengthMeters` vs `Lm = u_arrowLengthPixels × mpp`（与 Cesium
+		// `BillboardCollectionVS.glsl` 的 `halfSize × ternary(sizeInMeters, 1.0, mpp)`
+		// 完全一致）。
+		u_arrowWidthMode: { value: options.arrowWidthMode === LineWidthMode.WORLD ? 1.0 : 0.0 },
 		u_arrowLengthPixels: { value: options.arrowLengthPixels },
 		u_arrowHalfWidthPixels: { value: options.arrowWidthPixels * 0.5 },
 		u_arrowLengthMeters: { value: options.arrowLengthMeters },

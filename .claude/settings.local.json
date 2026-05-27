@@ -33,7 +33,10 @@
       "Bash(ls -la \"D:/my/explore/cesium/packages.zip\")",
       "Bash(cp /tmp/cesium-pkg/engine/Source/Core/GroundPolylineGeometry.js \"D:/my/code/cesium-to-three/.claude-tmp-polyline-design/cesium-GroundPolylineGeometry.js\" && wc -l \"D:/my/code/cesium-to-three/.claude-tmp-polyline-design/cesium-GroundPolylineGeometry.js\")",
       "Bash(cp /tmp/cesium-pkg/engine/Source/Shaders/PolylineShadowVolumeVS.glsl \"D:/my/code/cesium-to-three/.claude-tmp-polyline-design/cesium-PolylineShadowVolumeVS.glsl\")",
-      "Bash(cp /tmp/cesium-pkg/engine/Source/Shaders/PolylineShadowVolumeFS.glsl \"D:/my/code/cesium-to-three/.claude-tmp-polyline-design/cesium-PolylineShadowVolumeFS.glsl\")"
+      "Bash(cp /tmp/cesium-pkg/engine/Source/Shaders/PolylineShadowVolumeFS.glsl \"D:/my/code/cesium-to-three/.claude-tmp-polyline-design/cesium-PolylineShadowVolumeFS.glsl\")",
+      "Bash(ls \"D:/my/explore/cesium/\" 2>&1 | head -20)",
+      "Bash(unzip -o \"D:/my/explore/cesium/packages.zip\" -d \"D:/my/explore/cesium/packages-unzipped/\")",
+      "mcp__Claude_Preview__preview_start"
     ]
   }
 }
