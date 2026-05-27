@@ -236,13 +236,18 @@ export class PlotPrimitiveBridge {
 			const group = resolveGroup( primitive );
 			group.visible = plot.options.visible !== false;
 			this._scene.add( group );
-			this._entries.set( id, {
+			const entry: PlotEntry = {
 				plot,
 				primitive,
 				group,
 				signature: geomSig,
 				styleSignature: styleSig,
-			} );
+			};
+			this._entries.set( id, entry );
+
+			if ( primitive instanceof CesiumGroundTextPrimitive ) {
+				this._refreshLightweight( entry, renderOrder );
+			}
 		}
 	}
 
@@ -333,6 +338,8 @@ export class PlotPrimitiveBridge {
 				metersPerPixel: t.scale,
 			} );
 			entry.primitive.setVisible( t.visible !== false );
+			entry.group = resolveGroup( entry.primitive );
+			entry.group.visible = t.visible !== false;
 		}
 	}
 

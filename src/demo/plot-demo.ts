@@ -204,6 +204,9 @@ interface PlotHandle {
 	initialPoints: LonLatPoint[];
 }
 
+function normalizeTextContent( content: string ): string {
+	return content.replace( /\r\n?/g, '\n' ).replace( /\\n/g, '\n' );
+}
 
 function pointStateToOptions(
 	state: PointState,
@@ -332,7 +335,7 @@ function textStateToOptions(
 	return {
 		type: 'text',
 		points: [ [ state.centerLon, state.centerLat ] ],
-		content: state.content,
+		content: normalizeTextContent( state.content ),
 		fontColor: state.fontColor,
 		fontSize: state.fontSize,
 		scale: state.scale,
@@ -366,12 +369,15 @@ function installTextContentControl(
 	const controller = folder.add( state, 'content' ).name( 'content (setText)' );
 	const input = controller.domElement.querySelector( 'input' );
 	if ( ! input ) {
-		controller.onChange( ( v: string ) => { decals.setText( handle.id, v ); } );
+		controller.onChange( ( v: string ) => {
+			state.content = normalizeTextContent( v );
+			decals.setText( handle.id, state.content );
+		} );
 		return;
 	}
 
 	const textarea = document.createElement( 'textarea' );
-	textarea.value = state.content;
+	textarea.value = normalizeTextContent( state.content );
 	textarea.rows = 3;
 	textarea.spellcheck = false;
 	textarea.style.width = '100%';
@@ -386,8 +392,15 @@ function installTextContentControl(
 	textarea.style.border = '1px solid rgba(255, 255, 255, 0.18)';
 	textarea.style.borderRadius = '4px';
 
+	textarea.addEventListener( 'keydown', ( event ) => {
+		event.stopPropagation();
+	} );
+	textarea.addEventListener( 'keyup', ( event ) => {
+		event.stopPropagation();
+	} );
+
 	textarea.addEventListener( 'input', () => {
-		state.content = textarea.value;
+		state.content = normalizeTextContent( textarea.value );
 		decals.setText( handle.id, state.content );
 	} );
 
