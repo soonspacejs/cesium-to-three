@@ -78,7 +78,7 @@ export class CesiumGlobeDepth {
 	 *
 	 * @param renderer 当前 Three 渲染器。
 	 * @param camera 当前相机。pack-depth 材质需要它逐帧写入 Cesium 兼容的 LOG_DEPTH。
-	 * @param sourceScene 可选外部场景，用于 3d-tiles-renderer 内容。
+	 * @param sourceScene 可选外部场景，用于 um-3d-tiles-renderer 内容。
 	 * @param depthRoot 渲染 sourceScene 时需要单独保留的可选根对象。
 	 */
 	public render(

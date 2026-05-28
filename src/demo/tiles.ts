@@ -1,10 +1,10 @@
 // ============================================================
 // tiles.ts
-// 层级:3d-tiles-renderer demo 集成。
+// 层级:um-3d-tiles-renderer demo 集成。
 // 职责:配置 Cesium Ion 地形、统一已加载瓦片材质，并给每个地形 shader 注入
 //      Cesium 兼容的对数深度，使主帧缓冲深度与贴地 classification 的
 //      shadow-volume color pass 保持一致。
-// 依赖:Three.js、3d-tiles-renderer、demo env helpers、ground adapter。
+// 依赖:Three.js、um-3d-tiles-renderer、demo env helpers、ground adapter。
 // 被消费:ground-demo.ts。
 // ============================================================
 
@@ -15,13 +15,13 @@ import {
 	type Object3D,
 	type WebGLRenderer,
 } from 'three';
-import { TilesRenderer } from '3d-tiles-renderer';
-import { CesiumIonAuthPlugin } from '3d-tiles-renderer/core/plugins';
+import { TilesRenderer } from 'um-3d-tiles-renderer';
+import { CesiumIonAuthPlugin } from 'um-3d-tiles-renderer/core/plugins';
 import {
 	CesiumIonOverlay,
 	ImageOverlayPlugin,
 	QuantizedMeshPlugin,
-} from '3d-tiles-renderer/three/plugins';
+} from 'um-3d-tiles-renderer/three/plugins';
 
 import { applyCesiumLogDepthToMaterial } from '../lib/ground';
 import { readStringEnv } from './env';
@@ -44,7 +44,7 @@ export interface TileRuntimeCounters {
 }
 
 /**
- * 为 3d-tiles-renderer 加载的每个模型设置稳定渲染状态。
+ * 为 um-3d-tiles-renderer 加载的每个模型设置稳定渲染状态。
  *
  * @param modelScene 已加载瓦片创建的根对象。
  */
@@ -106,7 +106,7 @@ export function createCesiumTilesRenderer( renderer: WebGLRenderer ): TilesRende
 	const assetId = configuredAssetId;
 
 	if ( apiToken.length === 0 ) {
-		throw new Error( 'Missing VITE_CESIUM_ION_TOKEN. 3d-tiles-renderer terrain cannot start.' );
+		throw new Error( 'Missing VITE_CESIUM_ION_TOKEN. um-3d-tiles-renderer terrain cannot start.' );
 	}
 
 	const tilesRenderer = new TilesRenderer( '' );
@@ -118,7 +118,6 @@ export function createCesiumTilesRenderer( renderer: WebGLRenderer ): TilesRende
 	tilesRenderer.registerPlugin( new CesiumIonAuthPlugin( {
 		apiToken,
 		assetId,
-		useRecommendedSettings: true,
 		assetTypeHandler: ( type, tiles ) => {
 			if ( type === 'TERRAIN' && tiles.getPluginByName( 'QUANTIZED_MESH_PLUGIN' ) === null ) {
 				tiles.registerPlugin( new QuantizedMeshPlugin( {

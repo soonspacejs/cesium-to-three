@@ -26,10 +26,14 @@ export default defineConfig( ( { mode } ) => {
 			sourcemap: true,
 			rollupOptions: {
 				output: {
-					// 拆分 three / 3d-tiles-renderer 为独立 chunk，加速冷启动。
+					// 拆分 three / um-3d-tiles-renderer 为独立 chunk，加速冷启动。
 					manualChunks: {
 						three: [ 'three' ],
-						'tiles-renderer': [ '3d-tiles-renderer', '3d-tiles-renderer/plugins' ],
+						'tiles-renderer': [
+							'um-3d-tiles-renderer',
+							'um-3d-tiles-renderer/core/plugins',
+							'um-3d-tiles-renderer/three/plugins',
+						],
 					},
 				},
 			},
@@ -40,7 +44,12 @@ export default defineConfig( ( { mode } ) => {
 		},
 		optimizeDeps: {
 			// 预构建这些依赖，避免冷启动时反复刷新。
-			include: [ 'three', '3d-tiles-renderer', '3d-tiles-renderer/plugins' ],
+			include: [
+				'three',
+				'um-3d-tiles-renderer',
+				'um-3d-tiles-renderer/core/plugins',
+				'um-3d-tiles-renderer/three/plugins',
+			],
 		},
 	};
 

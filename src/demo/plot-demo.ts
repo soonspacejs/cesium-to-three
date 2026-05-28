@@ -12,7 +12,7 @@ import {
 	Vector3,
 	WebGLRenderer,
 } from 'three';
-import { GlobeControls, TilesRenderer } from '3d-tiles-renderer';
+import { GlobeControls, TilesRenderer } from 'um-3d-tiles-renderer';
 import GUI from 'lil-gui';
 
 import {

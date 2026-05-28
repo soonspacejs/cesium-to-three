@@ -1,9 +1,9 @@
 // ============================================================
 // ground-demo.ts
 // 层级:Cesium-free 贴地适配器的 Three.js 可运行宿主。
-// 职责:驱动 3d-tiles-renderer 地形，把地形深度喂给 shadow-volume classification
+// 职责:驱动 um-3d-tiles-renderer 地形，把地形深度喂给 shadow-volume classification
 //      管线，并暴露 lil-gui 调试面板，用于矩形、多边形、圆形和箭头标绘。
-// 依赖:demo helpers、src/lib/ground、Three.js、3d-tiles-renderer。
+// 依赖:demo helpers、src/lib/ground、Three.js、um-3d-tiles-renderer。
 // 被消费:main.ts。
 // ============================================================
 
@@ -17,7 +17,7 @@ import {
 	WebGLRenderer,
 	type Material,
 } from 'three';
-import { GlobeControls, TilesRenderer } from '3d-tiles-renderer';
+import { GlobeControls, TilesRenderer } from 'um-3d-tiles-renderer';
 import GUI from 'lil-gui';
 
 import {
@@ -2735,7 +2735,7 @@ export function runGroundDemo(): void {
 			: '';
 		infoBody.textContent =
 			`Ground adapter: Cesium-free rectangle + polygon (math/ + rectangle/ + polygon/)\n` +
-			`Tiles: 3d-tiles-renderer + Cesium Ion asset ${ assetIdLabel }\n` +
+			`Tiles: um-3d-tiles-renderer + Cesium Ion asset ${ assetIdLabel }\n` +
 			`Terrain plugin: QuantizedMeshPlugin for TERRAIN assets\n` +
 			`Geometry: buildRectangleShadowVolumeGeometry / buildPolygonShadowVolumeGeometry\n` +
 			`Rectangle: ${ debugSettings.visible ? 'on' : 'off' } / order ${ debugSettings.rectanglePlotOrder } / ${ debugSettings.widthDegrees.toFixed( 4 ) } deg x ${ debugSettings.heightDegrees.toFixed( 4 ) } deg\n` +

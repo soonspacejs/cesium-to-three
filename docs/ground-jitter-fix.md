@@ -6,9 +6,9 @@
 ## 1. 项目背景
 
 本项目把 Cesium 的贴地标绘（GroundPrimitive 用的 shadow-volume + stencil 分类
-渲染）移植到 Three.js + 3d-tiles-renderer 环境：
+渲染）移植到 Three.js + um-3d-tiles-renderer 环境：
 
-- **3d-tiles-renderer**：提供地形数据 / 贴地深度来源（Cesium World Terrain）。
+- **um-3d-tiles-renderer**：提供地形数据 / 贴地深度来源（Cesium World Terrain）。
 - **three**：底层渲染引擎，所有真正提交给 GPU 的画面都走 Three 的 WebGL2 上下文。
 - **cesium（这里只用 Core / Scene / Shaders 部分源码，未启动 Cesium Viewer）**：
   作为「标绘几何 + 标绘 shader」的供给方，
@@ -106,7 +106,7 @@ Cesium 用 **multifrustum + LOG_DEPTH** 缓解，原移植版完全没有 log de
   能正确重建 eye coordinate。
 - **terrain（主 framebuffer）**：
   新增 `terrain-log-depth.ts`，
-  通过 `material.onBeforeCompile` 给 3d-tiles-renderer 加载的所有 terrain material
+  通过 `material.onBeforeCompile` 给 um-3d-tiles-renderer 加载的所有 terrain material
   注入与我们 shadow volume **完全相同公式** 的 `gl_FragDepth` 写入逻辑，
   保证主 framebuffer 的 depth value 与 shadow volume 在同一坐标系，
   否则 `LESS_OR_EQUAL` 的 stencil/depth 比较会全错。
