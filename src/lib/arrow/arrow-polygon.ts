@@ -164,7 +164,62 @@ export function clampVertexCount(
 }
 
 /**
- * 一站式正规化:**去重 → 强制 CCW → 降采样 ≤ maxCount**。
+ * 移除 hairpin 顶点(转角 > 阈值的近 180° U-turn)。
+ *
+ * 箭头脊线在急转弯处经 Catmull-Rom 平滑后会出现 sample 聚集 + perp 方向
+ * 急速旋转,Frenet 偏移产生的 leftSide / rightSide 在 cluster 内部出现
+ * 「短退一步 → 反向冲出」的 cusp(转角接近 180°)。多边形拓扑上虽然不
+ * 自交,但视觉上是一根「针尖」 — fragment shader 的 point-in-polygon 测试
+ * 在 cusp 附近边密集 + 浮点边界判断,容易把 cusp 周围一小片像素误判成外部
+ * (用户截图的三角凹口正是这种 cusp 产生的视觉物)。
+ *
+ * 算法:每轮扫描,凡 |turn| > π − threshold(默认 30°,即 turn > 150°)
+ * 的顶点直接删除。继续迭代直到没有更多 hairpin 或剩余顶点 < 4。
+ *
+ * @param ring 已去重的多边形环。
+ * @param thresholdRad hairpin 阈值(弧度),默认 30° = π/6。turn 接近 π
+ *                    (180°)说明前后两条边几乎反向。
+ * @returns 移除 hairpin 后的环。
+ */
+export function removeHairpinVertices(
+	ring: readonly LonLatPoint[],
+	thresholdRad: number = Math.PI / 6,
+): LonLatPoint[] {
+	let cleaned: LonLatPoint[] = ring.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
+	const halfTurnMinusThreshold = Math.PI - thresholdRad;
+
+	let changed = true;
+	let safety = 0;
+	while ( changed && cleaned.length >= 4 && safety < 1000 ) {
+		safety++;
+		changed = false;
+		const next: LonLatPoint[] = [];
+		const n = cleaned.length;
+		for ( let i = 0; i < n; i++ ) {
+			const prev = cleaned[ ( i - 1 + n ) % n ];
+			const curr = cleaned[ i ];
+			const nxt = cleaned[ ( i + 1 ) % n ];
+			const v1x = curr[ 0 ] - prev[ 0 ];
+			const v1y = curr[ 1 ] - prev[ 1 ];
+			const v2x = nxt[ 0 ] - curr[ 0 ];
+			const v2y = nxt[ 1 ] - curr[ 1 ];
+			const cross = v1x * v2y - v1y * v2x;
+			const dot = v1x * v2x + v1y * v2y;
+			const turn = Math.abs( Math.atan2( cross, dot ) );
+			if ( turn > halfTurnMinusThreshold ) {
+				// hairpin → 跳过这个顶点
+				changed = true;
+				continue;
+			}
+			next.push( [ curr[ 0 ], curr[ 1 ] ] );
+		}
+		cleaned = next;
+	}
+	return cleaned;
+}
+
+/**
+ * 一站式正规化:**去重 → 移除 hairpin → 强制 CCW → 降采样 ≤ maxCount**。
  *
  * 所有箭头生成器最后一步都应调用此函数,确保输出符合
  * CesiumGroundPolygonPrimitive 的契约(3-128 顶点、闭合、CCW、无重复)。
@@ -186,9 +241,15 @@ export function finalizePolygon(
 		return [];
 	}
 
-	// 2. 强制 CCW(外环约定)
-	const ccw = ensureCounterClockwise( dedup );
+	// 2. 移除 hairpin(近 180° U-turn 的顶点)。
+	const noHairpin = removeHairpinVertices( dedup );
+	if ( noHairpin.length < 3 ) {
+		return [];
+	}
 
-	// 3. 降采样到上限
+	// 3. 强制 CCW(外环约定)
+	const ccw = ensureCounterClockwise( noHairpin );
+
+	// 4. 降采样到上限
 	return clampVertexCount( ccw, maxCount );
 }

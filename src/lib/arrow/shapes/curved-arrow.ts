@@ -160,29 +160,77 @@ function createCurvedArrowLocal(
 	// 经纬度坐标系也是 +y 朝北的右手系,perp 朝"曲线行进方向的左侧"。
 	const tangents = computeTangents( bodySpine );
 
-	// ── 步骤 5:逐点半宽(尾→颈线性插值)──
-	// 半宽 widthHalf(t) 在 t=0 处 = bodyHalfWidth,在 t=1 处:
-	//   - 若 bodyTaperRatio = 0:仍为 bodyHalfWidth(等宽,但末点强制覆盖为
-	//     neckHalfWidth 以保证与头部接缝平滑)。
-	//   - 若 bodyTaperRatio = 1:线性渐变到 neckHalfWidth。
+	// ── 步骤 5:全局曲率体宽兜底 + 逐点半宽(尾→颈线性插值)──
 	//
-	// 末点(i = n-1)无条件覆盖为 neckHalfWidth,使 bodyEnd 与 neckLeft/
-	// neckRight 几何精确重合,头部无台阶。
+	// 关键问题:Frenet 法线偏移在 halfW > 局部曲率半径 R=1/κ 时,弯曲内侧
+	// 会自交,polygon 渲染成镂空三角(用户在 plot demo 大比例尺 curved
+	// 拐角处看到的)。
+	//
+	// 早期实现做过「逐 sample 按本地 κ clamp halfW」,但这让 body 在急弯
+	// 处突然变窄、其他位置正常 → 整体宽度不均、视觉变形。
+	//
+	// **新策略**:扫一遍全脊线,找出最紧曲率半径 minR,把 bodyHalfWidth /
+	// neckHalfWidth 全局 cap 到 (minR × CURVATURE_SAFETY) 之内。整条 body
+	// 保持均匀宽度——只是急弯输入下会整体偏窄一些,但形态平滑无变形。
+	const lastBodyIdx = bodySpine.length - 1;
+	const CURVATURE_SAFETY = 0.5;
+
+	let tightestRadius = Infinity;
+	for ( let i = 1; i < lastBodyIdx; i++ ) {
+		const prev = bodySpine[ i - 1 ];
+		const curr = bodySpine[ i ];
+		const next = bodySpine[ i + 1 ];
+		const v1x = curr[ 0 ] - prev[ 0 ];
+		const v1y = curr[ 1 ] - prev[ 1 ];
+		const v2x = next[ 0 ] - curr[ 0 ];
+		const v2y = next[ 1 ] - curr[ 1 ];
+		const len1 = Math.hypot( v1x, v1y );
+		const len2 = Math.hypot( v2x, v2y );
+		if ( len1 < 1e-9 || len2 < 1e-9 ) {
+			continue;
+		}
+		const cross = v1x * v2y - v1y * v2x;
+		const dot = v1x * v2x + v1y * v2y;
+		const dtheta = Math.abs( Math.atan2( cross, dot ) );
+		const ds = ( len1 + len2 ) * 0.5;
+		if ( dtheta < 1e-9 ) {
+			continue; // 直线段,半径无穷
+		}
+		const r = ds / dtheta; // 局部曲率半径
+		if ( r < tightestRadius ) {
+			tightestRadius = r;
+		}
+	}
+
+	let safeMax = Infinity;
+	if ( Number.isFinite( tightestRadius ) ) {
+		safeMax = tightestRadius * CURVATURE_SAFETY;
+	}
+	// **关键**:所有宽度按相同 scale 同步缩放,保持原比例关系。只 cap body
+	// 而 head 用原始 headHalfWidth 时,head 翼会比窄缩的 body 宽很多倍,polygon
+	// 在 neck 处形成「窄腰宽翼」的视觉变形(用户截图的三角凹口就是这种比例
+	// 突变)。这里以 bodyHalfWidth 是否超 safeMax 触发缩放,所有 width 同步乘
+	// scale,head / body / neck 三者保持原 width factor 决定的比例。
+	let widthScale = 1.0;
+	if ( bodyHalfWidth > safeMax && bodyHalfWidth > 0.0 ) {
+		widthScale = safeMax / bodyHalfWidth;
+	}
+	const cappedBodyHalfWidth = bodyHalfWidth * widthScale;
+	const cappedNeckHalfWidth = neckHalfWidth * widthScale;
+	const cappedHeadHalfWidth = headHalfWidth * widthScale;
+
 	const leftSide: LonLatPoint[] = new Array( bodySpine.length );
 	const rightSide: LonLatPoint[] = new Array( bodySpine.length );
-	const lastBodyIdx = bodySpine.length - 1;
 
 	for ( let i = 0; i < bodySpine.length; i++ ) {
 		const t = lastBodyIdx > 0 ? i / lastBodyIdx : 0.0;
 		let widthHalf: number;
 		if ( i === lastBodyIdx ) {
-			// 末点强制对齐颈宽,与头部 neck 共点,无台阶。
-			widthHalf = neckHalfWidth;
+			widthHalf = cappedNeckHalfWidth;
 		} else {
-			// 线性插值:bodyHalfWidth → neckHalfWidth(taperRatio = 1 时全程渐变);
-			// taperRatio = 0 时全程等于 bodyHalfWidth。
 			const interpolant = t * bodyTaperRatio;
-			widthHalf = bodyHalfWidth * ( 1.0 - interpolant ) + neckHalfWidth * interpolant;
+			widthHalf = cappedBodyHalfWidth * ( 1.0 - interpolant )
+				+ cappedNeckHalfWidth * interpolant;
 		}
 
 		const tx = tangents[ i ][ 0 ];
@@ -197,7 +245,8 @@ function createCurvedArrowLocal(
 	}
 
 	// ── 步骤 6:头部 3 个新点(neckLeft/Right 已由 leftSide/rightSide 末点表示)──
-	// 头部翼展用 exactNeck 处的法线 × headHalfWidth(比 neckHalfWidth 更宽)。
+	// 头部翼展用 exactNeck 处的法线 × cappedHeadHalfWidth(经曲率 scale 后,
+	// 与 body / neck 保持相同比例,避免「窄腰宽翼」变形)。
 	const neckTx = tangents[ lastBodyIdx ][ 0 ];
 	const neckTy = tangents[ lastBodyIdx ][ 1 ];
 	const neckPx = -neckTy;
@@ -206,12 +255,12 @@ function createCurvedArrowLocal(
 	const neckY = neck.point[ 1 ];
 
 	const headLeft: LonLatPoint = [
-		neckX + neckPx * headHalfWidth,
-		neckY + neckPy * headHalfWidth,
+		neckX + neckPx * cappedHeadHalfWidth,
+		neckY + neckPy * cappedHeadHalfWidth,
 	];
 	const headRight: LonLatPoint = [
-		neckX - neckPx * headHalfWidth,
-		neckY - neckPy * headHalfWidth,
+		neckX - neckPx * cappedHeadHalfWidth,
+		neckY - neckPy * cappedHeadHalfWidth,
 	];
 	// 尖端 = 用户控制点的最末点(确保箭尖严格在用户指定位置)。
 	const tip: LonLatPoint = [
