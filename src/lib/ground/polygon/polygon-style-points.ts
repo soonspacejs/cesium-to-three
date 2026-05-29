@@ -47,13 +47,11 @@ const _stylePointCartesian = new Vector3();
  * 函数返回 (minX, maxX, minY, maxY)。
  *
  * @param hierarchy   Render polygon hierarchy(Vector3 ECEF)。
- * @param height      参考高度(米),典型为 maximumHeight。
  * @param inverseEnu  ECEF → ENU 局部坐标系的变换矩阵。
  * @returns           { minX, maxX, minY, maxY }(米)。
  */
 function computeRenderPlanarBounds(
 	hierarchy: PolygonHierarchy,
-	height: number,
 	inverseEnu: Matrix4,
 ): { minX: number; maxX: number; minY: number; maxY: number } {
 	let minX = Number.POSITIVE_INFINITY;
@@ -72,7 +70,7 @@ function computeRenderPlanarBounds(
 					`computeRenderPlanarBounds: ring vertex #${ i } cannot reverse-project.`,
 				);
 			}
-			_styleBoundsPointCarto.height = height;
+			_styleBoundsPointCarto.height = 0.0;
 			cartographicToCartesian(
 				_styleBoundsPointCarto,
 				_styleBoundsPointCartesian,
@@ -106,11 +104,11 @@ function computeRenderPlanarBounds(
  * render polygon AABB 的 SW 角为原点,返回每点 (x, y) 米坐标的 Vector2 数组。
  *
  * 算法 4 步(逐字匹配原 geometry.ts:300-341):
- *   1. 中心点(用 polygonRectangle):rectangleCenter → 改 height = maxHeight → ECEF
+ *   1. 中心点(用 polygonRectangle):rectangleCenter → 改 height = 0 → ECEF
  *      ENU 矩阵 + 逆矩阵
  *   2. render hierarchy 的 ENU 平面 AABB → renderBounds
  *   3. 对每个 fill 顶点 (lon°, lat°):
- *      a. 度 → 弧度 cartographic,height = maxHeight
+ *      a. 度 → 弧度 cartographic,height = 0
  *      b. cartographic → ECEF
  *      c. 用 inverseEnu 把 ECEF 拉到 ENU 局部
  *      d. (e - renderBounds.minX, n - renderBounds.minY) 作为 Vector2 返回(米)
@@ -123,37 +121,34 @@ function computeRenderPlanarBounds(
  * @param polygonRectangle Render(或 fill,任意都行)polygon 的外接 lon/lat 矩形。
  * @param renderHierarchy  Render polygon hierarchy(Vector3 ECEF;包括 stroke 外扩)。
  * @param fillPoints       Fill polygon 顶点(lon/lat 度,原始 plot-spec 输入)。
- * @param maximumHeight    顶面高度(米)。
  * @returns                Fill 顶点的米平面坐标数组(长度 = fillPoints.length)。
  */
 export function computePolygonPlanarStylePoints(
 	polygonRectangle: RectangleRadians,
 	renderHierarchy: PolygonHierarchy,
 	fillPoints: readonly LonLatPoint[],
-	maximumHeight: number,
 ): Vector2[] {
-	// Step 1 · center → ENU 矩阵 + 逆矩阵
+	// 步骤 1 · center → ENU 矩阵 + 逆矩阵
 	rectangleCenter( polygonRectangle, _styleCenterCarto );
-	_styleCenterCarto.height = maximumHeight;
+	_styleCenterCarto.height = 0.0;
 	cartographicToCartesian( _styleCenterCarto, _styleCenterCartesian );
 	eastNorthUpToFixedFrame( _styleCenterCartesian, _styleEnuMatrix );
 	_styleInverseEnu.copy( _styleEnuMatrix ).invert();
 
-	// Step 2 · render hierarchy 的 ENU 平面 AABB
+	// 步骤 2 · render hierarchy 的 ENU 平面 AABB
 	const renderBounds = computeRenderPlanarBounds(
 		renderHierarchy,
-		maximumHeight,
 		_styleInverseEnu,
 	);
 
-	// Step 3 · 对每个 fill 顶点:lon/lat → ECEF → ENU → 相对 SW 偏移
+	// 步骤 3 · 对每个 fill 顶点:lon/lat → ECEF → ENU → 相对 SW 偏移
 	const result: Vector2[] = new Array( fillPoints.length );
 	for ( let i = 0; i < fillPoints.length; i++ ) {
 		const point = fillPoints[ i ];
 
 		_stylePointCarto.longitude = point[ 0 ] * Math.PI / 180.0;
 		_stylePointCarto.latitude = point[ 1 ] * Math.PI / 180.0;
-		_stylePointCarto.height = maximumHeight;
+		_stylePointCarto.height = 0.0;
 		cartographicToCartesian( _stylePointCarto, _stylePointCartesian );
 
 		matrix4MultiplyByPoint(

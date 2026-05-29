@@ -69,7 +69,7 @@ export function buildCircleShadowVolumeGeometry(
 	options: CircleShadowVolumeOptions,
 ): BufferGeometry {
 	// ============================================================
-	// Step 1 · 默认值
+	// 步骤 1 · 默认值
 	// ============================================================
 	const granularity =
 		options.granularityRadians !== undefined
@@ -90,7 +90,7 @@ export function buildCircleShadowVolumeGeometry(
 	const radius = options.radiusMeters;
 
 	// ============================================================
-	// Step 2 · 校验(第二层防御 — primitives.ts 已做 plot-spec 层校验,
+	// 步骤 2 · 校验(第二层防御 — primitives.ts 已做 plot-spec 层校验,
 	//   这里防御未经 primitives.ts 的 caller)
 	// ============================================================
 	if (
@@ -131,7 +131,7 @@ export function buildCircleShadowVolumeGeometry(
 	}
 
 	// ============================================================
-	// Step 3 · center degrees → ECEF → scaleToGeodeticSurface
+	// 步骤 3 · center degrees → ECEF → scaleToGeodeticSurface
 	//
 	// Cesium 路径(原 primitives.ts):
 	//   centerCartesian = Cartesian3.fromDegrees(lon, lat, 0, WGS84)
@@ -158,7 +158,7 @@ export function buildCircleShadowVolumeGeometry(
 	}
 
 	// ============================================================
-	// Step 4 · 构造 prism(组合 06/07/08/09 的输出)
+	// 步骤 4 · 构造 prism(组合 06/07/08/09 的输出)
 	// ============================================================
 	const extruded = constructExtrudedCircleShadowVolume(
 		_centerEcef,
@@ -173,7 +173,7 @@ export function buildCircleShadowVolumeGeometry(
 	// extruded.indices:Uint16Array / Uint32Array
 
 	// ============================================================
-	// Step 5 · RTE 编码(Float64 ECEF → 两个 Float32 high/low 数组)
+	// 步骤 5 · RTE 编码(Float64 ECEF → 两个 Float32 high/low 数组)
 	//
 	// 复用矩形阶段建好的 math/rte-encoding,与 Cesium GeometryPipeline.encodeAttribute
 	// 字节级一致(EncodedCartesian3.encode 的 65536 fixed-point 拆分)。
@@ -183,7 +183,7 @@ export function buildCircleShadowVolumeGeometry(
 	// high / low:Float32Array,长度 = extruded.positions.length
 
 	// ============================================================
-	// Step 6 · 装配 BufferGeometry
+	// 步骤 6 · 装配 BufferGeometry
 	//
 	// 5 个 attribute + 1 个 index,完全对齐 classification.ts 期望的格式
 	//(与矩形 / polygon 阶段同形)。
@@ -210,7 +210,7 @@ export function buildCircleShadowVolumeGeometry(
 	geometry.setIndex( new BufferAttribute( extruded.indices, 1 ) );
 
 	// ============================================================
-	// Step 7 · computeBoundingSphere(no-op)
+	// 步骤 7 · computeBoundingSphere(no-op)
 	//
 	// Three.js 默认从 `position` attribute 算 boundingSphere,但本几何只有
 	// position3DHigh / position3DLow,没有 position — 调用是 no-op。

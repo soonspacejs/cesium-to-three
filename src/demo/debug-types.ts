@@ -1,15 +1,27 @@
 // ============================================================
 // debug-types.ts
-// Layer: demo UI state model.
-// Role: define the mutable lil-gui state objects used by the ground demo.
-// Dependencies: ground adapter shared GIS types.
-// Consumed by: ground-demo.ts.
+// 层级:demo UI 状态模型。
+// 职责:定义贴地 demo 中 lil-gui 使用的可变状态对象。
+// 依赖:贴地适配器共享 GIS 类型。
+// 被消费:ground-demo.ts。
 // ============================================================
 
-import type { LonLatPoint } from '../lib/ground';
-import type { CesiumGroundPointShape } from '../lib/ground';
+import type {
+	CesiumGroundArcType,
+	CesiumGroundArrowMode,
+	CesiumGroundArrowStyle,
+	CesiumGroundLineWidthMode,
+	CesiumGroundPointShape,
+	LonLatPoint,
+	PlotTextAlign,
+	PlotTextAnchorX,
+	PlotTextAnchorY,
+	PlotTextLayoutDirection,
+	PlotTextVerticalAlign,
+} from '../lib/ground';
 
 export interface GroundDebugSettings {
+	// 矩形标绘
 	points: LonLatPoint[];
 	centerLon: number;
 	centerLat: number;
@@ -32,6 +44,8 @@ export interface GroundDebugSettings {
 	showFrontStencil: boolean;
 	showBackStencil: boolean;
 	showColorPass: boolean;
+
+	// 多边形标绘
 	polygonVisible: boolean;
 	polygonPlotOrder: number;
 	polygonStrokeColor: string;
@@ -43,6 +57,8 @@ export interface GroundDebugSettings {
 	polygonHoles: LonLatPoint[][];
 	polygonRotationDegrees: number;
 	polygonHole: boolean;
+
+	// 圆形标绘
 	circleVisible: boolean;
 	circlePlotOrder: number;
 	circleCenterLon: number;
@@ -63,17 +79,180 @@ export interface GroundDebugSettings {
 	circleStrokeWidth: number;
 	circleFillColor: string;
 	circleFillOpacity: number;
-	pointVisible: boolean;
-	pointPlotOrder: number;
-	pointShape: CesiumGroundPointShape;
-	pointLon: number;
-	pointLat: number;
-	pointSize: number;
-	pointStrokeColor: string;
-	pointStrokeOpacity: number;
-	pointStrokeWidth: number;
-	pointFillColor: string;
-	pointFillOpacity: number;
+
+	// 点标绘（圆形 / 正方形，分别走圆形 / 矩形渲染路径）
+	pointCircleVisible: boolean;
+	pointCirclePlotOrder: number;
+	pointCircleCenterLon: number;
+	pointCircleCenterLat: number;
+	pointCircleShape: CesiumGroundPointShape;
+	pointCircleSize: number;
+	pointCircleStrokeColor: string;
+	pointCircleStrokeOpacity: number;
+	pointCircleStrokeWidth: number;
+	pointCircleFillColor: string;
+	pointCircleFillOpacity: number;
+	pointSquareVisible: boolean;
+	pointSquarePlotOrder: number;
+	pointSquareCenterLon: number;
+	pointSquareCenterLat: number;
+	pointSquareShape: CesiumGroundPointShape;
+	pointSquareSize: number;
+	pointSquareStrokeColor: string;
+	pointSquareStrokeOpacity: number;
+	pointSquareStrokeWidth: number;
+	pointSquareFillColor: string;
+	pointSquareFillOpacity: number;
+
+	// 大尺度对照标绘
+	largeRectangleVisible: boolean;
+	largeRectanglePlotOrder: number;
+	largeRectangleStrokeColor: string;
+	largeRectangleStrokeOpacity: number;
+	largeRectangleStrokeWidth: number;
+	largeRectangleFillColor: string;
+	largeRectangleFillOpacity: number;
+	largeRectanglePoints: LonLatPoint[];
+	largeRectangleWidthMeters: number;
+	largeRectangleHeightMeters: number;
+	largePolygonVisible: boolean;
+	largePolygonPlotOrder: number;
+	largePolygonStrokeColor: string;
+	largePolygonStrokeOpacity: number;
+	largePolygonStrokeWidth: number;
+	largePolygonFillColor: string;
+	largePolygonFillOpacity: number;
+	largePolygonPoints: LonLatPoint[];
+	largePolygonRotationDegrees: number;
+	largeCircleVisible: boolean;
+	largeCirclePlotOrder: number;
+	largeCircleCenterLon: number;
+	largeCircleCenterLat: number;
+	largeCircleRadius: number;
+	largeCircleStrokeColor: string;
+	largeCircleStrokeOpacity: number;
+	largeCircleStrokeWidth: number;
+	largeCircleFillColor: string;
+	largeCircleFillOpacity: number;
+	largePointCircleVisible: boolean;
+	largePointCirclePlotOrder: number;
+	largePointCircleCenterLon: number;
+	largePointCircleCenterLat: number;
+	largePointCircleShape: CesiumGroundPointShape;
+	largePointCircleSize: number;
+	largePointCircleStrokeColor: string;
+	largePointCircleStrokeOpacity: number;
+	largePointCircleStrokeWidth: number;
+	largePointCircleFillColor: string;
+	largePointCircleFillOpacity: number;
+	largePointSquareVisible: boolean;
+	largePointSquarePlotOrder: number;
+	largePointSquareCenterLon: number;
+	largePointSquareCenterLat: number;
+	largePointSquareShape: CesiumGroundPointShape;
+	largePointSquareSize: number;
+	largePointSquareStrokeColor: string;
+	largePointSquareStrokeOpacity: number;
+	largePointSquareStrokeWidth: number;
+	largePointSquareFillColor: string;
+	largePointSquareFillOpacity: number;
+
+	// 折线标绘（1:1 比例尺：屏宽 + 几十 m 长度）
+	polylineVisible: boolean;
+	polylinePlotOrder: number;
+	polylinePoints: LonLatPoint[];
+	polylineStrokeColor: string;
+	polylineStrokeOpacity: number;
+	polylineWidthPixels: number;
+	polylineWidthMeters: number;
+	polylineWidthMode: CesiumGroundLineWidthMode;
+	polylineArcType: CesiumGroundArcType;
+	polylineLoop: boolean;
+	polylineDashLengthMeters: number;
+	polylineGapLengthMeters: number;
+	polylineDebugVolume: boolean;
+	polylineArrowMode: CesiumGroundArrowMode;
+	polylineArrowStyle: CesiumGroundArrowStyle;
+	polylineArrowWidthMode: CesiumGroundLineWidthMode;
+	polylineArrowLengthPixels: number;
+	polylineArrowWidthPixels: number;
+	// world 模式下用米（arrowWidthMode='world' 时生效）
+	polylineArrowLengthMeters: number;
+	polylineArrowWidthMeters: number;
+
+	// 折线标绘（大比例尺：km 长度）
+	largePolylineVisible: boolean;
+	largePolylinePlotOrder: number;
+	largePolylinePoints: LonLatPoint[];
+	largePolylineStrokeColor: string;
+	largePolylineStrokeOpacity: number;
+	largePolylineWidthPixels: number;
+	largePolylineWidthMeters: number;
+	largePolylineWidthMode: CesiumGroundLineWidthMode;
+	largePolylineArcType: CesiumGroundArcType;
+	largePolylineLoop: boolean;
+	largePolylineDashLengthMeters: number;
+	largePolylineGapLengthMeters: number;
+	largePolylineDebugVolume: boolean;
+	largePolylineArrowMode: CesiumGroundArrowMode;
+	largePolylineArrowStyle: CesiumGroundArrowStyle;
+	largePolylineArrowWidthMode: CesiumGroundLineWidthMode;
+	largePolylineArrowLengthPixels: number;
+	largePolylineArrowWidthPixels: number;
+	// world 模式下用米——线本身 200m 宽，箭头如果留库默认 30×24m 就像针尖
+	// 看不出来；demo（业务层）按线粗派生合理大小。
+	largePolylineArrowLengthMeters: number;
+	largePolylineArrowWidthMeters: number;
+
+	// 文字标绘（1:1 比例尺）
+	textVisible: boolean;
+	textPlotOrder: number;
+	textCenterLon: number;
+	textCenterLat: number;
+	textContent: string;
+	textFontSize: number;
+	textMetersPerPixel: number;
+	textRotationDegrees: number;
+	textFontColor: string;
+	textFontStrokeColor: string;
+	textFontStrokeWidth: number;
+	textFillColor: string;
+	textFillOpacity: number;
+	textStrokeColor: string;
+	textStrokeOpacity: number;
+	textStrokeWidth: number;
+	textCornerRadius: number;
+	textTextAlign: PlotTextAlign;
+	textVerticalAlign: PlotTextVerticalAlign;
+	textAnchorX: PlotTextAnchorX;
+	textAnchorY: PlotTextAnchorY;
+	textLayoutDirection: PlotTextLayoutDirection;
+
+	// 文字标绘（5km 大比例尺）
+	largeTextVisible: boolean;
+	largeTextPlotOrder: number;
+	largeTextCenterLon: number;
+	largeTextCenterLat: number;
+	largeTextContent: string;
+	largeTextFontSize: number;
+	largeTextMetersPerPixel: number;
+	largeTextRotationDegrees: number;
+	largeTextFontColor: string;
+	largeTextFontStrokeColor: string;
+	largeTextFontStrokeWidth: number;
+	largeTextFillColor: string;
+	largeTextFillOpacity: number;
+	largeTextStrokeColor: string;
+	largeTextStrokeOpacity: number;
+	largeTextStrokeWidth: number;
+	largeTextCornerRadius: number;
+	largeTextTextAlign: PlotTextAlign;
+	largeTextVerticalAlign: PlotTextVerticalAlign;
+	largeTextAnchorX: PlotTextAnchorX;
+	largeTextAnchorY: PlotTextAnchorY;
+	largeTextLayoutDirection: PlotTextLayoutDirection;
+
+	// 调试面
 	showDebugSurface: boolean;
 	debugSurfaceHeight: number;
 	debugSurfaceOpacity: number;

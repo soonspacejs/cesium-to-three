@@ -1,9 +1,9 @@
 // ============================================================
 // plot-utils.ts
-// Layer: demo plotting helpers.
-// Role: build editable local ENU polygon control shapes and plot ordering.
-// Dependencies: ground adapter shared GIS types.
-// Consumed by: ground-demo.ts.
+// 层级:demo 标绘辅助工具。
+// 职责:生成可编辑的局部 ENU 多边形控制形状，并管理标绘顺序。
+// 依赖:贴地适配器共享 GIS 类型。
+// 被消费:ground-demo.ts。
 // ============================================================
 
 import type { EastNorthOffsetMeters } from '../lib/ground';
@@ -12,33 +12,32 @@ const PLOT_RENDER_ORDER_COMMAND_COUNT = 3;
 const PLOT_RENDER_ORDER_BASE = 1000;
 
 /**
- * Clamps a number to a closed interval.
+ * 将数值限制在闭区间内。
  *
- * @param value Input value.
- * @param min Minimum accepted value.
- * @param max Maximum accepted value.
- * @returns Clamped finite value.
+ * @param value 输入值。
+ * @param min 允许的最小值。
+ * @param max 允许的最大值。
+ * @returns 限制后的有限数值。
  */
 export function clampNumber( value: number, min: number, max: number ): number {
 	return Math.min( Math.max( value, min ), max );
 }
 
 /**
- * Converts a user-facing plot order to a finite non-negative integer.
+ * 将用户侧标绘顺序转换为有限的非负整数。
  *
- * @param plotOrder User-facing plot order from GUI or plot data.
- * @returns Sanitized plot order.
+ * @param plotOrder 来自 GUI 或标绘数据的用户侧顺序。
+ * @returns 清洗后的标绘顺序。
  */
 export function sanitizePlotOrder( plotOrder: number ): number {
 	return Number.isFinite( plotOrder ) ? Math.max( Math.round( plotOrder ), 0 ) : 0;
 }
 
 /**
- * Tracks plot-order ownership so plotOrder itself is globally unique.
+ * 记录标绘顺序的归属关系，保证 plotOrder 本身全局唯一。
  *
- * The registry is intentionally stateful: renderOrder can only be reliable when
- * each plot has a real owner record, instead of deriving uniqueness from a
- * numeric spacing trick.
+ * 该注册表刻意保持状态:只有每个标绘都有真实 owner 记录时，renderOrder 才可靠；
+ * 不能只依赖数值间隔技巧推导唯一性。
  */
 export class PlotOrderRegistry<PlotId> {
 	private readonly plotOrderById = new Map<PlotId, number>();
@@ -46,11 +45,11 @@ export class PlotOrderRegistry<PlotId> {
 	private nextPlotOrder = 0;
 
 	/**
-	 * Registers a plot and returns the unique order assigned to it.
+	 * 注册一个标绘，并返回分配给它的唯一顺序。
 	 *
-	 * @param plotId Stable plot identity.
-	 * @param preferredPlotOrder Optional order requested by the caller.
-	 * @returns Unique plot order owned by plotId.
+	 * @param plotId 稳定的标绘身份。
+	 * @param preferredPlotOrder 调用方可选请求的顺序。
+	 * @returns plotId 拥有的唯一标绘顺序。
 	 */
 	public register( plotId: PlotId, preferredPlotOrder?: number ): number {
 		if ( this.plotOrderById.has( plotId ) ) {
@@ -66,11 +65,11 @@ export class PlotOrderRegistry<PlotId> {
 	}
 
 	/**
-	 * Updates one plot's order without rewriting other plots.
+	 * 更新一个标绘的顺序，不改写其他标绘。
 	 *
-	 * @param plotId Stable plot identity.
-	 * @param preferredPlotOrder Order requested for this plot.
-	 * @returns Unique plot order actually assigned to plotId.
+	 * @param plotId 稳定的标绘身份。
+	 * @param preferredPlotOrder 为该标绘请求的顺序。
+	 * @returns 实际分配给 plotId 的唯一标绘顺序。
 	 */
 	public update( plotId: PlotId, preferredPlotOrder: number ): number {
 		const currentPlotOrder = this.get( plotId );
@@ -92,10 +91,10 @@ export class PlotOrderRegistry<PlotId> {
 	}
 
 	/**
-	 * Returns the unique order currently owned by one plot.
+	 * 返回某个标绘当前拥有的唯一顺序。
 	 *
-	 * @param plotId Stable plot identity.
-	 * @returns Registered plot order.
+	 * @param plotId 稳定的标绘身份。
+	 * @returns 已注册的标绘顺序。
 	 */
 	public get( plotId: PlotId ): number {
 		const plotOrder = this.plotOrderById.get( plotId );
@@ -107,9 +106,9 @@ export class PlotOrderRegistry<PlotId> {
 	}
 
 	/**
-	 * Removes one plot from the registry.
+	 * 从注册表中移除一个标绘。
 	 *
-	 * @param plotId Stable plot identity.
+	 * @param plotId 稳定的标绘身份。
 	 */
 	public release( plotId: PlotId ): void {
 		const plotOrder = this.plotOrderById.get( plotId );
@@ -122,10 +121,10 @@ export class PlotOrderRegistry<PlotId> {
 	}
 
 	/**
-	 * Stores an already available order for one plot.
+	 * 为一个标绘存储已经确认可用的顺序。
 	 *
-	 * @param plotId Stable plot identity.
-	 * @param plotOrder Unique order reserved for this plot.
+	 * @param plotId 稳定的标绘身份。
+	 * @param plotOrder 为该标绘保留的唯一顺序。
 	 */
 	private assignPlotOrder( plotId: PlotId, plotOrder: number ): void {
 		this.plotOrderById.set( plotId, plotOrder );
@@ -137,9 +136,9 @@ export class PlotOrderRegistry<PlotId> {
 	}
 
 	/**
-	 * Allocates the next unused order without scanning or rewriting existing plots.
+	 * 分配下一个未使用顺序，不扫描或改写已有标绘。
 	 *
-	 * @returns Next unique plot order.
+	 * @returns 下一个唯一标绘顺序。
 	 */
 	private allocateNextPlotOrder(): number {
 		while ( this.plotIdByOrder.has( this.nextPlotOrder ) ) {
@@ -154,26 +153,25 @@ export class PlotOrderRegistry<PlotId> {
 }
 
 /**
- * Converts one degree value to radians.
+ * 将角度值转换为弧度。
  *
- * @param degrees Angle in degrees.
- * @returns Angle in radians.
+ * @param degrees 角度值，单位为度。
+ * @returns 弧度值。
  */
 function degreesToRadians( degrees: number ): number {
 	return degrees * Math.PI / 180.0;
 }
 
 /**
- * Builds local ENU offsets for a rotated polygon.
+ * 为旋转多边形生成局部 ENU 偏移。
  *
- * The offsets are converted to WGS84 later, so Cesium still owns the actual
- * ground polygon triangulation and shadow-volume construction.
+ * 这些偏移稍后会转换到 WGS84，因此真实三角剖分和 shadow-volume 构造仍由几何路径负责。
  *
- * @param widthMeters Width in local east-west meters.
- * @param heightMeters Height in local north-south meters.
- * @param vertexCount Number of polygon vertices.
- * @param rotationDegrees Counter-clockwise visual rotation in local ENU.
- * @returns Local east/north offsets in counter-clockwise order.
+ * @param widthMeters 局部东西方向宽度，单位米。
+ * @param heightMeters 局部南北方向高度，单位米。
+ * @param vertexCount 多边形顶点数量。
+ * @param rotationDegrees 局部 ENU 中的逆时针视觉旋转角度。
+ * @returns 按逆时针顺序排列的局部 east/north 偏移。
  */
 export function createLocalPolygonOffsets(
 	widthMeters: number,
@@ -203,14 +201,13 @@ export function createLocalPolygonOffsets(
 }
 
 /**
- * Converts a user-facing plot order to a Three renderOrder command block.
+ * 将用户侧标绘顺序转换为 Three renderOrder 命令块。
  *
- * This function is only an expansion from one already-unique plot order to the
- * three draw commands used by the stencil pipeline. PlotOrderRegistry owns the
- * real uniqueness guarantee; this function must not be used as a de-duplicator.
+ * 该函数只把已经唯一的 plotOrder 展开为 stencil 管线使用的三个绘制命令。
+ * 真正的唯一性由 PlotOrderRegistry 保证；不要把这个函数当成去重器。
  *
- * @param plotOrder Unique user-facing plot order.
- * @returns Base renderOrder for the primitive's front-stencil command.
+ * @param plotOrder 唯一的用户侧标绘顺序。
+ * @returns 图元 front-stencil 命令的基础 renderOrder。
  */
 export function plotOrderToRenderOrder( plotOrder: number ): number {
 	const safePlotOrder = sanitizePlotOrder( plotOrder );

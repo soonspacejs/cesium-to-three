@@ -141,29 +141,58 @@ export function transformPolygonPoints(
 }
 
 /**
- * 把 polygon lon/lat 顶点沿"远离 centroid 的方向"外扩 strokeWidth 米。
+ * 把 polygon lon/lat 顶点**沿每条相邻边的外法线角平分线**外扩 N 米
+ *(per-edge perpendicular offset,即 polyline miter join 的扩展)。
  *
  * 用途:render(描边覆盖)多边形需要比 fill(填充)多边形外扩 strokeWidth 米,
- * 使描边带完整可见。
+ * 使描边带宽度沿周界均匀。
  *
- * 算法(与 primitives.ts:180-231 字节级一致):
- *   1. centroid = 算术平均 lon/lat(度)
- *   2. 在 centroid 上构造 ENU → ECEF 矩阵 M(用 math/enu-frame.ts)
- *   3. inverseM = M.invert()
- *   4. 对每个输入顶点 (lon°, lat°):
- *      a. lonLat → ECEF (cartographicToCartesian,高度 = 0)
- *      b. 用 inverseM 把 ECEF 拉到 ENU 局部坐标系 (e, n, u)
- *      c. 在 ENU 平面上计算"远离 ENU 原点"的方向(基于 atan2 → 单位向量),
- *         沿此方向把 (e, n) 拉远 strokeWidth × BORDER_GEOMETRY_EXPANSION_SCALE 米
- *      d. 用 M 把扩张后的 ENU 点变换回 ECEF
- *      e. ECEF → cartographic(cartesianToCartographic)
- *      f. 把弧度 lon/lat 转回度,放入结果数组
+ * **为什么放弃 centroid-径向外扩**:
+ *   早期实现把每个顶点沿"centroid → 顶点"径向推 N 米。这种方法只适合星形
+ *   多边形(每个顶点都从 centroid 看得到、且该方向接近边的外法线方向):
+ *   方/圆/凸五边形等正多边形描边均匀。但对于:
+ *     - 细长形(箭头体部)
+ *     - 弯曲形(curved arrow 的曲线脊线偏移带)
+ *     - 大宽高比 / 拐弯多的多边形
+ *   centroid 落在多边形的几何中心,曲线**内侧**顶点的径向方向几乎**平行于
+ *   局部边**,N 米径向外推几乎没产生"垂直边距" → 描边带在那一侧崩成零宽。
  *
- * 注:BORDER_GEOMETRY_EXPANSION_SCALE 当前值为 1.0(constants.ts),即没有额外缩放。
+ *   per-edge 角平分线方法在每个顶点处:
+ *     1. 计算入射边与出射边的单位方向向量。
+ *     2. 计算各自的"外法线"(CCW 多边形 → 右手 90° 旋转;通过有向面积判定
+ *        winding,CW 自动取反方向)。
+ *     3. 在两条"外法线方向各偏 N 米的平行边线"的交点处放置新顶点。
+ *        等价公式:沿外法线角平分线方向位移 N / sin(θ/2),其中 θ 是内角。
+ *     4. 锐角(θ → 0)时 1/sin(θ/2) → ∞,用 MITER_LIMIT_RATIO clamp,
+ *        避免箭头尖端等位置出现荒谬的几何延伸。
+ *
+ *   下游的 fragment shader(materials.ts 的 `c23_pointInsidePolygon` 路径)
+ *   用偶奇规则测试 fragment 是否在 fill 多边形内,在 fill 外但在 render 内
+ *   就画描边色。只要 render 多边形是 fill 多边形的均匀外扩,描边宽度就均匀。
+ *
+ * 算法步骤:
+ *   1. centroid(度) → ENU 切平面矩阵 M + 逆矩阵(同原版,平面近似)。
+ *   2. 把所有 fill 顶点投到 ENU 平面 (e, n) 坐标。
+ *   3. 用 shoelace 计算 ENU 平面的有向面积,判定 winding(> 0 → CCW)。
+ *   4. 对每个顶点 Vi:
+ *      a. 单位入射边 e_prev、单位出射边 e_next
+ *      b. 外法线 p_prev = sign × (e_prev.y, -e_prev.x)、p_next 同理
+ *         (sign = +1 for CCW,-1 for CW;保证 p 总是指向多边形外侧)
+ *      c. 角平分线 b = p_prev + p_next,bisector_unit = b / |b|
+ *      d. miterLength = N / dot(bisector_unit, p_next)
+ *         (= N / sin(θ/2),θ = 多边形在 Vi 的内角)
+ *      e. clamp:|miterLength| ≤ MITER_LIMIT_RATIO × N
+ *      f. Vi' = Vi + miterLength × bisector_unit
+ *   5. 把所有 Vi' 反向投到 lon/lat。
+ *
+ * 数值兜底:
+ *   - 相邻边退化(零长度):跳过该顶点的法线计算,保留原位置。
+ *   - 角平分线退化(两边 180° 反向 = 折回点):用单边法线方向偏移 N 米。
+ *   - cos(θ/2) → 0(180° 折回):用 N 兜底而不是 N/0。
  *
  * @param points            原始 polygon lon/lat 度坐标(已 normalize)。
  * @param borderWidthMeters 外扩距离,米(典型 0~500)。
- * @returns                 外扩后的 lon/lat 度坐标(与输入同长度)。
+ * @returns                 外扩后的 lon/lat 度坐标(与输入等长 — miter 不增减顶点)。
  *                          borderWidthMeters ≤ 0 时返回输入的浅拷贝(不外扩)。
  */
 export function expandPolygonPointsThroughMeters(
@@ -172,8 +201,7 @@ export function expandPolygonPointsThroughMeters(
 ): LonLatPoint[] {
 	const safeWidthMeters = Math.max( borderWidthMeters, 0.0 ) * BORDER_GEOMETRY_EXPANSION_SCALE;
 	if ( safeWidthMeters === 0.0 ) {
-		// 0 外扩:返回浅拷贝(每个 LonLatPoint 是新数组)。
-		// 保持与原 primitives.ts:185-187 同行为。
+		// 0 外扩:返回浅拷贝(每个 LonLatPoint 是新数组),与原版同行为。
 		const result: LonLatPoint[] = new Array( points.length );
 		for ( let i = 0; i < points.length; i++ ) {
 			result[ i ] = [ points[ i ][ 0 ], points[ i ][ 1 ] ];
@@ -181,65 +209,170 @@ export function expandPolygonPointsThroughMeters(
 		return result;
 	}
 
-	// Step 1 · centroid(度)
-	const centroid = computePolygonCentroidDegrees( points );
+	const n = points.length;
+	if ( n < 3 ) {
+		// 顶点不足以构成多边形,无法定义"外法线",直接浅拷贝返回。
+		const result: LonLatPoint[] = new Array( n );
+		for ( let i = 0; i < n; i++ ) {
+			result[ i ] = [ points[ i ][ 0 ], points[ i ][ 1 ] ];
+		}
+		return result;
+	}
 
-	// Step 2 · centroid 度 → 弧度 cartographic → ECEF
+	// 步骤 1 · centroid(度) → ENU 矩阵 + 逆矩阵
+	const centroid = computePolygonCentroidDegrees( points );
 	_expandCenterCartographic.longitude = centroid[ 0 ] * Math.PI / 180.0;
 	_expandCenterCartographic.latitude = centroid[ 1 ] * Math.PI / 180.0;
 	_expandCenterCartographic.height = 0.0;
 	cartographicToCartesian( _expandCenterCartographic, _expandCenterCartesian );
 
-	// Step 3 · 在 centroid ECEF 上构造 ENU → ECEF 矩阵 + 其逆矩阵
 	eastNorthUpToFixedFrame( _expandCenterCartesian, _expandEnuMatrix );
 	_expandInverseEnu.copy( _expandEnuMatrix ).invert();
 
-	// Step 4 · 逐顶点外扩
-	const result: LonLatPoint[] = new Array( points.length );
-	for ( let i = 0; i < points.length; i++ ) {
+	// 步骤 2 · 全部顶点投到 ENU 平面 (e, n)。本地数组,后续算法只关心 x/y。
+	const enuVerts: number[] = new Array( n * 2 );
+	for ( let i = 0; i < n; i++ ) {
 		const point = points[ i ];
-
-		// 4a · 度 → 弧度 cartographic → ECEF
 		_expandPointCartographic.longitude = point[ 0 ] * Math.PI / 180.0;
 		_expandPointCartographic.latitude = point[ 1 ] * Math.PI / 180.0;
 		_expandPointCartographic.height = 0.0;
 		cartographicToCartesian( _expandPointCartographic, _expandPointCartesian );
+		matrix4MultiplyByPoint( _expandInverseEnu, _expandPointCartesian, _expandPointEnu );
+		enuVerts[ 2 * i ] = _expandPointEnu.x;
+		enuVerts[ 2 * i + 1 ] = _expandPointEnu.y;
+	}
 
-		// 4b · ECEF → ENU 局部 (e, n, u)
-		matrix4MultiplyByPoint(
-			_expandInverseEnu,
-			_expandPointCartesian,
-			_expandPointEnu,
-		);
+	// 步骤 3 · winding 检测(shoelace),决定外法线的"右手 90°"是 +1 还是 -1
+	let signedArea2 = 0.0;
+	for ( let i = 0; i < n; i++ ) {
+		const ax = enuVerts[ 2 * i ];
+		const ay = enuVerts[ 2 * i + 1 ];
+		const bx = enuVerts[ 2 * ( ( i + 1 ) % n ) ];
+		const by = enuVerts[ 2 * ( ( i + 1 ) % n ) + 1 ];
+		signedArea2 += ax * by - bx * ay;
+	}
+	const windingSign = signedArea2 >= 0.0 ? 1.0 : -1.0;
 
-		// 4c · 在 ENU 平面上沿径向外扩
-		// 与原 primitives.ts:216-221 完全一致:
-		//   length = √(e² + n²);若 > 1e-6,沿 (e/length, n/length) 方向加 safeWidthMeters
-		//   等价 pointEnu *= (1 + safeWidthMeters / length)
-		const length = Math.hypot( _expandPointEnu.x, _expandPointEnu.y );
-		if ( length > 1e-6 ) {
-			const expansion = safeWidthMeters / length;
-			_expandPointEnu.x += _expandPointEnu.x * expansion;
-			_expandPointEnu.y += _expandPointEnu.y * expansion;
+	// 步骤 4 · 逐顶点 miter 偏移
+	const N = safeWidthMeters;
+	const offsetX: number[] = new Array( n );
+	const offsetY: number[] = new Array( n );
+
+	for ( let i = 0; i < n; i++ ) {
+		const prevI = ( i - 1 + n ) % n;
+		const nextI = ( i + 1 ) % n;
+
+		const px = enuVerts[ 2 * prevI ];
+		const py = enuVerts[ 2 * prevI + 1 ];
+		const cx = enuVerts[ 2 * i ];
+		const cy = enuVerts[ 2 * i + 1 ];
+		const nx = enuVerts[ 2 * nextI ];
+		const ny = enuVerts[ 2 * nextI + 1 ];
+
+		// 入射边 e_prev = curr - prev,出射边 e_next = next - curr
+		let ePrevX = cx - px;
+		let ePrevY = cy - py;
+		const ePrevLen = Math.hypot( ePrevX, ePrevY );
+		let eNextX = nx - cx;
+		let eNextY = ny - cy;
+		const eNextLen = Math.hypot( eNextX, eNextY );
+
+		if ( ePrevLen < 1e-9 && eNextLen < 1e-9 ) {
+			// 两条相邻边都退化:无法定义法线,顶点保持原位。
+			offsetX[ i ] = cx;
+			offsetY[ i ] = cy;
+			continue;
 		}
-		// 若 length ≤ 1e-6(顶点几乎在 centroid 上),不外扩(避免除零)。
+		if ( ePrevLen >= 1e-9 ) {
+			ePrevX /= ePrevLen;
+			ePrevY /= ePrevLen;
+		} else {
+			// 入射边退化:用出射边方向兜底(后续 bisector 仍可计算)
+			ePrevX = eNextX / eNextLen;
+			ePrevY = eNextY / eNextLen;
+		}
+		if ( eNextLen >= 1e-9 ) {
+			eNextX /= eNextLen;
+			eNextY /= eNextLen;
+		} else {
+			eNextX = ePrevX;
+			eNextY = ePrevY;
+		}
 
-		// 4d · 扩张后 ENU → ECEF
+		// 外法线 = winding × (edge.y, -edge.x)
+		// (右手 90° 顺时针旋转:对 CCW 多边形指向外侧;CW 多边形 sign 取负,
+		//  方向自动反转。)
+		const pPrevNX = windingSign * ePrevY;
+		const pPrevNY = - windingSign * ePrevX;
+		const pNextNX = windingSign * eNextY;
+		const pNextNY = - windingSign * eNextX;
+
+		// 角平分线 = 两外法线之和
+		const bisX = pPrevNX + pNextNX;
+		const bisY = pPrevNY + pNextNY;
+		const bisLen = Math.hypot( bisX, bisY );
+
+		if ( bisLen < 1e-9 ) {
+			// 两外法线反向(= 入射出射边 180° 折回点)。这种顶点在多边形上
+			// 是一个"针尖",此处无明确外侧方向。退化为沿入射边外法线偏移 N。
+			offsetX[ i ] = cx + N * pPrevNX;
+			offsetY[ i ] = cy + N * pPrevNY;
+			continue;
+		}
+
+		const bisUnitX = bisX / bisLen;
+		const bisUnitY = bisY / bisLen;
+
+		// cos(θ/2) = bisUnit · p_next(也等于 bisUnit · p_prev,因为是角平分线)
+		// θ 是多边形在该顶点的内角;为了让 sin(θ/2) > 0(凸顶点)我们用 cos(θ/2)
+		// 等价表达 miterLength = N / cos(夹角的 1/2)。
+		const cosHalf = bisUnitX * pNextNX + bisUnitY * pNextNY;
+
+		let miterLength: number;
+		if ( Math.abs( cosHalf ) < 1e-9 ) {
+			// θ/2 → 90° (= θ → 180°,即两边几乎平行同向):miter 退化为 N。
+			miterLength = N;
+		} else {
+			miterLength = N / cosHalf;
+		}
+
+		// MITER LIMIT:锐角(小 θ)处 miterLength 会爆炸。clamp 到 N × ratio,
+		// 视觉上把"尖锐尖端"变成"截断尖端",避免荒谬几何延伸。
+		// **1.5** 对齐 CSS / SVG stroke 的工业默认 miter-limit:锐角顶点
+		// (interior < ~83°)就自动 bevel,不再让 miter 把 tailLeft / swallowtailPnt
+		// 之类的尖角顶点甩到 4×strokeWidth 之外,避免邻边交叉形成 notch
+		// (用户在 swallowtailAttack 拐角看到的内陷三角即此原因)。
+		// 原 4.0 对箭头头部 (~30° 内角) 不触发 clamp,但对 swallowtail V 的
+		// tailLeft (interior ~45°-50°) 已经接近爆炸边缘,各自实测验证。
+		const MITER_LIMIT_RATIO = 1.5;
+		const miterCap = N * MITER_LIMIT_RATIO;
+		if ( miterLength > miterCap ) {
+			miterLength = miterCap;
+		} else if ( miterLength < - miterCap ) {
+			// 理论上 miterLength 不应为负(cosHalf > 0 当顶点在多边形外侧),
+			// 但数值噪声或退化输入可能引发,这里对称保护。
+			miterLength = - miterCap;
+		}
+
+		offsetX[ i ] = cx + miterLength * bisUnitX;
+		offsetY[ i ] = cy + miterLength * bisUnitY;
+	}
+
+	// 步骤 5 · 反向投影 ENU → ECEF → cartographic → 度
+	const result: LonLatPoint[] = new Array( n );
+	for ( let i = 0; i < n; i++ ) {
+		_expandPointEnu.set( offsetX[ i ], offsetY[ i ], 0.0 );
 		matrix4MultiplyByPoint(
 			_expandEnuMatrix,
 			_expandPointEnu,
 			_expandPointCartesian,
 		);
-
-		// 4e · ECEF → cartographic(弧度)
 		const carto = cartesianToCartographic( _expandPointCartesian, _expandPointCartographic );
 		if ( carto === undefined ) {
 			throw new Error(
 				`expandPolygonPointsThroughMeters: vertex #${ i } expanded to ellipsoid center, cannot reverse-project.`,
 			);
 		}
-
-		// 4f · 弧度 → 度,放入结果
 		result[ i ] = [
 			carto.longitude * 180.0 / Math.PI,
 			carto.latitude * 180.0 / Math.PI,

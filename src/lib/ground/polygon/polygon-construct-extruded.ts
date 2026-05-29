@@ -241,7 +241,7 @@ export function constructExtrudedPolygonShadowVolume(
 		);
 	}
 
-	// ── Step 1 · Cap 构造 ──
+	// ── 步骤 1 · Cap 构造 ──
 	// cap.positions 是 Float64 ECEF,在椭球面/chord(subdivision 中点在 chord),
 	// 长度 = 3 × capVertexCount,capVertexCount = 原 ring 顶点 + subdivision 中点。
 	// cap.rings 是原始 ring 边界的 [startIndex, length],只引用 ring 顶点(0..ringTotalLen)。
@@ -249,7 +249,7 @@ export function constructExtrudedPolygonShadowVolume(
 	const capVertexCount = cap.positions.length / 3;
 	const capFloatLength = cap.positions.length;
 
-	// ── Step 2 · Cap 双面 positions ──
+	// ── 步骤 2 · Cap 双面 positions ──
 	// Cesium L462:`topBottomPositions = edgePoints.concat(edgePoints)`
 	// 即两份 cap positions 顺序排列,top 半在前,bot 半在后(都是 chord)。
 	// 然后 scaleToGeodeticHeightExtruded 把 top 半改成 +maxHeight,bot 半改成 +minHeight。
@@ -259,11 +259,11 @@ export function constructExtrudedPolygonShadowVolume(
 	capPositions.set( cap.positions, capFloatLength );
 	scaleCapPositionsToHeights( capPositions, capFloatLength, maximumHeight, minimumHeight );
 
-	// ── Step 3 · Cap extrudeDirection ──
+	// ── 步骤 3 · Cap extrudeDirection ──
 	const capExtrudeDirection = new Float32Array( totalCapFloatLength );
 	computeCapExtrudeDirection( capPositions, capFloatLength, capExtrudeDirection );
 
-	// ── Step 4 · Cap 索引(top 原样 + bot winding 反转 + 加 capVertexCount 偏移) ──
+	// ── 步骤 4 · Cap 索引(top 原样 + bot winding 反转 + 加 capVertexCount 偏移) ──
 	// Cesium L466-483:
 	//   newIndices[i + ilength] = i2;          ← 反转 winding
 	//   newIndices[i + 1 + ilength] = i1;
@@ -273,7 +273,7 @@ export function constructExtrudedPolygonShadowVolume(
 	const capIndicesLength = cap.indices.length;
 	const totalCapIndicesLength = capIndicesLength * 2;
 
-	// ── Step 5 · 每个 ring 调 constructPolygonWall ──
+	// ── 步骤 5 · 每个 ring 调 constructPolygonWall ──
 	// cap.rings[0] = 外环;cap.rings[1..N] = 每个 hole(可能少于 hierarchy.holes.length,
 	// 因为 processPolygonRings 会丢弃退化 hole)。
 	const wallResults: PolygonWallResult[] = [];
@@ -298,7 +298,7 @@ export function constructExtrudedPolygonShadowVolume(
 		totalWallIndicesLength += wall.indices.length;
 	}
 
-	// ── Step 6 · 合并 ──
+	// ── 步骤 6 · 合并 ──
 	const totalVertexCount = capVertexCount * 2 + totalWallVertexCount;
 	const totalFloatLength = totalVertexCount * 3;
 	const totalIndicesLength = totalCapIndicesLength + totalWallIndicesLength;
@@ -343,7 +343,7 @@ export function constructExtrudedPolygonShadowVolume(
 		wallVertexIDOffset += wall.positions.length / 3;
 	}
 
-	// ── Step 7 · polygonRectangle(给下游 extents / style 用)──
+	// ── 步骤 7 · polygonRectangle(给下游 extents / style 用)──
 	// 注意:本期 normalizePolygonPoints 已禁止跨 IDL,所以直接取 outer ring 的 lon/lat
 	// min/max,与 polygon-extents 内部使用的 polygonRectangle 字节级一致。
 	const polygonRectangle = computePolygonRectangle( hierarchy.positions );

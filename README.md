@@ -1,12 +1,12 @@
 # cesium-to-three
 
-把 **Cesium 的 GPU Z-fail Stencil Shadow Volume 贴地算法** 移植到 Three.js + 3d-tiles-renderer 的最小可运行 demo。
+把 **Cesium 的 GPU Z-fail Stencil Shadow Volume 贴地算法** 移植到 Three.js + um-3d-tiles-renderer 的最小可运行 demo。
 
 > 这是 PlotEngine v3 项目的"金标准"参考实现 —— 一个红色矩形通过 stencil shadow volume 算法精确贴在真实地形上。所有 stencil 算法的关键技术细节(VS/FS depth-clamp 协议、GPU 动态挤出、`setLocked` + 原生 `gl.stencilOpSeparate`、cache 脏化)都完整实现且可用 Spector.js 抓帧验证。
 
 ## 这个 demo 做什么
 
-在 3d-tiles-renderer 加载的 **Cesium World Terrain**(真实地形)上,贴一个红色透明矩形(默认 20km × 20km,中心在上海陆家嘴)。无论你怎么转地球、缩放、倾斜相机,这个红色矩形都精确贴在地形表面上 —— **山脊不漏、低谷不浮**。
+在 um-3d-tiles-renderer 加载的 **Cesium World Terrain**(真实地形)上,贴一个红色透明矩形(默认 20km × 20km,中心在上海陆家嘴)。无论你怎么转地球、缩放、倾斜相机,这个红色矩形都精确贴在地形表面上 —— **山脊不漏、低谷不浮**。
 
 ## 快速开始
 
@@ -194,7 +194,7 @@ __demo.polygon.group.children[1].material.stencilFunc   // 517 (NotEqualStencilF
 | 包 | 版本 | 用途 |
 |---|---|---|
 | `three` | `^0.169.0` | WebGL2 + GLSL ES 3.00 |
-| `3d-tiles-renderer` | `^0.4.24` | TilesRenderer + Ellipsoid + GlobeControls + CesiumIonAuthPlugin |
+| `um-3d-tiles-renderer` | `^0.4.48` | TilesRenderer + Ellipsoid + GlobeControls + CesiumIonAuthPlugin |
 | `vite` | `^5.0.0` | 开发服务器与构建 |
 | `typescript` | `~5.3.0` | 类型检查 |
 

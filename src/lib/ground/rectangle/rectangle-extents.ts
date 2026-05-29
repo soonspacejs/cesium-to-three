@@ -54,14 +54,12 @@ const _peCornerEcef = new Vector3();
  * 显著)。Cesium 同样 8 点。
  *
  * @param rect      矩形(弧度)。
- * @param height    采样 cartographic 的 height(米,通常 maxHeight)。
  * @param ecefToEnu ECEF → ENU 的 4×4 矩阵。
  * @param out       输出包围盒(原地写入)。
  * @returns         out。
  */
 function computeRectanglePlanarBounds(
 	rect: RectangleRadians,
-	height: number,
 	ecefToEnu: Matrix4,
 	out: PlanarBounds,
 ): PlanarBounds {
@@ -87,7 +85,7 @@ function computeRectanglePlanarBounds(
 	for ( const [ longitude, latitude ] of samples ) {
 		_peCornerCarto.longitude = longitude;
 		_peCornerCarto.latitude = latitude;
-		_peCornerCarto.height = height;
+		_peCornerCarto.height = 0.0;
 		cartographicToCartesian( _peCornerCarto, _peCornerEcef );
 		matrix4MultiplyByPoint( ecefToEnu, _peCornerEcef, _peCornerEcef );
 		// 投到 z=0 平面(因 ecefToEnu 已把 origin 平移到原点)
@@ -120,7 +118,7 @@ function clampNumber( value: number, min: number, max: number ): number {
  * 计算矩形 ShadowVolume PlanarExtents uniform。
  *
  * 完整 7 步算法:
- *   1. render 矩形中心 cartographic(height = maxHeight)→ ECEF
+ *   1. fill 矩形中心 cartographic(height = 0)→ ECEF
  *   2. 在 center 处构造 ENU → ECEF 矩阵
  *   3. invert 得到 ECEF → ENU 矩阵
  *   4. render 矩形 8 角点采样到 ENU 平面,取包围盒
@@ -143,17 +141,26 @@ function clampNumber( value: number, min: number, max: number ): number {
  *
  * @param renderRect    渲染矩形(已外扩 border 的几何用矩形)。
  * @param fillRect      实心矩形(border fragment 用)。
- * @param maximumHeight render 矩形顶面高度,作为 8 点采样的 cartographic.height。
  * @returns             PlanarExtents 完整 uniform 集。
  */
 export function computeRectanglePlanarExtents(
 	renderRect: RectangleRadians,
 	fillRect: RectangleRadians,
-	maximumHeight: number,
 ): PlanarExtents {
-	// ── 步骤 1 · render 矩形中心 → cartographic → ECEF ──
-	rectangleCenter( renderRect, _peCenterCarto );
-	_peCenterCarto.height = maximumHeight;
+	// ── 步骤 1 · **fill** 矩形中心 → cartographic → ECEF ──
+	// 之前用 renderRect 的中心建 ENU,但 renderRect 是
+	// `expandRectangleDegreesThroughMeters` 通过 ENU → ECEF → cartographic
+	// 的 8 点采样反算出来的——椭球曲面投影让回算后的 render rect 中心跟
+	// fillRect 中心有亚毫米级的偏差。在偏离的 ENU 原点里再算 fillBounds:
+	//   - renderBounds 严格对称于原点(因为 render 就是围绕这个原点生成的)
+	//   - fillBounds 相对原点偏移了 (fillCenter - renderCenter)
+	//   - innerMetersRect 因此**不对称**,屏幕上看到的就是描边"上左薄、
+	//     下右厚"——fill 在 render 区里偏向一角。
+	// 解决:用 fillRect 的中心(= 用户原始输入的几何中心)作为 ENU 原点。
+	// 这样 fillBounds 在这套 ENU 里严格对称 ±halfSide,renderBounds 在 4
+	// 方向各扩 expansion 米,innerMetersRect 自然居中,描边 4 边等宽。
+	rectangleCenter( fillRect, _peCenterCarto );
+	_peCenterCarto.height = 0.0;
 	cartographicToCartesian( _peCenterCarto, _peCenterEcef );
 
 	// ── 步骤 2 · ENU → ECEF 矩阵 ──
@@ -164,11 +171,11 @@ export function computeRectanglePlanarExtents(
 
 	// ── 步骤 4 · render 矩形 ENU 包围盒 ──
 	const renderBounds: PlanarBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
-	computeRectanglePlanarBounds( renderRect, maximumHeight, _peEcefToEnu, renderBounds );
+	computeRectanglePlanarBounds( renderRect, _peEcefToEnu, renderBounds );
 
-	// ── 步骤 5 · fill 矩形 ENU 包围盒 ──
+	// ── 步骤 5 · fill 矩形 ENU 包围盒(同一个 ENU 帧,严格对称于原点)──
 	const fillBounds: PlanarBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
-	computeRectanglePlanarBounds( fillRect, maximumHeight, _peEcefToEnu, fillBounds );
+	computeRectanglePlanarBounds( fillRect, _peEcefToEnu, fillBounds );
 
 	const eastExtentMeters = Math.max( renderBounds.maxX - renderBounds.minX, 1.0 );
 	const northExtentMeters = Math.max( renderBounds.maxY - renderBounds.minY, 1.0 );

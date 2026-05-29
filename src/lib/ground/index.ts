@@ -1,31 +1,48 @@
 // ============================================================
 // index.ts
-// Layer: public ground adapter entry point.
-// Role: re-export Cesium-to-Three ground classification primitives.
-// Dependencies: cesium-ground-adapter.ts.
-// Consumed by: demos and legacy src/cesium-three-ground.ts entry point.
+// 层级:公开贴地适配器入口。
+// 职责:统一导出 Cesium-to-Three 贴地 classification 图元。
+// 依赖:cesium-ground-adapter.ts。
+// 被消费:demo 与旧版 src/cesium-three-ground.ts 入口。
 // ============================================================
 
 export * from './cesium-ground-adapter';
+export { CesiumGroundTextPrimitive } from './text';
+export type {
+	PlotTextOptions,
+	PlotTextAlign,
+	PlotTextVerticalAlign,
+	PlotTextAnchorX,
+	PlotTextAnchorY,
+	PlotTextLayoutDirection,
+	PlotTextBoxOverflow,
+} from './text';
 export {
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
+	CESIUM_GROUND_NON_PICKABLE_LAYER,
+	LINE_DEFAULT_GRANULARITY,
+	LINE_DEFAULT_RENDER_ORDER,
+	LINE_DEFAULT_WIDTH_PIXELS,
 	MAX_CIRCLE_GRANULARITY_RADIANS,
 	MIN_CIRCLE_GRANULARITY_RADIANS,
 } from './constants';
-export type { PolygonHierarchy } from './polygon/polygon-hierarchy';
 export type {
 	CartesianLike,
 	CesiumClassificationCommandVisibility,
 	CesiumGeometryAttribute,
 	CesiumGeometryResult,
+	CesiumGroundArcType,
+	CesiumGroundArrowMode,
+	CesiumGroundArrowStyle,
 	CesiumGroundCircleOptions,
 	CesiumGroundCirclePrimitiveOptions,
 	CesiumGroundFrameState,
+	CesiumGroundLineWidthMode,
 	CesiumGroundPointOptions,
 	CesiumGroundPointPrimitiveOptions,
 	CesiumGroundPointShape,
 	CesiumGroundPolygonOptions,
-	CesiumGroundPolygonPrimitiveOptions,
+	CesiumGroundPolylineOptions,
 	CesiumGroundRectangleOptions,
 	CesiumGroundRectanglePrimitiveOptions,
 	EastNorthOffsetMeters,
