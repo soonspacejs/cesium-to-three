@@ -9,7 +9,7 @@
 // ============================================================
 
 import { composeRgba } from './text-color';
-import { layoutText, type MeasureCharWidth } from './text-layout';
+import { layoutText, type MeasureText } from './text-layout';
 import type { ResolvedPlotTextOptions, TextLayoutResult } from './text-types';
 
 // 纹素超采样系数：物理 canvas = 逻辑纹素 × 此系数。
@@ -54,8 +54,17 @@ export function paintTextToCanvas(
 		throw new Error( 'PlotText paint: failed to acquire 2D context.' );
 	}
 	applyFontToContext( measureCtx, options );
-	const measureChar: MeasureCharWidth = ( ch ) => measureCtx.measureText( ch ).width;
-	const layout = layoutText( options, measureChar );
+	// 度量须在已设 font + textBaseline='alphabetic' 的 ctx 上，actualBoundingBox*
+	// 即相对 alphabetic 基线，与下方绘制的 baseline 设置一致。
+	const measure: MeasureText = ( text ) => {
+		const m = measureCtx.measureText( text );
+		return {
+			width: m.width,
+			ascent: m.actualBoundingBoxAscent,
+			descent: m.actualBoundingBoxDescent,
+		};
+	};
+	const layout = layoutText( options, measure );
 
 	// 步骤 B：物理尺寸 = 逻辑纹素 × 超采样，且不超过纹理上限（必要时下调系数）
 	let supersample = TEXEL_SUPERSAMPLE;
@@ -228,7 +237,7 @@ function traceRoundedRect(
 }
 
 /**
- * 设 ctx.font + baseline。baseline 固定 'alphabetic' 与布局 ASCENT_RATIO 配合。
+ * 设 ctx.font + baseline。baseline 固定 'alphabetic'，与布局按真实墨迹算出的基线配合。
  *
  * @param ctx     上下文。
  * @param options 已解析配置。

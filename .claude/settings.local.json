@@ -57,7 +57,8 @@
       "Bash(node_modules/.bin/esbuild scratch-curved.ts --bundle --platform=node --format=esm --metafile=meta.json --outfile=scratch-curved.mjs)",
       "Bash(node -e \"const m=require\\('./meta.json'\\);console.log\\(Object.keys\\(m.inputs\\).filter\\(k=>k.includes\\('curved-arrow'\\)\\)\\)\")",
       "Bash(node_modules/.bin/tsc --noEmit -p tsconfig.json)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(echo \"EXIT: $?\")"
     ]
   }
 }
