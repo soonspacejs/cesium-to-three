@@ -22,6 +22,7 @@ import GUI from 'lil-gui';
 
 import {
 	CesiumGlobeDepth,
+	createCesiumEllipsoidDepthMeshes,
 	CesiumGroundCirclePrimitive,
 	CesiumGroundPointPrimitive,
 	CesiumGroundPolygonPrimitive,
@@ -337,6 +338,21 @@ export function runGroundDemo(): void {
 		renderer.domElement.width,
 		renderer.domElement.height,
 	);
+
+	// 椭球面兜底深度：让贴地标绘与瓦片加载解耦。无此兜底时，相机下方一旦没有
+	// 加载到瓦片(放大超过最深层级 / 瓦片仍在下载)，主深度缓冲与 packed 深度纹理
+	// 在该区域都为空，stencil Z-fail 记不到值、CULL_FRAGMENTS 又读到空深度，标绘
+	// 整体消失。加入 WGS84 椭球面后：
+	//   - mainDepthMesh(renderOrder -10000，只写深度不写色)给主缓冲兜底，供 stencil
+	//     Z-fail 比对；有真实地形处地形更近，凭 LESS_EQUAL 覆盖椭球面，不影响既有效果。
+	//   - packedDepthMesh 注入 globeDepth 自有场景，给 packed 深度纹理兜底，供 color
+	//     pass 重建 EC + CULL_FRAGMENTS。
+	// 两者都在椭球面(海平面)高度，海平面场景下与真实地形几乎重合；高海拔山区若瓦片
+	// 缺失，标绘会落到海平面高度(可后续用更细分段/抬升网格优化)。
+	const { mainDepthMesh, packedDepthMesh } = createCesiumEllipsoidDepthMeshes();
+	scene.add( mainDepthMesh );
+	globeDepth.addDepthMesh( packedDepthMesh );
+
 	const initialRectangleDegrees = {
 		west: RECTANGLE_CENTER_LON - RECTANGLE_HALF_WIDTH_DEGREES,
 		south: RECTANGLE_CENTER_LAT - RECTANGLE_HALF_HEIGHT_DEGREES,

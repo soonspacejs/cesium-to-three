@@ -1,0 +1,217 @@
+{
+  "inputs": {
+    "src/lib/arrow/arrow-geometry.ts": {
+      "bytes": 14021,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/lib/arrow/arrow-polygon.ts": {
+      "bytes": 10569,
+      "imports": [
+        {
+          "path": "src/lib/arrow/arrow-geometry.ts",
+          "kind": "import-statement",
+          "original": "./arrow-geometry"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/lib/arrow/shapes/fine-arrow.ts": {
+      "bytes": 7180,
+      "imports": [
+        {
+          "path": "src/lib/arrow/arrow-geometry.ts",
+          "kind": "import-statement",
+          "original": "../arrow-geometry"
+        },
+        {
+          "path": "src/lib/arrow/arrow-polygon.ts",
+          "kind": "import-statement",
+          "original": "../arrow-polygon"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/lib/arrow/shapes/assault-direction-arrow.ts": {
+      "bytes": 6075,
+      "imports": [
+        {
+          "path": "src/lib/arrow/arrow-geometry.ts",
+          "kind": "import-statement",
+          "original": "../arrow-geometry"
+        },
+        {
+          "path": "src/lib/arrow/arrow-polygon.ts",
+          "kind": "import-statement",
+          "original": "../arrow-polygon"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/lib/arrow/arrow-curves.ts": {
+      "bytes": 13576,
+      "imports": [
+        {
+          "path": "src/lib/arrow/arrow-geometry.ts",
+          "kind": "import-statement",
+          "original": "./arrow-geometry"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/lib/arrow/shapes/attack-arrow.ts": {
+      "bytes": 17720,
+      "imports": [
+        {
+          "path": "src/lib/arrow/arrow-geometry.ts",
+          "kind": "import-statement",
+          "original": "../arrow-geometry"
+        },
+        {
+          "path": "src/lib/arrow/arrow-curves.ts",
+          "kind": "import-statement",
+          "original": "../arrow-curves"
+        },
+        {
+          "path": "src/lib/arrow/arrow-polygon.ts",
+          "kind": "import-statement",
+          "original": "../arrow-polygon"
+        },
+        {
+          "path": "src/lib/arrow/shapes/fine-arrow.ts",
+          "kind": "import-statement",
+          "original": "./fine-arrow"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/lib/arrow/shapes/swallowtail-attack-arrow.ts": {
+      "bytes": 6476,
+      "imports": [
+        {
+          "path": "src/lib/arrow/arrow-geometry.ts",
+          "kind": "import-statement",
+          "original": "../arrow-geometry"
+        },
+        {
+          "path": "src/lib/arrow/arrow-polygon.ts",
+          "kind": "import-statement",
+          "original": "../arrow-polygon"
+        },
+        {
+          "path": "src/lib/arrow/shapes/attack-arrow.ts",
+          "kind": "import-statement",
+          "original": "./attack-arrow"
+        },
+        {
+          "path": "src/lib/arrow/shapes/fine-arrow.ts",
+          "kind": "import-statement",
+          "original": "./fine-arrow"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/lib/arrow/shapes/curved-arrow.ts": {
+      "bytes": 13495,
+      "imports": [
+        {
+          "path": "src/lib/arrow/arrow-geometry.ts",
+          "kind": "import-statement",
+          "original": "../arrow-geometry"
+        },
+        {
+          "path": "src/lib/arrow/arrow-curves.ts",
+          "kind": "import-statement",
+          "original": "../arrow-curves"
+        },
+        {
+          "path": "src/lib/arrow/arrow-polygon.ts",
+          "kind": "import-statement",
+          "original": "../arrow-polygon"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/lib/arrow/index.ts": {
+      "bytes": 2136,
+      "imports": [
+        {
+          "path": "src/lib/arrow/shapes/fine-arrow.ts",
+          "kind": "import-statement",
+          "original": "./shapes/fine-arrow"
+        },
+        {
+          "path": "src/lib/arrow/shapes/assault-direction-arrow.ts",
+          "kind": "import-statement",
+          "original": "./shapes/assault-direction-arrow"
+        },
+        {
+          "path": "src/lib/arrow/shapes/attack-arrow.ts",
+          "kind": "import-statement",
+          "original": "./shapes/attack-arrow"
+        },
+        {
+          "path": "src/lib/arrow/shapes/swallowtail-attack-arrow.ts",
+          "kind": "import-statement",
+          "original": "./shapes/swallowtail-attack-arrow"
+        },
+        {
+          "path": "src/lib/arrow/shapes/curved-arrow.ts",
+          "kind": "import-statement",
+          "original": "./shapes/curved-arrow"
+        },
+        {
+          "path": "src/lib/arrow/arrow-polygon.ts",
+          "kind": "import-statement",
+          "original": "./arrow-polygon"
+        }
+      ],
+      "format": "esm"
+    },
+    "scratch-curved.ts": {
+      "bytes": 3619,
+      "imports": [
+        {
+          "path": "src/lib/arrow/index.ts",
+          "kind": "import-statement",
+          "original": "./src/lib/arrow"
+        }
+      ],
+      "format": "esm"
+    }
+  },
+  "outputs": {
+    "scratch-curved.mjs": {
+      "imports": [],
+      "exports": [],
+      "entryPoint": "scratch-curved.ts",
+      "inputs": {
+        "src/lib/arrow/arrow-geometry.ts": {
+          "bytesInOutput": 2454
+        },
+        "src/lib/arrow/arrow-polygon.ts": {
+          "bytesInOutput": 3015
+        },
+        "src/lib/arrow/shapes/fine-arrow.ts": {
+          "bytesInOutput": 95
+        },
+        "src/lib/arrow/index.ts": {
+          "bytesInOutput": 0
+        },
+        "src/lib/arrow/shapes/assault-direction-arrow.ts": {
+          "bytesInOutput": 100
+        },
+        "src/lib/arrow/arrow-curves.ts": {
+          "bytesInOutput": 4114
+        },
+        "src/lib/arrow/shapes/curved-arrow.ts": {
+          "bytesInOutput": 5526
+        },
+        "scratch-curved.ts": {
+          "bytesInOutput": 2787
+        }
+      },
+      "bytes": 18349
+    }
+  }
+}

@@ -173,17 +173,24 @@ export function clampVertexCount(
  * 在 cusp 附近边密集 + 浮点边界判断,容易把 cusp 周围一小片像素误判成外部
  * (用户截图的三角凹口正是这种 cusp 产生的视觉物)。
  *
- * 算法:每轮扫描,凡 |turn| > π − threshold(默认 30°,即 turn > 150°)
+ * 算法:每轮扫描,凡 |turn| > π − threshold(默认 5°,即 turn > 175°)
  * 的顶点直接删除。继续迭代直到没有更多 hairpin 或剩余顶点 < 4。
  *
+ * **阈值为何收紧到 5°:** 合法的箭头尖端 / 翼尖(fine、curved 的 head)本身
+ * 就是 ~130°–155° 的尖锐转角。早期默认 30°(删除 turn > 150°)会把这些**真实
+ * 箭头顶点**一并删掉,使 fine / curved 箭头「有体无头」(尖头退化成梯形)。
+ * 真正要删的是 Frenet 偏移自交产生的近 180° 退化尖刺(零面积 cusp)。收紧到
+ * 5° 后只删 turn > 175° 的退化尖刺,保留所有真实箭头头部;曲线箭头的自交 cusp
+ * 另由 curved-arrow.ts 的全局曲率限宽(widthScale ≤ 0.5×曲率半径)从源头预防。
+ *
  * @param ring 已去重的多边形环。
- * @param thresholdRad hairpin 阈值(弧度),默认 30° = π/6。turn 接近 π
- *                    (180°)说明前后两条边几乎反向。
+ * @param thresholdRad hairpin 阈值(弧度),默认 5° = π/36。turn 越接近 π
+ *                    (180°)说明前后两条边越接近完全反向(退化尖刺)。
  * @returns 移除 hairpin 后的环。
  */
 export function removeHairpinVertices(
 	ring: readonly LonLatPoint[],
-	thresholdRad: number = Math.PI / 6,
+	thresholdRad: number = Math.PI / 36,
 ): LonLatPoint[] {
 	let cleaned: LonLatPoint[] = ring.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
 	const halfTurnMinusThreshold = Math.PI - thresholdRad;

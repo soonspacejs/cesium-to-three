@@ -116,10 +116,10 @@ interface SwallowtailAttackArrowOptions extends AttackArrowOptions {
 
 ```ts
 interface CurvedArrowOptions {
-    bodyWidthFactor?:            number;  // 默认 0.05  —— 体宽相对总弧长
+    bodyWidthFactor?:            number;  // 默认 0.09  —— 体宽相对总弧长
     headWidthFactor?:            number;  // 默认 0.16  —— 头宽相对总弧长
-    headLengthFactor?:           number;  // 默认 0.18  —— 头长相对总弧长
-    neckWidthRelativeToHead?:    number;  // 默认 0.40  —— 颈宽相对头宽
+    headLengthFactor?:           number;  // 默认 0.14  —— 头长相对总弧长
+    neckWidthRelativeToHead?:    number;  // 默认 0.60  —— 颈宽相对头宽
     curveSmoothingSegments?:     number;  // 默认 16    —— Catmull-Rom 段采样
     bodyTaperRatio?:             number;  // 默认 0.0   —— 体部尾→颈渐窄比
 }
@@ -183,20 +183,23 @@ createAttackArrow([
 **建议**:绘制脊线时保持单调推进(spine 不回头)。若业务真的需要"绕圈"
 的标绘,改用多段独立箭头拼接。
 
-### 2. 曲线箭头:offset distance > 局部曲率半径
+### 2. 曲线箭头:offset distance > 局部曲率半径(已自动兜底)
 
-输入示例:
+S 形等急转弯处,若体宽/2 > 局部曲率半径,带状偏移线会在弯曲内侧自交。
+`createCurvedArrow` 内部用**全局曲率限宽**自动兜底:扫描整条脊线找最紧
+曲率半径,把体 / 颈 / 头宽以及头长**按同一比例**整体缩小到安全范围
+(≤ 0.5 × 曲率半径),因此急转弯输入下箭头会整体变细但**不会自交、
+头部也不会被拉成细长尖刺**(头长与头宽同步缩放,保持紧凑三角)。
+
 ```ts
 createCurvedArrow([
     [100.0, 30.0], [100.05, 30.10],
     [100.15, 29.95], [100.25, 30.05],   // S 形,latitude 摆动 ±0.075°
-], { bodyWidthFactor: 0.05 });    // 体宽 = 0.05 × totalLen
+]);   // body 0.14 在 S 弯处会被自动 cap 到 ~0.085,形态平滑无自交
 ```
 
-S 形拐弯处的曲率半径 < 体宽/2 → 带状偏移线自交。
-
-**建议**:对急转弯曲线,降低 `bodyWidthFactor`(实测 0.03 可救
-本例)。或减少曲线急转弯(增加平滑控制点)。
+**可选**:若希望急转弯处仍保持较粗体部,可增加平滑控制点、放大曲率半径,
+或显式调小 `bodyWidthFactor` 让限宽更少触发。
 
 ---
 

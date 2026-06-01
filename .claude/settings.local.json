@@ -39,7 +39,25 @@
       "mcp__Claude_Preview__preview_start",
       "Bash(powershell -Command \"Expand-Archive -Path 'C:\\\\Users\\\\WIN11\\\\Downloads\\\\files.zip' -DestinationPath 'C:\\\\Users\\\\WIN11\\\\Downloads\\\\files_extracted' -Force\")",
       "Bash(ls \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files_extracted\" -la)",
-      "Bash(npx tsx *)"
+      "Bash(npx tsx *)",
+      "Bash(ls -la \"C:\\\\Users\\\\WIN11\\\\Downloads\\\\files.zip\" 2>/dev/null; echo \"---\"; ls -la \"D:\\\\my\\\\code\\\\cesium-to-three\")",
+      "Bash(unzip -l files.zip)",
+      "Bash(rm -rf files_extract)",
+      "Bash(mkdir files_extract)",
+      "Bash(unzip -q files.zip -d files_extract)",
+      "Bash(ls src/lib/ground/shaders/)",
+      "Bash(ls src/lib/ground/assets/)",
+      "Bash(echo \"=== exit code: $? ===\")",
+      "Bash(grep -c '\\\\${' cesium-ground-source/engine/Source/Shaders/Builtin/Functions/translateRelativeToEye.glsl)",
+      "Bash(grep -v \"^.*//\")",
+      "Bash(gh api *)",
+      "Bash(node_modules/.bin/esbuild scratch-curved.ts --bundle --platform=node --format=esm --outfile=scratch-curved.mjs)",
+      "Bash(node scratch-curved.mjs)",
+      "Bash(CURVED_DEBUG=1 node -e \"globalThis.CURVED_DEBUG=true; import\\('./scratch-curved.mjs'\\)\")",
+      "Bash(node_modules/.bin/esbuild scratch-curved.ts --bundle --platform=node --format=esm --metafile=meta.json --outfile=scratch-curved.mjs)",
+      "Bash(node -e \"const m=require\\('./meta.json'\\);console.log\\(Object.keys\\(m.inputs\\).filter\\(k=>k.includes\\('curved-arrow'\\)\\)\\)\")",
+      "Bash(node_modules/.bin/tsc --noEmit -p tsconfig.json)",
+      "Bash(echo \"exit: $?\")"
     ]
   }
 }

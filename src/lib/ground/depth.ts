@@ -117,13 +117,31 @@ export class CesiumGlobeDepth {
 
 		renderer.setRenderTarget( this.target );
 		renderer.setClearColor( 0x000000, 0.0 );
+		// 兜底层与外部地形(瓦片)共享同一个深度缓冲：关掉 autoClear，避免第二次
+		// render 把第一次的结果清掉；这里只手动清一次。
+		const previousAutoClear = renderer.autoClear;
+		renderer.autoClear = false;
 		renderer.clear( true, true, false );
+
+		// 兜底基底层：本通道自有场景(通过 addDepthMesh 注入的椭球面网格)。它保证在
+		// 外部地形(瓦片)没有覆盖的屏幕区域，packed 深度纹理依然有一个有效深度，
+		// 从而让贴地 classification 与瓦片是否加载解耦——无瓦片时标绘贴到椭球面，
+		// 而不是因 CULL_FRAGMENTS 读到空深度被整段丢弃。先画兜底、再画瓦片，瓦片
+		// 凭 LESS_EQUAL 在有覆盖处覆盖兜底。当调用方本身就传入 this.scene 时跳过。
+		if ( sourceScene !== this.scene && this.scene.children.length > 0 ) {
+			const previousFallbackOverride = this.scene.overrideMaterial;
+			this.scene.overrideMaterial = this.packDepthMaterial;
+			renderer.render( this.scene, camera );
+			this.scene.overrideMaterial = previousFallbackOverride;
+		}
+
 		sourceScene.overrideMaterial = this.packDepthMaterial;
 		renderer.render( sourceScene, camera );
 		sourceScene.overrideMaterial = previousOverrideMaterial;
 		for ( const entry of visibilityRestore ) {
 			entry.object.visible = entry.visible;
 		}
+		renderer.autoClear = previousAutoClear;
 		renderer.setRenderTarget( previousTarget );
 		renderer.setClearColor( previousClearColor, previousClearAlpha );
 	}

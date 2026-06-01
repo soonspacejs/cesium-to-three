@@ -57,13 +57,24 @@ import type {
 } from '../arrow-types';
 
 // ── 默认值 ──
-// 这些默认值经过手工调校,使在 3 控制点、曲线长度 ~0.01 弧度尺度(WGS84
-// 约 1 km)时的箭头视觉与 cesium-plot-js 同名箭头风格一致(略修长,
-// 头部不喧宾夺主)。
-const DEFAULT_BODY_WIDTH_FACTOR = 0.05;
+// 体宽 / 头宽 / 头长(均相对曲线总弧长)。给出一个「中等饱满体部 + 清晰三角头」
+// 的曲线箭头:比早期 0.05 细杆饱满,又不会像 0.14 那样在平缓长弧上显得过粗过大。
+// 这套数值对齐 ground-demo 里 S 形 curved 经曲率限宽后的**视觉尺寸**(体宽 ≈ 9%
+// 弧长),使 plot 中的平缓曲线(不触发限宽)与 ground-demo 的 S 形曲线(触发限宽)
+// 渲染出来粗细一致。
+//
+// **关键不变量:体宽 ≤ 颈宽 ≤ 头宽(单调变宽)。** 默认值已满足:
+//   bodyHalfWidth = 0.09/2       = 0.045 · L
+//   neckHalfWidth = 0.16 × 0.60/2 = 0.048 · L
+//   headHalfWidth = 0.16/2       = 0.080 · L
+//   → 0.045 ≤ 0.048 ≤ 0.080 ✓
+// 这个顺序保证体部边缘从尾到颈到翼「只张不收」,不会在颈处先内收一台阶再
+// 外张成翼(内凹台阶会渲染成缺口)。即使调用方覆写出违反该顺序的宽度,
+// createCurvedArrowLocal 内也会再 clamp 一次兜底(见「步骤 2」)。
+const DEFAULT_BODY_WIDTH_FACTOR = 0.09;
 const DEFAULT_HEAD_WIDTH_FACTOR = 0.16;
-const DEFAULT_HEAD_LENGTH_FACTOR = 0.18;
-const DEFAULT_NECK_WIDTH_RELATIVE_TO_HEAD = 0.40;
+const DEFAULT_HEAD_LENGTH_FACTOR = 0.14;
+const DEFAULT_NECK_WIDTH_RELATIVE_TO_HEAD = 0.60;
 const DEFAULT_CURVE_SMOOTHING_SEGMENTS = 16;
 const DEFAULT_BODY_TAPER_RATIO = 0.0;
 
@@ -123,17 +134,86 @@ function createCurvedArrowLocal(
 		return [];
 	}
 
-	const bodyHalfWidth = ( totalLen * bodyWidthFactor ) / 2.0;
+	const rawBodyHalfWidth = ( totalLen * bodyWidthFactor ) / 2.0;
 	const headHalfWidth = ( totalLen * headWidthFactor ) / 2.0;
-	const neckHalfWidth = headHalfWidth * neckWidthRelativeToHead;
-	// 头长 clamp 到 ≤ totalLen × HEAD_LENGTH_MAX_FRACTION,防止 body 长度负值。
-	const headLength = Math.min(
+	const rawNeckHalfWidth = headHalfWidth * neckWidthRelativeToHead;
+
+	// **单调变宽不变量:体宽 ≤ 颈宽 ≤ 头宽。**
+	// 体部用 Frenet 偏移生成等宽带,末点(颈)宽度被强制设为 neckHalfWidth。
+	// 若 bodyHalfWidth > neckHalfWidth,体部边缘会在颈处「向内收一台阶」(从
+	// 体宽缩到更窄的颈宽),紧接着头部又「向外张成翼」(从颈宽涨到更宽的头宽)
+	// —— 这个先内收再外张的单点台阶,在箭头正下方渲染成一个锐利缺口(用户截图
+	// 的锯齿)。attack / swallowtail 箭头从不出现该缺口,因为它们的体部是
+	// 「尾宽 → 颈宽」线性渐变、颈宽始终 ≥ 体最末宽,体→颈→翼全程只张不收。
+	//
+	// 这里把曲线箭头对齐到同一不变量:bodyHalfWidth clamp 到 ≤ headHalfWidth、
+	// neckHalfWidth clamp 到 [bodyHalfWidth, headHalfWidth]。无论调用方传入什么
+	// 宽度组合,体→颈→翼都保持单调变宽,不会再出现内凹缺口。
+	const bodyHalfWidth = Math.min( rawBodyHalfWidth, headHalfWidth );
+	const neckHalfWidth = Math.min(
+		Math.max( rawNeckHalfWidth, bodyHalfWidth ),
+		headHalfWidth,
+	);
+	// 头长(从尖端沿脊线回退的距离),clamp ≤ totalLen × HEAD_LENGTH_MAX_FRACTION,
+	// 防止 body 长度变负。
+	const rawHeadLength = Math.min(
 		totalLen * headLengthFactor,
 		totalLen * HEAD_LENGTH_MAX_FRACTION,
 	);
 
-	// ── 步骤 3:定位精确颈点(沿脊线从末尾回退 headLength) ──
-	const neck = findPointAlongPolylineFromEnd( spineSamples, headLength );
+	// ── 步骤 2b:全局曲率限宽(必须在 neck 之前算,这样头长也能随同缩放)──
+	//
+	// Frenet 法线偏移在 halfWidth > 局部曲率半径 R 时,弯曲内侧会自交。扫一遍
+	// 整条脊线找最紧曲率半径 minR,把 bodyHalfWidth 全局 cap 到 minR×SAFETY
+	// 之内,所有宽度按同一 widthScale 同步缩放,保持比例、整条 body 均匀。
+	//
+	// **关键:headLength 也乘 widthScale。** 若只缩头宽而头长不变,曲率触发缩放
+	// 时头部会被拉成「又细又长的尖刺」(用户截图里 curved 那根瘦长箭头)。头长
+	// 同步缩放后,头部三角在任何曲率下都保持「长 ≈ 宽」的紧凑比例,只是随整支
+	// 箭头一起按比例缩小 —— 等价于 attack 把「头大小绑定到体宽」的效果。
+	const CURVATURE_SAFETY = 0.5;
+	let tightestRadius = Infinity;
+	for ( let i = 1; i < spineSamples.length - 1; i++ ) {
+		const prev = spineSamples[ i - 1 ];
+		const curr = spineSamples[ i ];
+		const next = spineSamples[ i + 1 ];
+		const v1x = curr[ 0 ] - prev[ 0 ];
+		const v1y = curr[ 1 ] - prev[ 1 ];
+		const v2x = next[ 0 ] - curr[ 0 ];
+		const v2y = next[ 1 ] - curr[ 1 ];
+		const len1 = Math.hypot( v1x, v1y );
+		const len2 = Math.hypot( v2x, v2y );
+		if ( len1 < 1e-9 || len2 < 1e-9 ) {
+			continue;
+		}
+		const cross = v1x * v2y - v1y * v2x;
+		const dot = v1x * v2x + v1y * v2y;
+		const dtheta = Math.abs( Math.atan2( cross, dot ) );
+		if ( dtheta < 1e-9 ) {
+			continue; // 直线段,半径无穷
+		}
+		const ds = ( len1 + len2 ) * 0.5;
+		const r = ds / dtheta; // 局部曲率半径
+		if ( r < tightestRadius ) {
+			tightestRadius = r;
+		}
+	}
+
+	let widthScale = 1.0;
+	if ( Number.isFinite( tightestRadius ) ) {
+		const safeMax = tightestRadius * CURVATURE_SAFETY;
+		if ( bodyHalfWidth > safeMax && bodyHalfWidth > 0.0 ) {
+			widthScale = safeMax / bodyHalfWidth;
+		}
+	}
+
+	const cappedBodyHalfWidth = bodyHalfWidth * widthScale;
+	const cappedNeckHalfWidth = neckHalfWidth * widthScale;
+	const cappedHeadHalfWidth = headHalfWidth * widthScale;
+	const cappedHeadLength = rawHeadLength * widthScale;
+
+	// ── 步骤 3:定位精确颈点(沿脊线从末尾回退 cappedHeadLength) ──
+	const neck = findPointAlongPolylineFromEnd( spineSamples, cappedHeadLength );
 	if ( neck === null ) {
 		// headLength 大于整条脊线 → 不可能(已 clamp),理论不可达;返回空保安。
 		return [];
@@ -160,64 +240,8 @@ function createCurvedArrowLocal(
 	// 经纬度坐标系也是 +y 朝北的右手系,perp 朝"曲线行进方向的左侧"。
 	const tangents = computeTangents( bodySpine );
 
-	// ── 步骤 5:全局曲率体宽兜底 + 逐点半宽(尾→颈线性插值)──
-	//
-	// 关键问题:Frenet 法线偏移在 halfW > 局部曲率半径 R=1/κ 时,弯曲内侧
-	// 会自交,polygon 渲染成镂空三角(用户在 plot demo 大比例尺 curved
-	// 拐角处看到的)。
-	//
-	// 早期实现做过「逐 sample 按本地 κ clamp halfW」,但这让 body 在急弯
-	// 处突然变窄、其他位置正常 → 整体宽度不均、视觉变形。
-	//
-	// **新策略**:扫一遍全脊线,找出最紧曲率半径 minR,把 bodyHalfWidth /
-	// neckHalfWidth 全局 cap 到 (minR × CURVATURE_SAFETY) 之内。整条 body
-	// 保持均匀宽度——只是急弯输入下会整体偏窄一些,但形态平滑无变形。
+	// ── 步骤 5:逐点半宽(尾→颈线性插值;宽度已在步骤 2b 完成曲率限宽)──
 	const lastBodyIdx = bodySpine.length - 1;
-	const CURVATURE_SAFETY = 0.5;
-
-	let tightestRadius = Infinity;
-	for ( let i = 1; i < lastBodyIdx; i++ ) {
-		const prev = bodySpine[ i - 1 ];
-		const curr = bodySpine[ i ];
-		const next = bodySpine[ i + 1 ];
-		const v1x = curr[ 0 ] - prev[ 0 ];
-		const v1y = curr[ 1 ] - prev[ 1 ];
-		const v2x = next[ 0 ] - curr[ 0 ];
-		const v2y = next[ 1 ] - curr[ 1 ];
-		const len1 = Math.hypot( v1x, v1y );
-		const len2 = Math.hypot( v2x, v2y );
-		if ( len1 < 1e-9 || len2 < 1e-9 ) {
-			continue;
-		}
-		const cross = v1x * v2y - v1y * v2x;
-		const dot = v1x * v2x + v1y * v2y;
-		const dtheta = Math.abs( Math.atan2( cross, dot ) );
-		const ds = ( len1 + len2 ) * 0.5;
-		if ( dtheta < 1e-9 ) {
-			continue; // 直线段,半径无穷
-		}
-		const r = ds / dtheta; // 局部曲率半径
-		if ( r < tightestRadius ) {
-			tightestRadius = r;
-		}
-	}
-
-	let safeMax = Infinity;
-	if ( Number.isFinite( tightestRadius ) ) {
-		safeMax = tightestRadius * CURVATURE_SAFETY;
-	}
-	// **关键**:所有宽度按相同 scale 同步缩放,保持原比例关系。只 cap body
-	// 而 head 用原始 headHalfWidth 时,head 翼会比窄缩的 body 宽很多倍,polygon
-	// 在 neck 处形成「窄腰宽翼」的视觉变形(用户截图的三角凹口就是这种比例
-	// 突变)。这里以 bodyHalfWidth 是否超 safeMax 触发缩放,所有 width 同步乘
-	// scale,head / body / neck 三者保持原 width factor 决定的比例。
-	let widthScale = 1.0;
-	if ( bodyHalfWidth > safeMax && bodyHalfWidth > 0.0 ) {
-		widthScale = safeMax / bodyHalfWidth;
-	}
-	const cappedBodyHalfWidth = bodyHalfWidth * widthScale;
-	const cappedNeckHalfWidth = neckHalfWidth * widthScale;
-	const cappedHeadHalfWidth = headHalfWidth * widthScale;
 
 	const leftSide: LonLatPoint[] = new Array( bodySpine.length );
 	const rightSide: LonLatPoint[] = new Array( bodySpine.length );

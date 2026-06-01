@@ -407,11 +407,12 @@ export interface SharedUniforms {
 	u_arrowHalfWidthMeters?: { value: number };
 	u_arrowColor?: { value: Vector4 };
 	u_arrowStrokeHalfPixels?: { value: number };
-	// ── 线 FS 端「arrow V 形收口裁剪」：让线在「端点 / 起点 Lm 米内」按
-	//    `|halfWidth| ≤ Wm·(distance/Lm)` 线性收口，与 SOLID 三角 / OPEN
-	//    chevron 的 V 形外轮廓重合形成「锐利尖端」视觉。任何 arrowMode 包含
-	//    对应端时启用（与 style 无关——SOLID/OPEN 收口几何边界一致）。
-	//    Enabled > 0.5 时启用，否则线 FS 跳过裁剪保留原有矩形端面。──
+	// ── 线 FS 端「arrow 收口裁剪」：让线在「端点 / 起点 Lm 米内」按 style 裁线，
+	//    避免线体与箭头在同一像素叠加（半透明翻倍）。任何 arrowMode 包含对应端时
+	//    启用。Enabled > 0.5 时启用，否则线 FS 跳过裁剪保留原有矩形端面。──
 	u_lineArrowClipEndEnabled?: { value: number };
 	u_lineArrowClipStartEnabled?: { value: number };
+	// 箭头是否实心三角（> 0.5 = solid → 线整段收平到 base；否则 open → 线收窄成
+	// V 形嵌进 chevron）。随 arrowStyle 更新。
+	u_lineArrowSolid?: { value: number };
 }

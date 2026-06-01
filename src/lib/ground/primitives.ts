@@ -1069,6 +1069,10 @@ export class CesiumGroundPolylinePrimitive {
 			return;
 		}
 		this.options.arrowStyle = newStyle;
+		// 线 FS 的收口裁剪随 style 变化：solid 整段收平、open 收窄成 V 形。
+		// 即使当前没有 arrowMesh 也先刷新——之后开启箭头时 enabled 决定是否生效。
+		( this.uniforms.u_lineArrowSolid as { value: number } ).value =
+			newStyle === 'solid' ? 1.0 : 0.0;
 		if ( this.arrowMesh === undefined ) {
 			return; // 没启用箭头，等开启时再用新 style 建。
 		}
@@ -1259,8 +1263,7 @@ function createPolylineUniforms(
 		u_arrowHalfWidthMeters: { value: options.arrowWidthMeters * 0.5 },
 		u_arrowColor: { value: new Vector4( color.r, color.g, color.b, safeAlpha ) },
 		u_arrowStrokeHalfPixels: { value: options.arrowStrokeWidthPixels * 0.5 },
-		// 线 FS 用，arrowMode 包含对应端时启用 V 形收口裁剪（与 style 无关，
-		// SOLID 三角和 OPEN chevron 共享同一套 V 形外轮廓）。
+		// 线 FS 用，arrowMode 包含对应端时启用收口裁剪。
 		u_lineArrowClipEndEnabled: {
 			value: options.arrowMode === ARROW_MODE.RIGHT || options.arrowMode === ARROW_MODE.BOTH
 				? 1.0 : 0.0,
@@ -1269,5 +1272,7 @@ function createPolylineUniforms(
 			value: options.arrowMode === ARROW_MODE.LEFT || options.arrowMode === ARROW_MODE.BOTH
 				? 1.0 : 0.0,
 		},
+		// solid → 线整段收平到箭头 base（避免与实心三角叠加）；open → 收窄成 V 形。
+		u_lineArrowSolid: { value: options.arrowStyle === 'solid' ? 1.0 : 0.0 },
 	} as unknown as SharedUniforms;
 }

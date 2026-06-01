@@ -24,18 +24,20 @@ import {
 	type StencilOp,
 } from 'three';
 
-import cesiumShadowVolumeAppearanceVS from '../../../cesium-ground-source/engine/Source/Shaders/ShadowVolumeAppearanceVS.glsl?raw';
-import cesiumShadowVolumeAppearanceFS from '../../../cesium-ground-source/engine/Source/Shaders/ShadowVolumeAppearanceFS.glsl?raw';
-import cesiumShadowVolumeFS from '../../../cesium-ground-source/engine/Source/Shaders/ShadowVolumeFS.glsl?raw';
-import cesiumDepthClamp from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/depthClamp.glsl?raw';
-import cesiumWriteDepthClamp from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/writeDepthClamp.glsl?raw';
-import cesiumTranslateRelativeToEye from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/translateRelativeToEye.glsl?raw';
-import cesiumWindowToEyeCoordinates from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/windowToEyeCoordinates.glsl?raw';
-import cesiumUnpackDepth from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/unpackDepth.glsl?raw';
-import cesiumPackDepth from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/packDepth.glsl?raw';
-import cesiumPlaneDistance from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/planeDistance.glsl?raw';
-import cesiumGammaCorrect from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/gammaCorrect.glsl?raw';
-import cesiumMetersPerPixel from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/metersPerPixel.glsl?raw';
+import {
+	cesiumShadowVolumeAppearanceVS,
+	cesiumShadowVolumeAppearanceFS,
+	cesiumShadowVolumeFS,
+	cesiumDepthClamp,
+	cesiumWriteDepthClamp,
+	cesiumTranslateRelativeToEye,
+	cesiumWindowToEyeCoordinates,
+	cesiumUnpackDepth,
+	cesiumPackDepth,
+	cesiumPlaneDistance,
+	cesiumGammaCorrect,
+	cesiumMetersPerPixel,
+} from './shaders/shadow-volume-glsl';
 
 import type { IUniform } from 'three';
 import {
@@ -425,10 +427,14 @@ uniform float u_arrowLengthPixels;
 uniform float u_arrowHalfWidthPixels;
 uniform float u_arrowLengthMeters;
 uniform float u_arrowHalfWidthMeters;
-// 线 FS 专用：是否对起 / 终端做 arrow V 形收口裁剪
-// （> 0.5 启用；arrowMode 包含对应端时启用，与 style 无关）
+// 线 FS 专用：是否对起 / 终端做 arrow 收口裁剪
+// （> 0.5 启用；arrowMode 包含对应端时启用）
 uniform float u_lineArrowClipEndEnabled;
 uniform float u_lineArrowClipStartEnabled;
+// 线 FS 专用：箭头是否实心三角（> 0.5 = solid，否则 open chevron）。
+// solid 时线在箭头长度内整段收平到 base，避免线体在三角形内的那层与实心
+// 箭头叠加导致半透明翻倍；open 时线收窄成 V 形嵌进 chevron 保持连续。
+uniform float u_lineArrowSolid;
 
 ${ cesiumMetersPerPixel }
 #endif
@@ -1176,10 +1182,13 @@ void main() {
 	float t = ( widthwiseDistance + halfMaxWidth ) / ( 2.0 * halfMaxWidth );
 	t = clamp( t, 0.0, 1.0 );
 
-	// 9.5) Arrow V 形收口裁剪：在线**全局**起 / 终端的 Lm 米内，把允许的
-	//      横向半宽线性收窄到 Wm·(distFromGlobalEnd / Lm) 之内——视觉上线段
-	//      在端点处收成一个尖角，正好嵌进箭头（SOLID / OPEN 都用同套 V 形
-	//      外轮廓，所以这道裁剪对所有 style 通用）。
+	// 9.5) Arrow 收口裁剪：在线**全局**起 / 终端的 Lm 米内,按 style 裁线,
+	//      避免线体与箭头在同一像素叠加(半透明翻倍)。
+	//        - SOLID：整段裁掉,线在箭头 base 处收平,实心三角独占箭头长度区域。
+	//          这是修复「箭头与线重叠处透明度叠加」的关键——之前这里把线收窄成
+	//          一个与实心三角完全重合的薄片并保留,箭头再画上去 → 重叠区 alpha 翻倍。
+	//        - OPEN：横向半宽线性收窄到 Wm·(dist / Lm) 之内,线收成尖角嵌进 chevron,
+	//          保持线在 chevron 内连续(否则线端与 chevron 之间会出现断口)。
 	//      用全局 s × u_lineTotalMeters 算「沿线到端点的米距离」，避免多段
 	//      polyline 在中间段的 distanceFromStart / End 误触发裁剪。
 	//      Lm / Wm 跟随 u_arrowWidthMode：world 直接用米、screen 用 px×mpp(P)。
@@ -1189,15 +1198,22 @@ void main() {
 			u_arrowLengthMeters,
 			u_arrowLengthPixels * czm_metersPerPixel( eyeCoordinate )
 		);
-		float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
-			u_arrowHalfWidthMeters,
-			u_arrowHalfWidthPixels * czm_metersPerPixel( eyeCoordinate )
-		);
 		float distFromGlobalEnd = ( 1.0 - s ) * u_lineTotalMeters;
 		if ( distFromGlobalEnd < arrowLm && arrowLm > 0.0 ) {
-			float allowedHalfWidth = arrowWm * ( distFromGlobalEnd / arrowLm );
-			if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
+			if ( u_lineArrowSolid > 0.5 ) {
+				// SOLID：整段裁掉,线在箭头 base 处收平,让实心三角独占该区域。
+				// 否则线在三角形内保留的那层会与箭头叠加 → 半透明翻倍。
 				discard;
+			} else {
+				// OPEN：横向半宽线性收窄成 V 形嵌进 chevron,保持线在 chevron 内连续。
+				float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+					u_arrowHalfWidthMeters,
+					u_arrowHalfWidthPixels * czm_metersPerPixel( eyeCoordinate )
+				);
+				float allowedHalfWidth = arrowWm * ( distFromGlobalEnd / arrowLm );
+				if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
+					discard;
+				}
 			}
 		}
 	}
@@ -1206,15 +1222,19 @@ void main() {
 			u_arrowLengthMeters,
 			u_arrowLengthPixels * czm_metersPerPixel( eyeCoordinate )
 		);
-		float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
-			u_arrowHalfWidthMeters,
-			u_arrowHalfWidthPixels * czm_metersPerPixel( eyeCoordinate )
-		);
 		float distFromGlobalStart = s * u_lineTotalMeters;
 		if ( distFromGlobalStart < arrowLm && arrowLm > 0.0 ) {
-			float allowedHalfWidth = arrowWm * ( distFromGlobalStart / arrowLm );
-			if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
+			if ( u_lineArrowSolid > 0.5 ) {
 				discard;
+			} else {
+				float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+					u_arrowHalfWidthMeters,
+					u_arrowHalfWidthPixels * czm_metersPerPixel( eyeCoordinate )
+				);
+				float allowedHalfWidth = arrowWm * ( distFromGlobalStart / arrowLm );
+				if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
+					discard;
+				}
 			}
 		}
 	}
