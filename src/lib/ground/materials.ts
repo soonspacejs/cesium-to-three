@@ -856,15 +856,17 @@ function createTextColorFragmentBody(): string {
         textPlanarMeters.x / max(u_innerMetersRect.z, 1e-6),
         textPlanarMeters.y / max(u_innerMetersRect.w, 1e-6)
     );
-    // 足迹外丢弃（CPU-plane 精度的足迹裁剪）
+    // 足迹外写透明色：颜色不落屏，但 color pass 仍会执行 ZeroStencilOp。
     if (textUv.x < 0.0 || textUv.x > 1.0 || textUv.y < 0.0 || textUv.y > 1.0) {
-        discard;
+        out_FragColor = vec4(0.0);
+        return;
     }
     // canvas 原点左上、Y 向下；uv 原点 SW、Y 向上 → 翻转 V
     vec4 texel = texture(u_textTexture, vec2(textUv.x, 1.0 - textUv.y));
-    // 全透明像素丢弃，避免覆盖底下地形 / 其它贴地图元
+    // 透明纹素写透明色：预乘混合下不改变颜色缓冲，但会清掉 stencil。
     if (texel.a <= 0.0) {
-        discard;
+        out_FragColor = vec4(0.0);
+        return;
     }
     // 颜色空间：CanvasTexture 取样得 sRGB 编码值，直接输出与 fill 路径一致。
     out_FragColor = texel;
