@@ -15,6 +15,15 @@
 
 export { validateCesiumGroundRenderer } from './validation';
 export { CesiumGlobeDepth, createCesiumEllipsoidDepthMeshes } from './depth';
+export {
+	EllipsoidDepthSource,
+	computeEllipsoidLimbQuadPositions,
+} from './ellipsoid-depth-source';
+export type {
+	EllipsoidDepthSourceOptions,
+	EllipsoidDepthAttachTarget,
+	EllipsoidRadii,
+} from './ellipsoid-depth-source';
 export { CesiumClassificationPrimitive } from './classification';
 export {
 	CesiumGroundCirclePrimitive,

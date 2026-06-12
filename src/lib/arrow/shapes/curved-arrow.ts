@@ -79,8 +79,12 @@ import type {
 // 头部用五点五边形(neck 等于体宽、翼尖更宽更深),因此体→颈→翼全程「只张不收」,
 // 衔接处不会出现内凹台阶(早期 3 点头部在颈处宽度突变 + 弦/切法线不一致导致的
 // 凹口 + 描边突起,已被五点画法消除)。
-const DEFAULT_BODY_WIDTH_FACTOR = 0.09;
-const DEFAULT_HEAD_WIDTH_FACTOR = 0.16;
+// 体宽相对总弧长。0.06 ≈ 体半宽 0.03·L,在常见绘制尺度下是一条「清晰但不臃肿」
+// 的带子。曾用 0.09 在长曲线(弧长大)上显得过粗(用户反馈"curved 这么大"),
+// 下调到 0.06。仍可通过 options.bodyWidthFactor 覆盖(GUI 已暴露)。
+const DEFAULT_BODY_WIDTH_FACTOR = 0.06;
+// 翼展相对总弧长(箭翼明显宽于体 → 清晰箭头)。随体宽同比下调。
+const DEFAULT_HEAD_WIDTH_FACTOR = 0.12;
 const DEFAULT_HEAD_LENGTH_FACTOR = 0.14;
 const DEFAULT_CURVE_SMOOTHING_SEGMENTS = 16;
 
@@ -132,8 +136,11 @@ function createCurvedArrowLocal(
 	}
 
 	// ── 解析选项 ──
-	const bodyWidthFactor = options.bodyWidthFactor ?? DEFAULT_BODY_WIDTH_FACTOR;
-	const headWidthFactor = options.headWidthFactor ?? DEFAULT_HEAD_WIDTH_FACTOR;
+	// userWidthScale:整体宽度倍率(调整箭头大小),同乘体宽与翼宽 → 一个旋钮调
+	// 粗细。命名带 user 前缀以区别于下方步骤 3 的曲率限宽 widthScale。
+	const userWidthScale = Math.max( options.widthScale ?? 1.0, 1e-3 );
+	const bodyWidthFactor = ( options.bodyWidthFactor ?? DEFAULT_BODY_WIDTH_FACTOR ) * userWidthScale;
+	const headWidthFactor = ( options.headWidthFactor ?? DEFAULT_HEAD_WIDTH_FACTOR ) * userWidthScale;
 	const headLengthFactor = options.headLengthFactor ?? DEFAULT_HEAD_LENGTH_FACTOR;
 	const curveSmoothingSegments =
 		options.curveSmoothingSegments ?? DEFAULT_CURVE_SMOOTHING_SEGMENTS;

@@ -17,6 +17,7 @@ import GUI from 'lil-gui';
 
 import {
 	CesiumGlobeDepth,
+	EllipsoidDepthSource,
 	CESIUM_GROUND_NON_PICKABLE_LAYER,
 	initializeApproximateTerrainHeights,
 	longitudeLatitudeFromCenterOffsetsMeters,
@@ -48,7 +49,7 @@ import {
 } from '../lib/plot';
 
 import { createInfoPanel, installPageStyle } from './dom';
-import { readNumberEnv } from './env';
+import { readNumberEnv, readStringEnv } from './env';
 import {
 	configureLoadedTileScene,
 	createCesiumTilesRenderer,
@@ -170,6 +171,12 @@ interface SectorState extends BaseState {
 
 interface ArrowState extends BaseState {
 	arrowType: PlotArrowType;
+	// 整体大小(宽度)倍率,对全部 arrowType 生效。
+	sizeScale: number;
+	// 曲线箭头(curved)体型,相对曲线总弧长;仅 curved 类型生效。
+	curvedBodyWidthFactor: number;
+	curvedHeadWidthFactor: number;
+	curvedHeadLengthFactor: number;
 	translateEastMeters: number;
 	translateNorthMeters: number;
 	_appliedEastMeters: number;
@@ -320,6 +327,10 @@ function arrowStateToOptions(
 		type: 'arrow',
 		points,
 		arrowType: state.arrowType,
+		sizeScale: state.sizeScale,
+		curvedBodyWidthFactor: state.curvedBodyWidthFactor,
+		curvedHeadWidthFactor: state.curvedHeadWidthFactor,
+		curvedHeadLengthFactor: state.curvedHeadLengthFactor,
 		strokeColor: state.strokeColor,
 		strokeWidth: state.strokeWidth,
 		strokeOpacity: state.strokeOpacity,
@@ -458,7 +469,16 @@ export function runPlotDemo(): void {
 	camera.lookAt( target );
 	camera.updateMatrixWorld();
 
-	const tilesRenderer = createCesiumTilesRenderer( renderer );
+	// 无地形模式开关：URL 加 ?noterrain（或 ?noTerrain）即可，无需 token；
+	// 也可在 .env 设 VITE_DISABLE_TERRAIN=true。用于验证 EllipsoidDepthSource
+	// 椭球面兜底——无地形时贴地标绘应精确贴到 WGS84 椭球面而不是整体消失。
+	const urlParams = new URLSearchParams( window.location.search );
+	const disableTerrain =
+		urlParams.has( 'noterrain' ) ||
+		urlParams.has( 'noTerrain' ) ||
+		readStringEnv( 'VITE_DISABLE_TERRAIN' ).toLowerCase() === 'true';
+
+	const tilesRenderer = createCesiumTilesRenderer( renderer, disableTerrain );
 	let tileLoadError = '';
 	tilesRenderer.addEventListener( 'load-model', ( event ) => {
 		configureLoadedTileScene( ( event as unknown as { scene: object } ).scene as never );
@@ -483,6 +503,14 @@ export function runPlotDemo(): void {
 		renderer.domElement.width,
 		renderer.domElement.height,
 	);
+
+	// 椭球面兜底深度：让贴地标绘与瓦片加载解耦。无此兜底时，相机下方一旦没有
+	// 加载到瓦片（无 Ion Token / 瓦片下载中 / 放大超过最深层级），主深度缓冲与
+	// packed 深度纹理在该区域都为空，stencil Z-fail 记不到值、CULL_FRAGMENTS
+	// 又读到空深度，所有贴地标绘整体消失。加入 WGS84 椭球面兜底后，标绘在无地形
+	// 时精确贴到椭球面（海平面）。参见 src/lib/ground/ellipsoid-depth-source.ts。
+	const ellipsoidDepth = new EllipsoidDepthSource();
+	ellipsoidDepth.attach( { mainScene: scene, globeDepth } );
 
 	const decals = new GroundDecalManager( { scene } );
 
@@ -677,6 +705,10 @@ export function runPlotDemo(): void {
 	const smallArrowState: ArrowState = {
 		visible: true,
 		arrowType: 'attack',
+		sizeScale: 1.0,
+		curvedBodyWidthFactor: 0.06,
+		curvedHeadWidthFactor: 0.12,
+		curvedHeadLengthFactor: 0.14,
 		strokeColor: '#ffffff',
 		strokeWidth: 0.6,
 		strokeOpacity: 95,
@@ -694,6 +726,43 @@ export function runPlotDemo(): void {
 		initialPoints: smallArrowPoints,
 	};
 	allStates.push( { state: smallArrowState, handle: smallArrowHandle } );
+	// Small swallowtail attack arrow —— 与上方 attack 用同样的尾边契约控制点,
+	// 单独成一个 1:1 图元,放在 attack 正下方 ~70m,便于和 attack 直接对比
+	// (尾部多一个燕尾 V 凹口,其余体 / 头与 attack 完全一致)。
+	const smallSwallowPoints: LonLatPoint[] = lonLatPointsFromMeters(
+		PLOT_CENTER_LON,
+		PLOT_CENTER_LAT,
+		[
+			{ eastMeters: - 95, northMeters: 22 },   // tail left
+			{ eastMeters: - 95, northMeters: 32 },   // tail right (10m tail width)
+			{ eastMeters: - 20, northMeters: 38 },   // spine kink
+			{ eastMeters: 70, northMeters: 26 },     // tip
+		],
+	);
+	const smallSwallowState: ArrowState = {
+		visible: true,
+		arrowType: 'swallowtailAttack',
+		sizeScale: 1.0,
+		curvedBodyWidthFactor: 0.06,
+		curvedHeadWidthFactor: 0.12,
+		curvedHeadLengthFactor: 0.14,
+		strokeColor: '#ffffff',
+		strokeWidth: 0.6,
+		strokeOpacity: 95,
+		fillColor: '#ff9933',
+		fillOpacity: 85,
+		translateEastMeters: 0,
+		translateNorthMeters: 0,
+		_appliedEastMeters: 0,
+		_appliedNorthMeters: 0,
+	};
+	const smallSwallowHandle: PlotHandle = {
+		key: 'small-swallow-arrow',
+		label: '[small] arrow  swallowtailAttack',
+		id: decals.addPlot( arrowStateToOptions( smallSwallowState, smallSwallowPoints ) ),
+		initialPoints: smallSwallowPoints,
+	};
+	allStates.push( { state: smallSwallowState, handle: smallSwallowHandle } );
 	// Small hook curved arrow(钩形回环手绘轨迹,复刻"曲线箭头无头" bug 场景):
 	// 48 个密集控制点,先向东直行 → 东侧大半圆向南掉头 → 向西回扫 → 末端向内
 	// 卷曲 ~160°,尖端朝东指向回环中心。总转角 > 340°,曾经触发头部三角被环级
@@ -736,6 +805,10 @@ export function runPlotDemo(): void {
 	const hookArrowState: ArrowState = {
 		visible: true,
 		arrowType: 'curved',
+		sizeScale: 1.0,
+		curvedBodyWidthFactor: 0.06,
+		curvedHeadWidthFactor: 0.12,
+		curvedHeadLengthFactor: 0.14,
 		strokeColor: '#1a50a9',
 		strokeWidth: 0.6,
 		strokeOpacity: 95,
@@ -753,6 +826,67 @@ export function runPlotDemo(): void {
 		initialPoints: hookArrowPoints,
 	};
 	allStates.push( { state: hookArrowState, handle: hookArrowHandle } );
+	// Small U-shaped curved arrow(宽 U,开口朝左,尖端在左下,复刻用户手绘):
+	// 上臂向右 → 右侧半圆向下(180°)→ 下臂向左,尖端朝左。44 个密集控制点。
+	const uArrowOffsets: { eastMeters: number; northMeters: number }[] = [];
+	const U_POINT_COUNT = 44;
+	const U_SCALE_METERS = 13.0;
+	for ( let i = 0; i < U_POINT_COUNT; i++ ) {
+		const t = i / ( U_POINT_COUNT - 1 );
+		let xMeters: number;
+		let yMeters: number;
+		if ( t < 0.40 ) {
+			// 上臂:从左到右。
+			const u = t / 0.40;
+			xMeters = ( -1.8 + u * 3.6 ) * U_SCALE_METERS;
+			yMeters = 0.9 * U_SCALE_METERS;
+		} else if ( t < 0.70 ) {
+			// 右侧半圆:上 → 下(顺时针 180°)。
+			const u = ( t - 0.40 ) / 0.30;
+			const a = Math.PI / 2 - u * Math.PI;
+			xMeters = ( 1.8 + 0.9 * Math.cos( a ) ) * U_SCALE_METERS;
+			yMeters = ( 0.9 * Math.sin( a ) ) * U_SCALE_METERS;
+		} else {
+			// 下臂:从右回到左(尖端在左下)。
+			const u = ( t - 0.70 ) / 0.30;
+			xMeters = ( 1.8 - u * 3.6 ) * U_SCALE_METERS;
+			yMeters = -0.9 * U_SCALE_METERS;
+		}
+		// 放在中心正北 ~250 m 处,与钩形(中心东北)分开,避免重叠。
+		uArrowOffsets.push( {
+			eastMeters: -10 + xMeters,
+			northMeters: 250 + yMeters,
+		} );
+	}
+	const uArrowPoints: LonLatPoint[] = lonLatPointsFromMeters(
+		PLOT_CENTER_LON,
+		PLOT_CENTER_LAT,
+		uArrowOffsets,
+	);
+	const uArrowState: ArrowState = {
+		visible: true,
+		arrowType: 'curved',
+		sizeScale: 1.0,
+		curvedBodyWidthFactor: 0.06,
+		curvedHeadWidthFactor: 0.12,
+		curvedHeadLengthFactor: 0.14,
+		strokeColor: '#1a50a9',
+		strokeWidth: 0.6,
+		strokeOpacity: 95,
+		fillColor: '#2b6cff',
+		fillOpacity: 85,
+		translateEastMeters: 0,
+		translateNorthMeters: 0,
+		_appliedEastMeters: 0,
+		_appliedNorthMeters: 0,
+	};
+	const uArrowHandle: PlotHandle = {
+		key: 'small-u-arrow',
+		label: '[small] arrow  curved U-shape (44 pts)',
+		id: decals.addPlot( arrowStateToOptions( uArrowState, uArrowPoints ) ),
+		initialPoints: uArrowPoints,
+	};
+	allStates.push( { state: uArrowState, handle: uArrowHandle } );
 
 	// text
 	const smallTextAnchor = lonLatFromMeters( PLOT_CENTER_LON, PLOT_CENTER_LAT, 0, - 80 );
@@ -982,6 +1116,10 @@ export function runPlotDemo(): void {
 	const largeArrowState: ArrowState = {
 		visible: true,
 		arrowType: 'swallowtailAttack',
+		sizeScale: 1.0,
+		curvedBodyWidthFactor: 0.06,
+		curvedHeadWidthFactor: 0.12,
+		curvedHeadLengthFactor: 0.14,
 		strokeColor: '#ffffff',
 		strokeWidth: 80,
 		strokeOpacity: 95,
@@ -1069,6 +1207,23 @@ export function runPlotDemo(): void {
 	camFolder.add( { f: flyToSmall }, 'f' ).name( 'fly to small (~220m)' );
 	camFolder.add( { f: flyToLarge }, 'f' ).name( 'fly to large (~45km)' );
 	camFolder.add( { f: flyToOverview }, 'f' ).name( 'overview (~720km)' );
+
+	// ── 地形开关（无地形渲染验证）─────────────────────────────────────────────
+	// 取消勾选即整体隐藏地形瓦片，模拟"无地形"。此时贴地标绘改由
+	// EllipsoidDepthSource 椭球面兜底支撑：标绘应依然完整显示（精确贴到 WGS84
+	// 椭球面 / 海平面），而不是整体消失——这正是"无地形也能正常渲染"的直观验证。
+	// 勾选则恢复地形，标绘重新贴到真实地形表面。
+	const terrainState = {
+		terrainOn: ! disableTerrain,
+	};
+	// 让初始可见性与开关一致（startup ?noterrain 时本就为空，置 false 仅为统一显示）。
+	tilesRenderer.group.visible = terrainState.terrainOn;
+	const terrainFolder = gui.addFolder( 'Terrain (no-terrain test)' );
+	terrainFolder.add( terrainState, 'terrainOn' )
+		.name( 'terrain on (off → ellipsoid only)' )
+		.onChange( ( on: boolean ) => {
+			tilesRenderer.group.visible = on;
+		} );
 
 	const globalState = {
 		globalOpacity: 1.0,
@@ -1372,6 +1527,24 @@ export function runPlotDemo(): void {
 			.onChange( () => {
 				decals.setStyle( handle.id, arrowStateToOptions( state, handle.initialPoints ) );
 			} );
+		// 改几何参数需重算 → 走 setStyle(桥接器会重调 generateCoords)。
+		const applyCurved = (): void => {
+			decals.setStyle( handle.id, arrowStateToOptions( state, handle.initialPoints ) );
+		};
+		// 整体大小:对**全部 arrowType** 生效的宽度倍率(长度仍由控制点决定)。
+		folder.add( state, 'sizeScale', 0.2, 3.0, 0.05 )
+			.name( '★ size scale (全类型)' )
+			.onChange( applyCurved );
+		const curved = folder.addFolder( 'curved width (仅 curved 类型)' );
+		curved.add( state, 'curvedBodyWidthFactor', 0.005, 0.20, 0.005 )
+			.name( 'bodyWidth /arc' )
+			.onChange( applyCurved );
+		curved.add( state, 'curvedHeadWidthFactor', 0.02, 0.40, 0.005 )
+			.name( 'headWidth /arc' )
+			.onChange( applyCurved );
+		curved.add( state, 'curvedHeadLengthFactor', 0.02, 0.40, 0.005 )
+			.name( 'headLength /arc' )
+			.onChange( applyCurved );
 		bindBaseStyleControls( folder, state, handle,
 			( s ) => arrowStateToOptions( s, handle.initialPoints ),
 			0, strokeWidthMax, strokeWidthMax / 40 );
@@ -1453,8 +1626,10 @@ export function runPlotDemo(): void {
 	buildRectangleFolder( smallGroup, 'rectangle', smallRectangleState, smallRectangleHandle, 4, 200 );
 	buildPolygonFolder( smallGroup, 'polygon', smallPolygonState, smallPolygonHandle, 4, 200 );
 	buildLineFolder( smallGroup, 'line', smallLineState, smallLineHandle, 0.2, 10, 0.1, 200 );
-	buildArrowFolder( smallGroup, 'arrow', smallArrowState, smallArrowHandle, 4, 200 );
+	buildArrowFolder( smallGroup, 'arrow attack', smallArrowState, smallArrowHandle, 4, 200 );
+	buildArrowFolder( smallGroup, 'arrow swallowtail', smallSwallowState, smallSwallowHandle, 4, 200 );
 	buildArrowFolder( smallGroup, 'arrow hook (curved)', hookArrowState, hookArrowHandle, 4, 200 );
+	buildArrowFolder( smallGroup, 'arrow U-shape (curved)', uArrowState, uArrowHandle, 4, 200 );
 	buildTextFolder( smallGroup, 'text', smallTextState, smallTextHandle, 8, 128, 0.05, 5.0, 10, 0.000001, 0.000001, 200 );
 
 	const largeGroup = gui.addFolder( 'Large (km scale)' );
@@ -1490,6 +1665,10 @@ export function runPlotDemo(): void {
 
 		updateTerrainLogDepthUniforms( camera.near, camera.far );
 
+		// 在 packed/主深度渲染前刷新兜底椭球面的 log-depth uniform（与上面 tiles
+		// 的 updateTerrainLogDepthUniforms 同口径，保证两者深度空间一致）。
+		ellipsoidDepth.update( camera );
+
 		globeDepth.render( renderer, camera, scene, tilesRenderer.group );
 
 		decals.update( {
@@ -1506,6 +1685,11 @@ export function runPlotDemo(): void {
 		lines.push( `Plot demo @ (${ PLOT_CENTER_LON.toFixed( 4 ) }, ${ PLOT_CENTER_LAT.toFixed( 4 ) })` );
 		lines.push( `Plots: ${ allStates.length } (8 categories x 2 scales + arrow variants)` );
 		lines.push( `Global opacity: ${ ( globalState.globalOpacity * 100 ).toFixed( 0 ) }%` );
+		lines.push(
+			tilesRenderer.group.visible
+				? 'Terrain: ON (Cesium Ion tiles)'
+				: 'Terrain: OFF — plots clamp to WGS84 ellipsoid via EllipsoidDepthSource',
+		);
 		const stats = ( tilesRenderer as TilesRenderer & {
 			stats: { visible: number; inCache: number; loaded: number; queued: number; downloading: number; parsing: number; failed: number };
 		} ).stats;
@@ -1530,6 +1714,7 @@ export function runPlotDemo(): void {
 		tilesRenderer,
 		controls,
 		globeDepth,
+		ellipsoidDepth,
 		decals,
 		allStates,
 		flyToSmall,

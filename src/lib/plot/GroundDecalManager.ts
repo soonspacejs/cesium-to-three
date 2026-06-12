@@ -18,7 +18,12 @@
 
 import type { Scene } from 'three';
 
-import type { CesiumGroundFrameState } from '../ground';
+import type {
+	CesiumGroundFrameState,
+	CesiumGlobeDepth,
+	EllipsoidDepthSourceOptions,
+} from '../ground';
+import { EllipsoidDepthSource } from '../ground';
 
 import { GisPlotBase } from './plugins/base';
 import {
@@ -44,6 +49,18 @@ import { PlotPrimitiveBridge } from './PlotPrimitiveBridge';
 export type GroundDecalManagerOptions = {
 	/** 标绘图元挂载的目标场景。 */
 	scene: Scene;
+	/**
+	 * 可选：packed globe depth 通道。传入后，管理器会自动创建并接入一个
+	 * WGS84 椭球面兜底深度源（EllipsoidDepthSource），让贴地标绘在“没有地形
+	 * 瓦片覆盖”时依然能渲染（无 Ion Token / 瓦片下载中 / 缩放超过最深 LOD）。
+	 * 不传则不接入兜底（宿主需自行保证深度来源）。
+	 */
+	globeDepth?: CesiumGlobeDepth;
+	/**
+	 * 可选：椭球面兜底配置（分段数 / 半径 / 偏移），或传 false 显式关闭兜底。
+	 * 仅在同时传入 globeDepth 时生效。默认在传入 globeDepth 时启用。
+	 */
+	ellipsoidFallback?: EllipsoidDepthSourceOptions | false;
 };
 
 /** getItem / getItemDeep 的联合返回类型（箭头额外带 generatedCoords）。 */
@@ -80,11 +97,29 @@ export class GroundDecalManager {
 	/** 合并同一帧内多次 _markDirty，值为 requestAnimationFrame 句柄。 */
 	private _redrawTimer: number | null = null;
 
+	/** 可选椭球面兜底深度源（仅在构造时传入 globeDepth 才创建）。 */
+	private _ellipsoidDepth: EllipsoidDepthSource | null = null;
+
 	/**
 	 * @param options 构造选项；仅需 scene。
 	 */
 	public constructor( options: GroundDecalManagerOptions ) {
 		this._bridge = new PlotPrimitiveBridge( { scene: options.scene } );
+
+		// 可选椭球面兜底深度：仅当宿主传入 globeDepth 且未显式关闭时启用。
+		// 它把贴地标绘“能否渲染”与“地形是否加载”解耦——无地形时标绘贴到 WGS84
+		// 椭球面（海平面）。详见 src/lib/ground/ellipsoid-depth-source.ts。
+		if ( options.globeDepth && options.ellipsoidFallback !== false ) {
+			const fallbackOptions =
+				typeof options.ellipsoidFallback === 'object'
+					? options.ellipsoidFallback
+					: {};
+			this._ellipsoidDepth = new EllipsoidDepthSource( fallbackOptions );
+			this._ellipsoidDepth.attach( {
+				mainScene: options.scene,
+				globeDepth: options.globeDepth,
+			} );
+		}
 	}
 
 	/**
@@ -105,6 +140,15 @@ export class GroundDecalManager {
 	 */
 	public get plotSdfPlugin(): PlotPrimitiveBridge {
 		return this._bridge;
+	}
+
+	/**
+	 * 暴露内部椭球面兜底深度源（若构造时启用）。便于宿主调 setEllipsoidOffset。
+	 *
+	 * @returns 兜底深度源；未启用时为 null。
+	 */
+	public get ellipsoidDepth(): EllipsoidDepthSource | null {
+		return this._ellipsoidDepth;
 	}
 
 	/**
@@ -457,6 +501,10 @@ export class GroundDecalManager {
 	 *                   pixelRatio?）。
 	 */
 	public update( frameState: CesiumGroundFrameState ): void {
+		// 在主场景渲染前刷新椭球面兜底的 log-depth uniform（与 frameState.camera
+		// 的 near/far 同步）。宿主调用契约：globeDepth.render 之后、renderer.render
+		// 之前——此时刷新，主缓冲兜底网格在 renderer.render 时即拿到当帧 uniform。
+		this._ellipsoidDepth?.update( frameState.camera );
 		this._bridge.update( frameState );
 	}
 
@@ -468,8 +516,10 @@ export class GroundDecalManager {
 		/* no-op：c2t 渲染由宿主循环负责 */
 	};
 
-	/** 释放桥接器内部全部图元与场景挂载。 */
+	/** 释放桥接器内部全部图元与场景挂载（含可选椭球面兜底）。 */
 	public dispose(): void {
+		this._ellipsoidDepth?.dispose();
+		this._ellipsoidDepth = null;
 		this._bridge.dispose();
 	}
 

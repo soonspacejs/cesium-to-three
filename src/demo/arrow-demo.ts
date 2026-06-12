@@ -59,6 +59,7 @@ export type ArrowPlotId =
 	| 'swallowtailAttackArrow'
 	| 'curvedArrow'
 	| 'hookCurvedArrow'
+	| 'uCurvedArrow'
 	| 'largeFineArrow'
 	| 'largeAssaultDirection'
 	| 'largeAttackArrow'
@@ -98,6 +99,7 @@ const ARROW_PLOT_IDS: readonly ArrowPlotId[] = [
 	'swallowtailAttackArrow',
 	'curvedArrow',
 	'hookCurvedArrow',
+	'uCurvedArrow',
 	'largeFineArrow',
 	'largeAssaultDirection',
 	'largeAttackArrow',
@@ -113,6 +115,7 @@ const ARROW_LABELS: Record<ArrowPlotId, string> = {
 	swallowtailAttackArrow: 'Swallowtail Attack',
 	curvedArrow: 'Curved Arrow',
 	hookCurvedArrow: 'Hook Curved Arrow (freehand)',
+	uCurvedArrow: 'U-Shaped Curved Arrow',
 	largeFineArrow: 'Large Fine Arrow',
 	largeAssaultDirection: 'Large Assault Direction',
 	largeAttackArrow: 'Large Attack Arrow',
@@ -128,6 +131,7 @@ const ARROW_FILL_COLORS: Record<ArrowPlotId, string> = {
 	swallowtailAttackArrow: '#aa44ff',
 	curvedArrow: '#22ddaa',
 	hookCurvedArrow: '#3a86ff',
+	uCurvedArrow: '#2b6cff',
 	largeFineArrow: '#ffd54d',
 	largeAssaultDirection: '#ff77aa',
 	largeAttackArrow: '#ff6644',
@@ -151,6 +155,7 @@ const PREFERRED_PLOT_ORDERS: Record<ArrowPlotId, number> = {
 	swallowtailAttackArrow: 6,
 	curvedArrow: 7,
 	hookCurvedArrow: 8,
+	uCurvedArrow: 9,
 	largeFineArrow: 11,
 	largeAssaultDirection: 12,
 	largeAttackArrow: 13,
@@ -167,6 +172,7 @@ const DEFAULT_FINE_ARROW_OPTIONS: Required<FineArrowOptions> = {
 	headWidthFactor: 0.25,
 	headAngleRadians: Math.PI / 8.5,
 	neckAngleRadians: Math.PI / 13.0,
+	widthScale: 1.0,
 };
 
 const DEFAULT_ASSAULT_DIRECTION_OPTIONS: Required<AssaultDirectionArrowOptions> = {
@@ -176,6 +182,7 @@ const DEFAULT_ASSAULT_DIRECTION_OPTIONS: Required<AssaultDirectionArrowOptions> 
 	headWidthFactor: 0.13,
 	headAngleRadians: Math.PI / 4.0,
 	neckAngleRadians: Math.PI * 0.17741,
+	widthScale: 1.0,
 };
 
 const DEFAULT_ATTACK_ARROW_OPTIONS: Required<AttackArrowOptions> = {
@@ -187,6 +194,7 @@ const DEFAULT_ATTACK_ARROW_OPTIONS: Required<AttackArrowOptions> = {
 	minBodyHalfAngleRadians: Math.PI / 12.0,
 	bodyWidthMargin: 1.05,
 	bodySmoothingSegments: 12,
+	widthScale: 1.0,
 };
 
 const DEFAULT_SWALLOWTAIL_OPTIONS: Required<SwallowtailAttackArrowOptions> = {
@@ -200,6 +208,7 @@ const DEFAULT_SWALLOWTAIL_OPTIONS: Required<SwallowtailAttackArrowOptions> = {
 	bodySmoothingSegments: 12,
 	swallowtailFactor: 0.70,
 	tailWidthFactor: 0.08,
+	widthScale: 1.0,
 };
 
 const DEFAULT_CURVED_ARROW_OPTIONS: Required<CurvedArrowOptions> = {
@@ -209,6 +218,7 @@ const DEFAULT_CURVED_ARROW_OPTIONS: Required<CurvedArrowOptions> = {
 	neckWidthRelativeToHead: 0.40,
 	curveSmoothingSegments: 16,
 	bodyTaperRatio: 0.0,
+	widthScale: 1.0,
 };
 
 /**
@@ -269,6 +279,7 @@ interface ArrowEntryByKind {
 	swallowtailAttackArrow: SwallowtailAttackEntry;
 	curvedArrow: CurvedArrowEntry;
 	hookCurvedArrow: CurvedArrowEntry;
+	uCurvedArrow: CurvedArrowEntry;
 	largeFineArrow: FineArrowEntry;
 	largeAssaultDirection: AssaultDirectionEntry;
 	largeAttackArrow: AttackArrowEntry;
@@ -385,6 +396,42 @@ function buildInitialControlPoints(
 		] );
 	}
 
+	// ── U 型曲线箭头(宽 U,开口朝左,尖端在左下)──
+	// 上臂向右 → 右侧半圆向下(180°)→ 下臂向左回到起点正下方,尖端朝左。
+	// 复刻用户手绘的 U 型轨迹。放在中心正北 ~125 m 处,跨度 ~43 m,不与其它箭头
+	// (含中心东北的钩形)重叠。44 个密集控制点(模拟手绘)。
+	const uCenterLon = centerLon - 5.0 * mLon;
+	const uCenterLat = centerLat + 125.0 * mLat;
+	const uScaleMeters = 11.0;
+	const uPointCount = 44;
+	const uCurvedArrowPoints: LonLatPoint[] = [];
+	for ( let i = 0; i < uPointCount; i++ ) {
+		const t = i / ( uPointCount - 1 );
+		let xMeters: number;
+		let yMeters: number;
+		if ( t < 0.40 ) {
+			// 上臂:从左到右。
+			const u = t / 0.40;
+			xMeters = ( -1.8 + u * 3.6 ) * uScaleMeters;
+			yMeters = 0.9 * uScaleMeters;
+		} else if ( t < 0.70 ) {
+			// 右侧半圆:上 → 下(顺时针 180°,圆心 x = 1.8、半径 0.9)。
+			const u = ( t - 0.40 ) / 0.30;
+			const a = Math.PI / 2 - u * Math.PI;
+			xMeters = ( 1.8 + 0.9 * Math.cos( a ) ) * uScaleMeters;
+			yMeters = ( 0.9 * Math.sin( a ) ) * uScaleMeters;
+		} else {
+			// 下臂:从右回到左(尖端在左下)。
+			const u = ( t - 0.70 ) / 0.30;
+			xMeters = ( 1.8 - u * 3.6 ) * uScaleMeters;
+			yMeters = -0.9 * uScaleMeters;
+		}
+		uCurvedArrowPoints.push( [
+			uCenterLon + xMeters * mLon,
+			uCenterLat + yMeters * mLat,
+		] );
+	}
+
 	const largeCenterLon = centerLon + 0.018;
 	const largeCenterLat = centerLat + 0.13;
 	const kmLon = 1000.0 * mLon;
@@ -425,7 +472,12 @@ function buildInitialControlPoints(
 		],
 	};
 
-	return { ...smallPoints, hookCurvedArrow: hookCurvedArrowPoints, ...largePoints };
+	return {
+		...smallPoints,
+		hookCurvedArrow: hookCurvedArrowPoints,
+		uCurvedArrow: uCurvedArrowPoints,
+		...largePoints,
+	};
 }
 
 /**
@@ -474,6 +526,7 @@ const ARROW_MINIMUM_POINTS: Record<ArrowPlotId, number> = {
 	swallowtailAttackArrow: 3,
 	curvedArrow: 2,
 	hookCurvedArrow: 2,
+	uCurvedArrow: 2,
 	largeFineArrow: 2,
 	largeAssaultDirection: 2,
 	largeAttackArrow: 3,
@@ -630,6 +683,13 @@ export class ArrowSubsystem {
 				'curvedArrow',
 				initialPoints.hookCurvedArrow,
 				reservedPlotOrders.hookCurvedArrow,
+				DEFAULT_CURVED_ARROW_OPTIONS,
+			) as CurvedArrowEntry,
+			uCurvedArrow: this.createEntry(
+				'uCurvedArrow',
+				'curvedArrow',
+				initialPoints.uCurvedArrow,
+				reservedPlotOrders.uCurvedArrow,
 				DEFAULT_CURVED_ARROW_OPTIONS,
 			) as CurvedArrowEntry,
 			largeFineArrow: this.createEntry(
@@ -924,6 +984,7 @@ export class ArrowSubsystem {
 		this.installSwallowtailFolder( smallRoot, this.entries.swallowtailAttackArrow );
 		this.installCurvedArrowFolder( smallRoot, this.entries.curvedArrow );
 		this.installCurvedArrowFolder( smallRoot, this.entries.hookCurvedArrow );
+		this.installCurvedArrowFolder( smallRoot, this.entries.uCurvedArrow );
 
 		this.installFineArrowFolder( largeRoot, this.entries.largeFineArrow );
 		this.installAssaultDirectionFolder( largeRoot, this.entries.largeAssaultDirection );
@@ -948,6 +1009,13 @@ export class ArrowSubsystem {
 			.add( entry, 'visible' )
 			.name( 'visible' )
 			.onChange( () => this.applyEntrySettings( entry ) );
+
+		// 整体大小:对**所有箭头类型**生效的宽度倍率(长度由控制点决定)。
+		// widthScale 已加入全部 *ArrowOptions,各 shape 内部把自身宽度量同乘此值。
+		folder
+			.add( entry.options, 'widthScale', 0.2, 3.0, 0.05 )
+			.name( '★ size scale' )
+			.onFinishChange( () => this.rebuildPrimitive( entry ) );
 
 		folder
 			.add( entry, 'plotOrder', 0, 100, 1 )
@@ -1199,32 +1267,27 @@ export class ArrowSubsystem {
 		const folder = parent.addFolder( entry.label );
 		this.installSharedControls( folder, entry );
 
-		const geom = folder.addFolder( 'Geometry' );
-		geom
+		// 宽度三件套直接放在文件夹一级(不再藏进子文件夹),方便快速调粗细。
+		// 三者都相对曲线总弧长:bodyWidth = 带子粗细,headWidth = 箭翼展开,
+		// headLength = 箭头三角的长度。
+		folder
 			.add( entry.options, 'bodyWidthFactor', 0.005, 0.20, 0.005 )
-			.name( 'bodyWidth /arc' )
+			.name( '★ bodyWidth /arc' )
 			.onFinishChange( () => this.rebuildPrimitive( entry ) );
-		geom
+		folder
 			.add( entry.options, 'headWidthFactor', 0.02, 0.40, 0.005 )
-			.name( 'headWidth /arc' )
+			.name( '★ headWidth /arc' )
 			.onFinishChange( () => this.rebuildPrimitive( entry ) );
-		geom
+		folder
 			.add( entry.options, 'headLengthFactor', 0.02, 0.40, 0.005 )
-			.name( 'headLength /arc' )
+			.name( '★ headLength /arc' )
 			.onFinishChange( () => this.rebuildPrimitive( entry ) );
-		geom
-			.add( entry.options, 'neckWidthRelativeToHead', 0.05, 0.95, 0.01 )
-			.name( 'neck/head' )
-			.onFinishChange( () => this.rebuildPrimitive( entry ) );
-		geom
-			.add( entry.options, 'bodyTaperRatio', 0.0, 1.0, 0.01 )
-			.name( 'bodyTaper' )
-			.onFinishChange( () => this.rebuildPrimitive( entry ) );
-		geom
+		folder
 			.add( entry.options, 'curveSmoothingSegments', 2, 64, 1 )
 			.name( 'curve samples' )
 			.onFinishChange( () => this.rebuildPrimitive( entry ) );
-		geom.close();
+		// 注:neckWidthRelativeToHead / bodyTaperRatio 在当前曲线箭头算法
+		// (五点头部 + 等宽体)中已不再生效,故不再暴露滑块。
 
 		folder.close();
 	}

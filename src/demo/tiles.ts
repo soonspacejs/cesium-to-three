@@ -98,9 +98,32 @@ export function configureLoadedTileScene( modelScene: Object3D ): void {
  * 参考实现:3DTilesRendererJS/example/three/plot/touchGround.js 的 reinstantiateTiles。
  *
  * @param renderer 主 WebGLRenderer,ImageOverlayPlugin 用它把瓦片纹理渲染到 RT。
+ * @param disableTerrain 为 true 时进入"无地形模式":不接入 Cesium Ion 地形/影像、
+ *        也不需要 token，返回一个不加载任何瓦片的空 TilesRenderer。它依然原生提供
+ *        ellipsoid / group / update / stats 等接口，故宿主渲染循环无需任何改动；
+ *        tilesRenderer.group 始终为空，整个屏幕都处于"无地形"，专用于验证
+ *        EllipsoidDepthSource 椭球面兜底——所有贴地标绘应精确贴到 WGS84 椭球面
+ *        (海平面)而不是整体消失。
  * @returns 配置完成的 TilesRenderer 实例。
  */
-export function createCesiumTilesRenderer( renderer: WebGLRenderer ): TilesRenderer {
+export function createCesiumTilesRenderer(
+	renderer: WebGLRenderer,
+	disableTerrain = false,
+): TilesRenderer {
+	if ( disableTerrain ) {
+		const emptyTiles = new TilesRenderer( '' );
+		emptyTiles.group.name = 'CesiumIonTilesRendererGroup';
+		emptyTiles.autoDisableRendererCulling = true;
+		// 占位插件：把"根 tileset 加载"短路为 null，避免空 URL 在每帧 update 时触发
+		// 一次必然失败的网络请求(否则会反复 console.error 并派发 load-error)。
+		// 返回 null 后 update() 走 `if ( ! root ) return` 早退，不再加载任何瓦片。
+		emptyTiles.registerPlugin( {
+			name: 'NO_TERRAIN_PLUGIN',
+			loadRootTileset: () => Promise.resolve( null ),
+		} );
+		return emptyTiles;
+	}
+
 	const apiToken = readStringEnv( 'VITE_CESIUM_ION_TOKEN' );
 	const configuredAssetId = readStringEnv( 'VITE_CESIUM_ION_ASSET_ID', '1' );
 	const assetId = configuredAssetId;

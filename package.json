@@ -1,6 +1,6 @@
 {
   "name": "cesium-to-three",
-  "version": "0.1.3",
+  "version": "0.1.6",
   "type": "module",
   "description": "Cesium-style ground primitives for Three.js.",
   "main": "./dist/index.js",

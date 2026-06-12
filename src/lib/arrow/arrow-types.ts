@@ -33,6 +33,8 @@ export interface FineArrowOptions {
 	headAngleRadians?: number;
 	/** 颈部夹角(弧度)。默认 π/13 ≈ 0.242 rad ≈ 13.85° */
 	neckAngleRadians?: number;
+	/** 整体宽度倍率(尾 / 颈 / 翼宽同乘),默认 1.0。用于"调整箭头大小"。 */
+	widthScale?: number;
 }
 
 /**
@@ -54,6 +56,8 @@ export interface AssaultDirectionArrowOptions {
 	headAngleRadians?: number;
 	/** 颈部夹角(弧度)。默认 0.5575 rad ≈ 31.94°(原 π*0.17741) */
 	neckAngleRadians?: number;
+	/** 整体宽度倍率(尾 / 颈 / 翼宽同乘),默认 1.0。用于"调整箭头大小"。 */
+	widthScale?: number;
 }
 
 /**
@@ -98,6 +102,12 @@ export interface AttackArrowOptions {
 	 * 默认 12。
 	 */
 	bodySmoothingSegments?: number;
+	/**
+	 * 整体宽度倍率,默认 1.0。把尾边宽度(= 体宽来源)整体缩放,体部与头部
+	 * (头高受 tailWidth×headTailFactor clamp 约束)随之等比例缩放 → 一个旋钮
+	 * 调整整支攻击 / 燕尾箭头的粗细。用于"调整箭头大小"。
+	 */
+	widthScale?: number;
 }
 
 /**
@@ -158,6 +168,8 @@ export interface CurvedArrowOptions {
 	 * 默认 0.0(等宽线条)。
 	 */
 	bodyTaperRatio?: number;
+	/** 整体宽度倍率(体宽 + 翼宽同乘),默认 1.0。用于"调整箭头大小"。 */
+	widthScale?: number;
 }
 
 /**

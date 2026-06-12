@@ -87,7 +87,11 @@
       "Bash(curl -s https://raw.githubusercontent.com/marsgis/mars3d/master/CHANGE.md)",
       "PowerShell($files = @\\('tight-spiral-end-80pts','attack-freehand-hook'\\); foreach\\($f in $files\\){ $svg = Get-Content \".claude-tmp-arrow-repro/$f.svg\" -Raw; $m=[regex]::Match\\($svg,'d=\"\\([^\"]+\\)\" fill=\"#4a90d9\"'\\); $pts=[regex]::Matches\\($m.Groups[1].Value,'[ML]\\([\\\\d.]+\\),\\([\\\\d.]+\\)'\\); $tipM=[regex]::Match\\($svg,'<circle cx=\"\\([\\\\d.]+\\)\" cy=\"\\([\\\\d.]+\\)\" r=\"5\"'\\); Write-Output \"--- $f : ring=$\\($pts.Count\\) tip=\\($\\($tipM.Groups[1].Value\\),$\\($tipM.Groups[2].Value\\)\\)\" })",
       "Bash(git -C /d/my/code/cesium-to-three diff -- src/lib/arrow/arrow-polygon.ts src/lib/arrow/shapes/attack-arrow.ts)",
-      "PowerShell(Get-Content 'C:\\\\Users\\\\WIN11\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--my-code-cesium-to-three\\\\a85f5694-0ebd-47ae-8c64-9c6123aff837\\\\tasks\\\\wp60beiho.output' -Raw -ErrorAction SilentlyContinue | ForEach-Object { $_.Substring\\(0, [Math]::Min\\(500, $_.Length\\)\\) })"
+      "PowerShell(Get-Content 'C:\\\\Users\\\\WIN11\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--my-code-cesium-to-three\\\\a85f5694-0ebd-47ae-8c64-9c6123aff837\\\\tasks\\\\wp60beiho.output' -Raw -ErrorAction SilentlyContinue | ForEach-Object { $_.Substring\\(0, [Math]::Min\\(500, $_.Length\\)\\) })",
+      "Bash(cat)",
+      "Bash(cp /tmp/u-demo-check.ts .claude-tmp-arrow-repro/u-demo-check.ts)",
+      "Bash(npx -y tsx .claude-tmp-arrow-repro/u-demo-check.ts)",
+      "Bash(npx -y tsx .claude-tmp-arrow-repro/switch.ts)"
     ]
   }
 }

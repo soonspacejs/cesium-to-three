@@ -99,7 +99,12 @@ function geometrySignature( plot: GisPlotBase ): string {
 			return `point|${ pts }|${ o.pointStyle }|${ o.size }`;
 
 		case 'arrow':
-			return `arrow|${ pts }|${ o.arrowType }`;
+			// 箭头体型(sizeScale 对全类型生效 + 曲线专属体型字段)影响几何 →
+			// 必须进签名,否则 GUI 改大小时 geomSig 不变 → 桥接器只做轻量样式刷新、
+			// 不重算 generateCoords → 改了没反应(踩过的坑)。
+			return `arrow|${ pts }|${ o.arrowType }|${ o.sizeScale }`
+				+ `|${ o.curvedBodyWidthFactor }|${ o.curvedHeadWidthFactor }`
+				+ `|${ o.curvedHeadLengthFactor }`;
 
 		case 'line':
 			return `line|${ pts }|${ o.strokeStyle }|${ o.startArrowStyle }|${ o.endArrowStyle }`;

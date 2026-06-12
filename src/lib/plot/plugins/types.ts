@@ -168,9 +168,24 @@ export type PlotArrowType =
 
 /**
  * 箭头标绘选项。points 为控制点；不同 arrowType 对 points 的解释见 PlotArrowType。
+ *
+ * 曲线箭头(arrowType='curved')可选的体型参数,均相对曲线总弧长:
+ *   - curvedBodyWidthFactor:带子粗细(默认见 createCurvedArrow)。
+ *   - curvedHeadWidthFactor:箭翼展开宽度。
+ *   - curvedHeadLengthFactor:箭头三角长度。
+ * 未提供时使用 SDK 默认值。仅 'curved' 类型会消费这些字段。
  */
 export type PlotArrowOptions = GisPlotBaseOptions & {
 	arrowType: PlotArrowType;
+	/**
+	 * 整体大小(宽度)倍率,默认 1.0,**对全部 arrowType 生效**。
+	 * 透传为各箭头 SDK 的 widthScale(fine/assault/attack/swallow/curved 各自把
+	 * 自己的宽度量同乘此值)。长度由控制点决定,本字段只改粗细。
+	 */
+	sizeScale?: number;
+	curvedBodyWidthFactor?: number;
+	curvedHeadWidthFactor?: number;
+	curvedHeadLengthFactor?: number;
 };
 
 // ── 文本 ──

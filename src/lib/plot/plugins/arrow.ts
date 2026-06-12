@@ -82,24 +82,52 @@ export class GisPlotArrow extends GisPlotBase {
 			this.generatedCoords = [];
 			return this.generatedCoords;
 		}
+		// sizeScale:整体大小(宽度)倍率,对全部 arrowType 生效,透传为各 SDK
+		// 的 widthScale;未提供或非正数时按 1.0(不缩放)。
+		const widthScale =
+			typeof this.options.sizeScale === 'number' && this.options.sizeScale > 0
+				? this.options.sizeScale
+				: 1.0;
 		switch ( this.options.arrowType ) {
 			case 'fine':
-				this.generatedCoords = createFineArrow( cp[ 0 ], cp[ 1 ] );
+				this.generatedCoords = createFineArrow( cp[ 0 ], cp[ 1 ], { widthScale } );
 				break;
 			case 'assaultDirection':
-				this.generatedCoords = createAssaultDirectionArrow( cp[ 0 ], cp[ 1 ] );
+				this.generatedCoords = createAssaultDirectionArrow(
+					cp[ 0 ], cp[ 1 ], { widthScale },
+				);
 				break;
 			case 'attack':
-				this.generatedCoords = createAttackArrow( cp );
+				this.generatedCoords = createAttackArrow( cp, { widthScale } );
 				break;
 			case 'swallowtailAttack':
-				this.generatedCoords = createSwallowtailAttackArrow( cp );
+				this.generatedCoords = createSwallowtailAttackArrow( cp, { widthScale } );
 				break;
-			case 'curved':
-				this.generatedCoords = createCurvedArrow( cp );
+			case 'curved': {
+				// 仅把已显式提供的曲线体型字段传入 SDK;未提供的走 SDK 默认值。
+				// widthScale 与体型因子同时生效(SDK 内 bodyWidthFactor×widthScale)。
+				const curvedOptions: {
+					bodyWidthFactor?: number;
+					headWidthFactor?: number;
+					headLengthFactor?: number;
+					widthScale?: number;
+				} = { widthScale };
+				if ( typeof this.options.curvedBodyWidthFactor === 'number' ) {
+					curvedOptions.bodyWidthFactor = this.options.curvedBodyWidthFactor;
+				}
+				if ( typeof this.options.curvedHeadWidthFactor === 'number' ) {
+					curvedOptions.headWidthFactor = this.options.curvedHeadWidthFactor;
+				}
+				if ( typeof this.options.curvedHeadLengthFactor === 'number' ) {
+					curvedOptions.headLengthFactor = this.options.curvedHeadLengthFactor;
+				}
+				this.generatedCoords = createCurvedArrow( cp, curvedOptions );
 				break;
+			}
 			default:
-				this.generatedCoords = createFineArrow( cp[ 0 ], cp[ cp.length - 1 ] );
+				this.generatedCoords = createFineArrow(
+					cp[ 0 ], cp[ cp.length - 1 ], { widthScale },
+				);
 				break;
 		}
 		return this.generatedCoords;
