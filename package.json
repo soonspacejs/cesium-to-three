@@ -39,6 +39,7 @@
   "dependencies": {
     "earcut": "^3.0.2",
     "mersenne-twister": "^1.1.0",
+    "polygon-clipping": "^0.15.7",
     "rbush": "^4.0.1",
     "three": "^0.183.0",
     "um-3d-tiles-renderer": "^0.4.48",

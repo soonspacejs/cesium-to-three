@@ -694,6 +694,65 @@ export function runPlotDemo(): void {
 		initialPoints: smallArrowPoints,
 	};
 	allStates.push( { state: smallArrowState, handle: smallArrowHandle } );
+	// Small hook curved arrow(钩形回环手绘轨迹,复刻"曲线箭头无头" bug 场景):
+	// 48 个密集控制点,先向东直行 → 东侧大半圆向南掉头 → 向西回扫 → 末端向内
+	// 卷曲 ~160°,尖端朝东指向回环中心。总转角 > 340°,曾经触发头部三角被环级
+	// 降采样抽掉;修复后箭头头部应始终可见且多边形不自交。放在中心东北侧。
+	const hookArrowOffsets: { eastMeters: number; northMeters: number }[] = [];
+	const HOOK_POINT_COUNT = 48;
+	const HOOK_SCALE_METERS = 14.0;
+	for ( let i = 0; i < HOOK_POINT_COUNT; i++ ) {
+		const t = i / ( HOOK_POINT_COUNT - 1 );
+		let xMeters: number;
+		let yMeters: number;
+		if ( t < 0.40 ) {
+			// 第一段(40% 弧长):向东直行。
+			const u = t / 0.40;
+			xMeters = ( -2.0 + u * 2.0 ) * HOOK_SCALE_METERS;
+			yMeters = 0.8 * HOOK_SCALE_METERS;
+		} else if ( t < 0.75 ) {
+			// 第二段(35%):东侧大弯,从向东顺时针转 180° 到向西。
+			const u = ( t - 0.40 ) / 0.35;
+			const a = Math.PI / 2 - u * Math.PI;
+			xMeters = 0.8 * HOOK_SCALE_METERS * Math.cos( a ) * 1.4;
+			yMeters = 0.8 * HOOK_SCALE_METERS * Math.sin( a );
+		} else {
+			// 第三段(25%):末端向内卷曲(继续顺时针 ~160°)。
+			const u = ( t - 0.75 ) / 0.25;
+			const a = -Math.PI / 2 - u * ( 160.0 * Math.PI / 180.0 );
+			xMeters = ( -0.4 + 0.45 * Math.cos( a ) ) * HOOK_SCALE_METERS;
+			yMeters = ( -0.45 + 0.45 * Math.sin( a ) ) * HOOK_SCALE_METERS;
+		}
+		hookArrowOffsets.push( {
+			eastMeters: 95 + xMeters,
+			northMeters: 165 + yMeters,
+		} );
+	}
+	const hookArrowPoints: LonLatPoint[] = lonLatPointsFromMeters(
+		PLOT_CENTER_LON,
+		PLOT_CENTER_LAT,
+		hookArrowOffsets,
+	);
+	const hookArrowState: ArrowState = {
+		visible: true,
+		arrowType: 'curved',
+		strokeColor: '#1a50a9',
+		strokeWidth: 0.6,
+		strokeOpacity: 95,
+		fillColor: '#3a86ff',
+		fillOpacity: 85,
+		translateEastMeters: 0,
+		translateNorthMeters: 0,
+		_appliedEastMeters: 0,
+		_appliedNorthMeters: 0,
+	};
+	const hookArrowHandle: PlotHandle = {
+		key: 'small-hook-arrow',
+		label: '[small] arrow  curved hook (freehand 48 pts)',
+		id: decals.addPlot( arrowStateToOptions( hookArrowState, hookArrowPoints ) ),
+		initialPoints: hookArrowPoints,
+	};
+	allStates.push( { state: hookArrowState, handle: hookArrowHandle } );
 
 	// text
 	const smallTextAnchor = lonLatFromMeters( PLOT_CENTER_LON, PLOT_CENTER_LAT, 0, - 80 );
@@ -1395,6 +1454,7 @@ export function runPlotDemo(): void {
 	buildPolygonFolder( smallGroup, 'polygon', smallPolygonState, smallPolygonHandle, 4, 200 );
 	buildLineFolder( smallGroup, 'line', smallLineState, smallLineHandle, 0.2, 10, 0.1, 200 );
 	buildArrowFolder( smallGroup, 'arrow', smallArrowState, smallArrowHandle, 4, 200 );
+	buildArrowFolder( smallGroup, 'arrow hook (curved)', hookArrowState, hookArrowHandle, 4, 200 );
 	buildTextFolder( smallGroup, 'text', smallTextState, smallTextHandle, 8, 128, 0.05, 5.0, 10, 0.000001, 0.000001, 200 );
 
 	const largeGroup = gui.addFolder( 'Large (km scale)' );

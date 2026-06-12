@@ -235,6 +235,162 @@ export function cubicBezierSegmentSamples(
 }
 
 /**
+ * 把折线按弧长均匀重采样为固定点数。
+ *
+ * 两个用途(curved-arrow.ts 的脊线收口):
+ *   1. **顶点预算**:手绘输入控制点可达上百,Catmull-Rom 密采样后脊线样本
+ *      数千;带状箭头环 = 2×脊线 + 头部 3 点,必须在偏移**之前**把脊线收口
+ *      到预算内,否则 finalizePolygon 的降采样会把头部特征顶点抽掉
+ *      (这正是"钩形手绘曲线箭头无头"bug 的根因)。
+ *   2. **均匀化**:手绘点的疏密不均/抖动聚点让逐点切线与曲率估计噪声很大;
+ *      弧长均匀间隔天然滤掉比间隔更高频的抖动,下游 Frenet 偏移与曲率限宽
+ *      都更稳定。
+ *
+ * 首末点严格保留(箭头尾点与尖端不允许漂移);中间点在累计弧长上等距插值。
+ *
+ * @param points 原始折线,至少 2 个点。
+ * @param targetCount 目标点数(含首末),≥ 2。
+ * @returns 长度 = min(targetCount, points.length) 的重采样折线;
+ *          输入点数 ≤ targetCount 时原样浅拷贝(不增密,只收口)。
+ */
+export function resamplePolylineByArcLength(
+	points: readonly LonLatPoint[],
+	targetCount: number,
+): LonLatPoint[] {
+	const n = points.length;
+	const m = Math.max( Math.floor( targetCount ), 2 );
+	if ( n <= m ) {
+		// 不增密:目标数不少于现有点数时直接拷贝返回。
+		return points.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
+	}
+
+	// 累计弧长表。cumulative[i] = 从 points[0] 到 points[i] 的折线长。
+	const cumulative = new Float64Array( n );
+	for ( let i = 1; i < n; i++ ) {
+		cumulative[ i ] = cumulative[ i - 1 ] + mathDistance( points[ i - 1 ], points[ i ] );
+	}
+	const total = cumulative[ n - 1 ];
+	if ( total <= 0.0 ) {
+		// 所有点重合 → 重采样无意义,返回首末两点(后续 wholeDistance 仍为 0,
+		// 由调用方的"总长为 0"分支兜底)。
+		return [
+			[ points[ 0 ][ 0 ], points[ 0 ][ 1 ] ],
+			[ points[ n - 1 ][ 0 ], points[ n - 1 ][ 1 ] ],
+		];
+	}
+
+	const out: LonLatPoint[] = new Array( m );
+	out[ 0 ] = [ points[ 0 ][ 0 ], points[ 0 ][ 1 ] ];
+	out[ m - 1 ] = [ points[ n - 1 ][ 0 ], points[ n - 1 ][ 1 ] ];
+
+	// 游标单调前进:目标弧长递增,所以段索引只增不减,整体 O(n + m)。
+	let seg = 0;
+	for ( let k = 1; k < m - 1; k++ ) {
+		const targetArc = ( total * k ) / ( m - 1 );
+		while ( seg < n - 2 && cumulative[ seg + 1 ] < targetArc ) {
+			seg++;
+		}
+		const segLen = cumulative[ seg + 1 ] - cumulative[ seg ];
+		// 零长段(重合点):t 取 0,落在段起点,不产生 NaN。
+		const t = segLen > 0.0 ? ( targetArc - cumulative[ seg ] ) / segLen : 0.0;
+		out[ k ] = [
+			points[ seg ][ 0 ] + ( points[ seg + 1 ][ 0 ] - points[ seg ][ 0 ] ) * t,
+			points[ seg ][ 1 ] + ( points[ seg + 1 ][ 1 ] - points[ seg ][ 1 ] ) * t,
+		];
+	}
+	return out;
+}
+
+/**
+ * 两条线段的"严格"交点(不含共享端点的相触)。
+ *
+ * 用参数式求解:P = a + t·(b−a) = c + s·(d−c),要求 t、s 均落在开区间 (0,1)
+ * 附近(端点相触不算交)。平行/共线返回 null。
+ *
+ * @returns 交点坐标;不相交或退化时返回 null。
+ */
+function strictSegmentIntersection(
+	a: LonLatPoint, b: LonLatPoint,
+	c: LonLatPoint, d: LonLatPoint,
+): LonLatPoint | null {
+	const rX = b[ 0 ] - a[ 0 ];
+	const rY = b[ 1 ] - a[ 1 ];
+	const sX = d[ 0 ] - c[ 0 ];
+	const sY = d[ 1 ] - c[ 1 ];
+	const denom = rX * sY - rY * sX;
+	if ( Math.abs( denom ) < 1e-20 ) {
+		// 平行或共线:局部微环裁剪不处理共线重叠(交给上游去重)。
+		return null;
+	}
+	const acX = c[ 0 ] - a[ 0 ];
+	const acY = c[ 1 ] - a[ 1 ];
+	const t = ( acX * sY - acY * sX ) / denom;
+	const s = ( acX * rY - acY * rX ) / denom;
+	// 开区间判定(留一点余量排除端点相触,端点相触是正常拓扑不是自交)。
+	const EPS = 1e-9;
+	if ( t <= EPS || t >= 1.0 - EPS || s <= EPS || s >= 1.0 - EPS ) {
+		return null;
+	}
+	return [ a[ 0 ] + rX * t, a[ 1 ] + rY * t ];
+}
+
+/**
+ * 裁剪开折线上的"局部微环"(untrimmed offset → local trimming)。
+ *
+ * Frenet 法线偏移在 halfWidth 接近局部曲率半径时,弯曲内侧的偏移边会
+ * 「短退一步再反向冲出」,形成跨度只有几个顶点的小自交环(cusp/fold)。
+ * 理论出处:Kim & Elber 2006(offset 曲线的局部自交恰发生在曲率半径 <
+ * 偏移距离处),工程做法是先生成未裁剪偏移线,再把交点之间的环段剪掉。
+ *
+ * 算法:扫描所有间距 ≤ maxGap 的线段对,发现严格相交时用交点替换环段
+ * (points[i+1..j] → 交点),迭代直到无局部环。只看近距离线段对——
+ * 远距离相交是"带状体全局重叠"(钩形回环固有),剪掉会破坏形状,不处理。
+ *
+ * 首末点永不被移除(替换只发生在两条相交线段**之间**的内部顶点上),
+ * 因此尾点 / 颈点等语义端点安全。
+ *
+ * @param points 开折线(偏移边),≥ 2 点。
+ * @param maxGap 视为"局部"的最大线段索引间距,默认 6。
+ * @returns 裁剪后的折线;无局部环时原样浅拷贝。
+ */
+export function trimLocalPolylineLoops(
+	points: readonly LonLatPoint[],
+	maxGap: number = 6,
+): LonLatPoint[] {
+	let pts: LonLatPoint[] = points.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
+
+	// 每轮消一个环,环数有限(每次顶点数严格减少),safety 上限只是兜底。
+	let changed = true;
+	let safety = 0;
+	while ( changed && safety < 1000 ) {
+		safety++;
+		changed = false;
+		outer:
+		for ( let i = 0; i + 1 < pts.length - 1; i++ ) {
+			const jMax = Math.min( i + maxGap, pts.length - 2 );
+			// j 从 i+2 起:相邻线段共享端点,不构成自交。
+			for ( let j = i + 2; j <= jMax; j++ ) {
+				const x = strictSegmentIntersection(
+					pts[ i ], pts[ i + 1 ],
+					pts[ j ], pts[ j + 1 ],
+				);
+				if ( x !== null ) {
+					// 把环段 pts[i+1..j] 替换为交点,折线在交点处"抄近路"。
+					pts = [
+						...pts.slice( 0, i + 1 ),
+						x,
+						...pts.slice( j + 1 ),
+					];
+					changed = true;
+					break outer;
+				}
+			}
+		}
+	}
+	return pts;
+}
+
+/**
  * 沿一条折线/曲线计算每点处的切线方向(单位向量)。
  *
  * 用于按 perpendicular offset 生成"等宽线条"的左右两条平行线。

@@ -68,6 +68,8 @@ import {
 	centripetalCatmullRomSamples,
 	computeTangents,
 	findPointAlongPolylineFromEnd,
+	resamplePolylineByArcLength,
+	trimLocalPolylineLoops,
 } from '../arrow-curves';
 import { finalizePolygon } from '../arrow-polygon';
 import type {
@@ -83,9 +85,17 @@ const DEFAULT_HEAD_WIDTH_FACTOR = 0.55;
 const DEFAULT_NECK_HEIGHT_FACTOR = 0.85;
 const DEFAULT_NECK_WIDTH_FACTOR = 0.22;
 const DEFAULT_HEAD_TAIL_FACTOR = 1.25;
-// 12:Catmull-Rom 每段采样 12 点。多控制点脊线下采样总数 = (n-1)*12 + 1,
-// 远低于 ARROW_OUTPUT_MAX_VERTICES = 120 的上限。
+// 12:Catmull-Rom 每段采样 12 点。脊线样本总数 = (脊线控制点数-1)*12 + 1。
 const DEFAULT_BODY_SMOOTHING_SEGMENTS = 12;
+
+// ── 脊线样本预算 ──
+// 环 = leftSide + 头部 3 点 + rightSide = 2 × bodySpine + 3。预算 58 ⟹ 环 ≤ 119
+// ≤ ARROW_OUTPUT_MAX_VERTICES(120)。手绘几十~上百控制点时 CR 密采样后脊线
+// 上千点,必须在偏移**之前**按弧长重采样收口到预算内 —— 否则环上千点交给
+// finalizePolygon 的降采样会大幅抽稀,decimation 极易在密集/近退化输入上引入
+// 新的自交(与曲线箭头同源的根因)。收口后 clamp 几乎不触发,union 兜底也只需
+// 处理少量交点。与 curved-arrow.ts 的 SPINE_SAMPLE_BUDGET 同值同理。
+const SPINE_SAMPLE_BUDGET = 58;
 // 注:`minBodyHalfAngleRadians` / `bodyWidthMargin` 在原实现里用来反算
 // w = (tailWidth/2 - dropoff) / sin(halfAngle) 时做 clamp。Frenet 构造下,
 // 体宽由 tailHalfWidth 与 neckHalfWidth 之间的线性插值决定,完全不进入
@@ -248,14 +258,18 @@ export function buildAttackArrowSkeleton(
 		return null;
 	}
 
-	// ── 步骤 3:**唯一一次** Catmull-Rom 平滑脊线 ──
-	const spineSamples = centripetalCatmullRomSamples(
+	// ── 步骤 3:**唯一一次** Catmull-Rom 平滑脊线 + 弧长预算收口 ──
+	const rawSpineSamples = centripetalCatmullRomSamples(
 		spineControlPoints,
 		bodySmoothingSegments,
 	);
-	if ( spineSamples.length < 2 ) {
+	if ( rawSpineSamples.length < 2 ) {
 		return null;
 	}
+	// 超预算才收口(手绘多控制点);常规 3~6 控制点不触发,行为与历史一致。
+	const spineSamples = rawSpineSamples.length > SPINE_SAMPLE_BUDGET
+		? resamplePolylineByArcLength( rawSpineSamples, SPINE_SAMPLE_BUDGET )
+		: rawSpineSamples;
 
 	// ── 步骤 4:头部尺寸 clamp ──
 	const tailWidth = mathDistance( tailLeft, tailRight );
@@ -359,6 +373,14 @@ export function buildAttackArrowSkeleton(
 	leftSide[ 0 ] = [ tailLeft[ 0 ], tailLeft[ 1 ] ];
 	rightSide[ 0 ] = [ tailRight[ 0 ], tailRight[ 1 ] ];
 
+	// ── 步骤 8b:裁剪偏移边上的局部微环 ──
+	// 攻击箭头没有曲率限宽(体宽由用户尾边决定),脊线急弯处 halfWidth >
+	// 局部曲率半径时弯曲内侧的偏移边必然出现小自交环(cusp)。按 untrimmed
+	// offset → local trimming 剪掉(必须在 tail 钉接之后,裁剪保端点,
+	// tailLeft / tailRight / neckLeft / neckRight 都不会被移除)。
+	const trimmedLeftSide = trimLocalPolylineLoops( leftSide );
+	const trimmedRightSide = trimLocalPolylineLoops( rightSide );
+
 	// ── 步骤 9:头部 3 个新点(headLeft / tip / headRight)──
 	// 翼尖在 neck 处沿法线外扩 headHalfWidth(比 neckHalfWidth 大 → 翼展张开)。
 	const neckTx = tangents[ lastBodyIdx ][ 0 ];
@@ -378,8 +400,8 @@ export function buildAttackArrowSkeleton(
 	];
 
 	return {
-		leftSide,
-		rightSide,
+		leftSide: trimmedLeftSide,
+		rightSide: trimmedRightSide,
 		headLeft,
 		headRight,
 		tip,

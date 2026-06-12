@@ -58,6 +58,7 @@ export type ArrowPlotId =
 	| 'attackArrow'
 	| 'swallowtailAttackArrow'
 	| 'curvedArrow'
+	| 'hookCurvedArrow'
 	| 'largeFineArrow'
 	| 'largeAssaultDirection'
 	| 'largeAttackArrow'
@@ -96,6 +97,7 @@ const ARROW_PLOT_IDS: readonly ArrowPlotId[] = [
 	'attackArrow',
 	'swallowtailAttackArrow',
 	'curvedArrow',
+	'hookCurvedArrow',
 	'largeFineArrow',
 	'largeAssaultDirection',
 	'largeAttackArrow',
@@ -110,6 +112,7 @@ const ARROW_LABELS: Record<ArrowPlotId, string> = {
 	attackArrow: 'Attack Arrow',
 	swallowtailAttackArrow: 'Swallowtail Attack',
 	curvedArrow: 'Curved Arrow',
+	hookCurvedArrow: 'Hook Curved Arrow (freehand)',
 	largeFineArrow: 'Large Fine Arrow',
 	largeAssaultDirection: 'Large Assault Direction',
 	largeAttackArrow: 'Large Attack Arrow',
@@ -124,6 +127,7 @@ const ARROW_FILL_COLORS: Record<ArrowPlotId, string> = {
 	attackArrow: '#ff2200',
 	swallowtailAttackArrow: '#aa44ff',
 	curvedArrow: '#22ddaa',
+	hookCurvedArrow: '#3a86ff',
 	largeFineArrow: '#ffd54d',
 	largeAssaultDirection: '#ff77aa',
 	largeAttackArrow: '#ff6644',
@@ -146,6 +150,7 @@ const PREFERRED_PLOT_ORDERS: Record<ArrowPlotId, number> = {
 	attackArrow: 5,
 	swallowtailAttackArrow: 6,
 	curvedArrow: 7,
+	hookCurvedArrow: 8,
 	largeFineArrow: 11,
 	largeAssaultDirection: 12,
 	largeAttackArrow: 13,
@@ -263,6 +268,7 @@ interface ArrowEntryByKind {
 	attackArrow: AttackArrowEntry;
 	swallowtailAttackArrow: SwallowtailAttackEntry;
 	curvedArrow: CurvedArrowEntry;
+	hookCurvedArrow: CurvedArrowEntry;
 	largeFineArrow: FineArrowEntry;
 	largeAssaultDirection: AssaultDirectionEntry;
 	largeAttackArrow: AttackArrowEntry;
@@ -278,6 +284,7 @@ interface ArrowEntryByKind {
  *
  * 布局(纬度 28° 处,1° lon ≈ 98 km,1° lat ≈ 111 km):
  *
+ *                         hookCurved (NE, 钩形回环手绘 ~40 m)
  *           curved (NW, S-shape spans ~30 m)
  *
  *               fineArrow (N, ~12 m pointer east)
@@ -339,6 +346,45 @@ function buildInitialControlPoints(
 		],
 	};
 
+	// ── 钩形回环手绘轨迹(复刻"手绘钩形曲线箭头无头" bug 的真实场景)──
+	// 48 个密集控制点(模拟手绘逐点采样),轨迹:先向东长直行 → 东侧大半圆
+	// 向南掉头 → 向西回扫 → 末端向内卷曲 ~160°,尖端朝东指向回环中心。
+	// 总转角 > 340°、CR 密采样后脊线远超 58 样本预算,完整覆盖三条修复路径:
+	// 弧长重采样、头长末端转角 clamp、特征保留式降采样兜底。
+	// 放在中心东北 ~80 m 处,跨度 ~40 m,不与其它箭头重叠。
+	const hookCenterLon = centerLon + 55.0 * mLon;
+	const hookCenterLat = centerLat + 75.0 * mLat;
+	const hookScaleMeters = 12.0;
+	const hookPointCount = 48;
+	const hookCurvedArrowPoints: LonLatPoint[] = [];
+	for ( let i = 0; i < hookPointCount; i++ ) {
+		const t = i / ( hookPointCount - 1 );
+		let xMeters: number;
+		let yMeters: number;
+		if ( t < 0.40 ) {
+			// 第一段(40% 弧长):向东直行。
+			const u = t / 0.40;
+			xMeters = ( -2.0 + u * 2.0 ) * hookScaleMeters;
+			yMeters = 0.8 * hookScaleMeters;
+		} else if ( t < 0.75 ) {
+			// 第二段(35%):东侧大弯,从向东顺时针转 180° 到向西(椭圆,东西向拉宽)。
+			const u = ( t - 0.40 ) / 0.35;
+			const a = Math.PI / 2 - u * Math.PI;
+			xMeters = 0.8 * hookScaleMeters * Math.cos( a ) * 1.4;
+			yMeters = 0.8 * hookScaleMeters * Math.sin( a );
+		} else {
+			// 第三段(25%):末端向内卷曲(继续顺时针 ~160°),尖端指向回环中心。
+			const u = ( t - 0.75 ) / 0.25;
+			const a = -Math.PI / 2 - u * ( 160.0 * Math.PI / 180.0 );
+			xMeters = ( -0.4 + 0.45 * Math.cos( a ) ) * hookScaleMeters;
+			yMeters = ( -0.45 + 0.45 * Math.sin( a ) ) * hookScaleMeters;
+		}
+		hookCurvedArrowPoints.push( [
+			hookCenterLon + xMeters * mLon,
+			hookCenterLat + yMeters * mLat,
+		] );
+	}
+
 	const largeCenterLon = centerLon + 0.018;
 	const largeCenterLat = centerLat + 0.13;
 	const kmLon = 1000.0 * mLon;
@@ -379,7 +425,7 @@ function buildInitialControlPoints(
 		],
 	};
 
-	return { ...smallPoints, ...largePoints };
+	return { ...smallPoints, hookCurvedArrow: hookCurvedArrowPoints, ...largePoints };
 }
 
 /**
@@ -427,6 +473,7 @@ const ARROW_MINIMUM_POINTS: Record<ArrowPlotId, number> = {
 	attackArrow: 3,
 	swallowtailAttackArrow: 3,
 	curvedArrow: 2,
+	hookCurvedArrow: 2,
 	largeFineArrow: 2,
 	largeAssaultDirection: 2,
 	largeAttackArrow: 3,
@@ -576,6 +623,13 @@ export class ArrowSubsystem {
 				'curvedArrow',
 				initialPoints.curvedArrow,
 				reservedPlotOrders.curvedArrow,
+				DEFAULT_CURVED_ARROW_OPTIONS,
+			) as CurvedArrowEntry,
+			hookCurvedArrow: this.createEntry(
+				'hookCurvedArrow',
+				'curvedArrow',
+				initialPoints.hookCurvedArrow,
+				reservedPlotOrders.hookCurvedArrow,
 				DEFAULT_CURVED_ARROW_OPTIONS,
 			) as CurvedArrowEntry,
 			largeFineArrow: this.createEntry(
@@ -869,6 +923,7 @@ export class ArrowSubsystem {
 		this.installAttackArrowFolder( smallRoot, this.entries.attackArrow );
 		this.installSwallowtailFolder( smallRoot, this.entries.swallowtailAttackArrow );
 		this.installCurvedArrowFolder( smallRoot, this.entries.curvedArrow );
+		this.installCurvedArrowFolder( smallRoot, this.entries.hookCurvedArrow );
 
 		this.installFineArrowFolder( largeRoot, this.entries.largeFineArrow );
 		this.installAssaultDirectionFolder( largeRoot, this.entries.largeAssaultDirection );

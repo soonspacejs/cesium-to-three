@@ -9,6 +9,11 @@
 //            点也是 neckLeft,直接拼接会产生连续重复;某些三角剖分器对
 //            零面积边敏感,需要先 collapse。
 //
+//         1.5 resolveSelfIntersections —— 消除自交(钩形/回环/hairpin 脊线)。
+//            轨迹卷曲到带状体自身重叠时单环会全局自交,earcut 渲染未定义
+//            (大面积错误填充)。仅在检测到自交时用 polygon-clipping 自并集
+//            解析为干净外环;非自交环原样通过,常规箭头零回归。
+//
 //         2. ensureCounterClockwise —— 强制 CCW 绕向。
 //            CesiumGroundPolygonPrimitive 的 shadow volume / SDF 着色器
 //            隐含约定外环 CCW,反向会让填充与描边方向错乱。本函数通过
@@ -16,12 +21,16 @@
 //
 //         3. clampVertexCount —— 必要时降采样到上限以内。
 //            CesiumGroundPolygonPrimitive 的 MAX_POLYGON_STYLE_VERTICES
-//            = 128,本模块默认上限 = 120,留 8 个余量。降采样均匀步进保留
-//            首尾点,确保闭合形状不变。
+//            = 128,本模块默认上限 = 120,留 8 个余量。降采样是**特征保留式**
+//            的:尖端/翼尖/尾角等大转角顶点无条件保留,只在平滑段内按比例
+//            抽稀(朴素均匀步进曾把箭头头部 3 个连续特征顶点抽掉,见函数
+//            注释里的修复历史)。
 //
 // 依赖:arrow-geometry.ts 的 mathDistance / COINCIDENT_TOLERANCE 同等阈值。
 // 被消费:arrow/shapes/*.ts(所有箭头生成器在 return 前调用 finalizePolygon)。
 // ============================================================
+
+import polygonClipping from 'polygon-clipping';
 
 import { mathDistance } from './arrow-geometry';
 import type { LonLatPoint } from './arrow-types';
@@ -129,15 +138,37 @@ export function ensureCounterClockwise( ring: readonly LonLatPoint[] ): LonLatPo
 }
 
 /**
- * 均匀降采样到指定上限,严格保留首尾点。
+ * 顶点被视为"特征顶点"的最小转角(弧度)。
  *
- * 算法:从 [0, n-1] 区间按 (maxCount-1) 段均匀步进取整数索引。这样
- * 首点 (i=0) 与末点 (i=maxCount-1 对应 ring.length-1) 永远入选,中间
- * 视形状均匀分布。
+ * 箭头环上的语义顶点 —— 尖端(~120° 转角)、左右翼尖(~90°+)、尾角(~90°)、
+ * 燕尾凹口(~90°+)—— 全部远大于 20°;而 Catmull-Rom 平滑体部相邻样本间的
+ * 转角通常只有几度。20° 在两个群体之间留有数倍余量。
+ */
+const FEATURE_TURN_THRESHOLD_RAD = Math.PI / 9;
+
+/**
+ * 特征保留式降采样到指定上限。
  *
- * 注:严格的"保形降采样"应该用 Visvalingam–Whyatt 之类的算法,根据三角形
- * 面积优先级删除冗余点。但本模块的箭头由 Catmull-Rom 平滑生成,任意位置
- * 的曲率分布都比较均匀,简单步进足够保形 + 实现简单。
+ * **修复历史:本函数曾是"均匀步进取索引"的朴素降采样 —— 它是"钩形手绘
+ * 曲线箭头无头"bug 的直接根因。** 手绘几十~上百控制点时箭头环顶点数
+ * 上千,均匀步进的间隔 > 10,头部 3 个**连续**特征顶点(headLeft / tip /
+ * headRight)恰好整组落在步进间隔之间被抽掉,带状体末端渲染成平头。
+ *
+ * 新算法分两步:
+ *   1. **标记特征顶点**:环上转角 ≥ FEATURE_TURN_THRESHOLD_RAD(20°)的顶点
+ *      (尖端 / 翼尖 / 尾角 / 燕尾凹口)无条件全部保留。箭头形状的特征顶点
+ *      不超过 ~8 个,远小于预算。
+ *   2. **按比例分配剩余预算**:相邻特征顶点之间的"平滑段"按各自顶点数
+ *      占比分得配额(最大余数法,配额总和精确等于剩余预算),段内均匀
+ *      取点。平滑段都是 Catmull-Rom 体部边缘,均匀抽稀不损失视觉形状。
+ *
+ * 输出从第一个特征顶点开始(整环的旋转),对闭合多边形语义无影响
+ * (绕向、闭合性、面积均不变)。
+ *
+ * 退化保护:
+ *   - 无特征顶点(纯平滑环)→ 回退为均匀步进降采样。
+ *   - 特征顶点数超过 cap - 4(噪声环,每个顶点都是尖角)→ 同样回退为
+ *     均匀步进:此时"特征"已无语义,保哪个都一样。
  *
  * @param ring 输入环。
  * @param maxCount 目标点数上限,≥ 4。
@@ -148,17 +179,101 @@ export function clampVertexCount(
 	maxCount: number,
 ): LonLatPoint[] {
 	const cap = Math.max( Math.floor( maxCount ), 4 );
-	if ( ring.length <= cap ) {
+	const n = ring.length;
+	if ( n <= cap ) {
 		return ring.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
 	}
 
-	const sampled: LonLatPoint[] = new Array( cap );
-	const step = ( ring.length - 1 ) / ( cap - 1 );
-	for ( let i = 0; i < cap; i++ ) {
-		const srcIdx = Math.round( i * step );
-		const safeIdx = Math.min( srcIdx, ring.length - 1 );
-		const src = ring[ safeIdx ];
-		sampled[ i ] = [ src[ 0 ], src[ 1 ] ];
+	// ── 步骤 1:逐顶点转角(闭合环,索引模 n)──
+	// turn = |atan2(cross, dot)| ∈ [0, π],入边 (prev→curr) 与出边 (curr→next)
+	// 的夹角偏离直线的程度;0 = 共线,π = 完全折返。
+	const featureIndices: number[] = [];
+	for ( let i = 0; i < n; i++ ) {
+		const prev = ring[ ( i - 1 + n ) % n ];
+		const curr = ring[ i ];
+		const next = ring[ ( i + 1 ) % n ];
+		const v1x = curr[ 0 ] - prev[ 0 ];
+		const v1y = curr[ 1 ] - prev[ 1 ];
+		const v2x = next[ 0 ] - curr[ 0 ];
+		const v2y = next[ 1 ] - curr[ 1 ];
+		const cross = v1x * v2y - v1y * v2x;
+		const dot = v1x * v2x + v1y * v2y;
+		const turn = Math.abs( Math.atan2( cross, dot ) );
+		if ( turn >= FEATURE_TURN_THRESHOLD_RAD ) {
+			featureIndices.push( i );
+		}
+	}
+
+	// ── 退化回退:无特征或特征本身挤爆预算 → 均匀步进(旧行为)──
+	const featureCount = featureIndices.length;
+	if ( featureCount === 0 || featureCount > cap - 4 ) {
+		const sampled: LonLatPoint[] = new Array( cap );
+		const step = ( n - 1 ) / ( cap - 1 );
+		for ( let i = 0; i < cap; i++ ) {
+			const srcIdx = Math.min( Math.round( i * step ), n - 1 );
+			const src = ring[ srcIdx ];
+			sampled[ i ] = [ src[ 0 ], src[ 1 ] ];
+		}
+		return sampled;
+	}
+
+	// ── 步骤 2:剩余预算按平滑段顶点数比例分配(最大余数法)──
+	// 平滑段 j = 特征 j 与特征 j+1(循环)之间的内部顶点,数量 interiorCount[j]。
+	const remainingBudget = cap - featureCount;
+	const interiorCounts: number[] = new Array( featureCount );
+	let totalInterior = 0;
+	for ( let j = 0; j < featureCount; j++ ) {
+		const start = featureIndices[ j ];
+		const end = featureIndices[ ( j + 1 ) % featureCount ];
+		const count = ( end - start - 1 + n ) % n;
+		interiorCounts[ j ] = count;
+		totalInterior += count;
+	}
+
+	// totalInterior = n - featureCount > cap - featureCount = remainingBudget,
+	// 所以每段配额必然 ≤ 段内顶点数,不会"超采"。
+	const quotas: number[] = new Array( featureCount );
+	const remainders: { j: number; frac: number }[] = [];
+	let allocated = 0;
+	for ( let j = 0; j < featureCount; j++ ) {
+		const exact = totalInterior > 0
+			? ( remainingBudget * interiorCounts[ j ] ) / totalInterior
+			: 0;
+		const base = Math.floor( exact );
+		quotas[ j ] = base;
+		allocated += base;
+		remainders.push( { j, frac: exact - base } );
+	}
+	// 把向下取整丢掉的名额按小数部分从大到小补齐,且不超过段内顶点数。
+	remainders.sort( ( a, b ) => b.frac - a.frac );
+	let leftover = remainingBudget - allocated;
+	for ( const r of remainders ) {
+		if ( leftover <= 0 ) {
+			break;
+		}
+		if ( quotas[ r.j ] < interiorCounts[ r.j ] ) {
+			quotas[ r.j ]++;
+			leftover--;
+		}
+	}
+
+	// ── 步骤 3:重建环:特征顶点 + 各平滑段内均匀取 quota 个内部顶点 ──
+	const sampled: LonLatPoint[] = [];
+	for ( let j = 0; j < featureCount; j++ ) {
+		const start = featureIndices[ j ];
+		const src = ring[ start ];
+		sampled.push( [ src[ 0 ], src[ 1 ] ] );
+
+		const interior = interiorCounts[ j ];
+		const quota = quotas[ j ];
+		// 段内偏移 1..interior 上均匀取 quota 个:offset = round(q*(interior+1)/(quota+1))。
+		// 步长 (interior+1)/(quota+1) ≥ 1(quota ≤ interior),取整后单调不减、
+		// quota = interior 时恰好取满 1..interior,无重复。
+		for ( let q = 1; q <= quota; q++ ) {
+			const offset = Math.round( ( q * ( interior + 1 ) ) / ( quota + 1 ) );
+			const pick = ring[ ( start + offset ) % n ];
+			sampled.push( [ pick[ 0 ], pick[ 1 ] ] );
+		}
 	}
 	return sampled;
 }
@@ -226,7 +341,140 @@ export function removeHairpinVertices(
 }
 
 /**
- * 一站式正规化:**去重 → 移除 hairpin → 强制 CCW → 降采样 ≤ maxCount**。
+ * 两条线段是否"严格相交"(排除共享端点的相触)。
+ *
+ * 用于 {@link ringSelfIntersects} 的自交检测。参数式 t/s 都落在开区间内才算真交。
+ */
+function segmentsStrictlyCross(
+	a: LonLatPoint, b: LonLatPoint,
+	c: LonLatPoint, d: LonLatPoint,
+): boolean {
+	const rX = b[ 0 ] - a[ 0 ];
+	const rY = b[ 1 ] - a[ 1 ];
+	const sX = d[ 0 ] - c[ 0 ];
+	const sY = d[ 1 ] - c[ 1 ];
+	const denom = rX * sY - rY * sX;
+	if ( Math.abs( denom ) < 1e-20 ) {
+		return false; // 平行 / 共线:不算严格相交。
+	}
+	const acX = c[ 0 ] - a[ 0 ];
+	const acY = c[ 1 ] - a[ 1 ];
+	const t = ( acX * sY - acY * sX ) / denom;
+	const u = ( acX * rY - acY * rX ) / denom;
+	const EPS = 1e-9;
+	return t > EPS && t < 1.0 - EPS && u > EPS && u < 1.0 - EPS;
+}
+
+/**
+ * 闭合环是否存在自交(任意一对**非相邻**边严格相交)。
+ *
+ * O(n²) 暴力检测。箭头环 ≤ 120 顶点 ⟹ ≤ ~7000 对,微秒级,发现首个交点即
+ * 提前返回。
+ *
+ * @param ring 闭合多边形环(首尾不重复)。
+ * @returns 存在自交返回 true。
+ */
+function ringSelfIntersects( ring: readonly LonLatPoint[] ): boolean {
+	const n = ring.length;
+	if ( n < 4 ) {
+		return false;
+	}
+	for ( let i = 0; i < n; i++ ) {
+		const a = ring[ i ];
+		const b = ring[ ( i + 1 ) % n ];
+		// j 从 i+2 起跳过相邻边;(i===0,j===n-1) 是首尾相邻边,排除。
+		for ( let j = i + 2; j < n; j++ ) {
+			if ( i === 0 && j === n - 1 ) {
+				continue;
+			}
+			if ( segmentsStrictlyCross( a, b, ring[ j ], ring[ ( j + 1 ) % n ] ) ) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+/**
+ * 用多边形布尔自并集消除环的自交,返回**最大面积外环**。
+ *
+ * 钩形 / 回环 / 螺旋等"轨迹卷曲到带状体自身重叠"的输入,沿脊线偏移得到的
+ * 单环会全局自交(两段带状体物理重叠)。earcut 对自交多边形行为未定义 →
+ * 渲染出大面积错误填充(用户反馈的现象)。
+ *
+ * 业界标准做法(Clipper / polygon-clipping)是把自交环做一次**自并集**
+ * (union of the ring with itself,nonzero / positive fill rule):重叠区按
+ * 非零环绕数判定为实心,自交被解析为干净的非自交边界。本函数取并集结果中
+ * **面积最大的外环**作为箭头轮廓。
+ *
+ * 单环输出契约下的取舍:
+ *   - 并集可能产出**洞**(轨迹几乎闭合成圈时,圈内中空)。单环契约下丢弃洞 →
+ *     完全闭合的回环其圈内会被填实。这只影响"末端卷曲 > ~220°"的极端螺旋
+ *     (常规钩形 / 攻击箭头不受影响);完整的洞支持留作后续增强。
+ *   - 并集可能产出多个不相连多边形(箭头某处掐断成零宽)。取最大面积外环,
+ *     丢弃碎片。常规箭头不会发生。
+ *
+ * **仅在 ringSelfIntersects 为真时调用**,因此非自交的常规箭头(直箭头、
+ * S 形曲线、平缓钩形)走原路径,几何与历史版本逐位一致,零回归。
+ *
+ * @param ring 已去重的闭合环。
+ * @returns 干净的非自交外环;并集失败 / 退化时回退原环(不抛错)。
+ */
+function resolveSelfIntersections( ring: readonly LonLatPoint[] ): LonLatPoint[] {
+	if ( ! ringSelfIntersects( ring ) ) {
+		return ring.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
+	}
+
+	// polygon-clipping 需要闭合环(首尾点重复)。
+	const closed: [ number, number ][] = ring.map( ( p ) => [ p[ 0 ], p[ 1 ] ] );
+	closed.push( [ ring[ 0 ][ 0 ], ring[ 0 ][ 1 ] ] );
+
+	let result: ReturnType<typeof polygonClipping.union>;
+	try {
+		// 单多边形自并集:解析自身重叠为 nonzero 实心区域。
+		result = polygonClipping.union( [ closed ] );
+	} catch {
+		// 数值退化(极端共线 / 重合)时 polygon-clipping 可能抛错;回退原环,
+		// 由下游 CCW + clamp 尽力处理,绝不让箭头整体消失。
+		return ring.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
+	}
+	if ( ! result || result.length === 0 ) {
+		return ring.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
+	}
+
+	// 取面积最大的外环(每个 polygon 的 [0] 是外环,[1..] 是洞)。
+	let bestOuter: [ number, number ][] | null = null;
+	let bestArea = -1.0;
+	for ( const poly of result ) {
+		const outer = poly[ 0 ];
+		if ( ! outer || outer.length < 4 ) {
+			continue;
+		}
+		let twiceArea = 0.0;
+		for ( let i = 0; i < outer.length - 1; i++ ) {
+			twiceArea += outer[ i ][ 0 ] * outer[ i + 1 ][ 1 ]
+				- outer[ i + 1 ][ 0 ] * outer[ i ][ 1 ];
+		}
+		const a = Math.abs( twiceArea );
+		if ( a > bestArea ) {
+			bestArea = a;
+			bestOuter = outer;
+		}
+	}
+	if ( bestOuter === null ) {
+		return ring.map( ( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint );
+	}
+
+	// 去掉 polygon-clipping 闭合环结尾的重复首点。
+	const out: LonLatPoint[] = [];
+	for ( let i = 0; i < bestOuter.length - 1; i++ ) {
+		out.push( [ bestOuter[ i ][ 0 ], bestOuter[ i ][ 1 ] ] );
+	}
+	return out;
+}
+
+/**
+ * 一站式正规化:**去重 → 消除自交 → 移除 hairpin → 强制 CCW → 降采样 ≤ maxCount**。
  *
  * 所有箭头生成器最后一步都应调用此函数,确保输出符合
  * CesiumGroundPolygonPrimitive 的契约(3-128 顶点、闭合、CCW、无重复)。
@@ -248,15 +496,36 @@ export function finalizePolygon(
 		return [];
 	}
 
-	// 2. 移除 hairpin(近 180° U-turn 的顶点)。
-	const noHairpin = removeHairpinVertices( dedup );
+	// 2. 消除自交(钩形 / 回环 / hairpin 脊线导致带状体自身重叠)。
+	// 仅在检测到自交时做多边形自并集;非自交环原样返回 → 常规箭头零回归。
+	// 必须在 hairpin / clamp 之前:union 后的环才是最终拓扑,后续清理基于它。
+	const simple = resolveSelfIntersections( dedup );
+	if ( simple.length < 3 ) {
+		return [];
+	}
+
+	// 3. 移除 hairpin(近 180° U-turn 的顶点)。
+	const noHairpin = removeHairpinVertices( simple );
 	if ( noHairpin.length < 3 ) {
 		return [];
 	}
 
-	// 3. 强制 CCW(外环约定)
+	// 4. 强制 CCW(外环约定)
 	const ccw = ensureCounterClockwise( noHairpin );
 
-	// 4. 降采样到上限
-	return clampVertexCount( ccw, maxCount );
+	// 5. 降采样到上限
+	const clamped = clampVertexCount( ccw, maxCount );
+
+	// 6. 末端二次自交防线(**无条件检测**)。
+	// hairpin 移除与 clamp 降采样都可能在近退化(极小尺度、高密度抖动、大量
+	// 重合点)输入上新引入交叉。绝大多数箭头此处 ringSelfIntersects 为 false,
+	// 仅一次 O(n²)(n ≤ 120,微秒级)即返回;真有交叉时再做一次 union 兜底。
+	// union 可能微增顶点,但仍远低于下游 MAX_POLYGON_STYLE_VERTICES = 128。
+	if ( ! ringSelfIntersects( clamped ) ) {
+		return clamped;
+	}
+	const reSimplified = resolveSelfIntersections( clamped );
+	return reSimplified.length > maxCount
+		? clampVertexCount( reSimplified, maxCount )
+		: reSimplified;
 }
