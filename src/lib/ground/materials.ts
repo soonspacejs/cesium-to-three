@@ -427,14 +427,21 @@ uniform float u_arrowLengthPixels;
 uniform float u_arrowHalfWidthPixels;
 uniform float u_arrowLengthMeters;
 uniform float u_arrowHalfWidthMeters;
+// 箭头样式 id 常量——与 TS 端 ARROW_STYLE_ID 逐值对齐（line-arrowhead.ts）。
+// 新增样式时这里加一个同值 define，FS 加一个判定分支。线 FS 收口 + 箭头 FS
+// 成员判定都引用这套常量（两者都定义 CESIUM_THREE_POLYLINE）。
+#define ARROW_STYLE_SOLID 0
+#define ARROW_STYLE_OPEN  1
 // 线 FS 专用：是否对起 / 终端做 arrow 收口裁剪
 // （> 0.5 启用；arrowMode 包含对应端时启用）
 uniform float u_lineArrowClipEndEnabled;
 uniform float u_lineArrowClipStartEnabled;
-// 线 FS 专用：箭头是否实心三角（> 0.5 = solid，否则 open chevron）。
-// solid 时线在箭头长度内整段收平到 base，避免线体在三角形内的那层与实心
-// 箭头叠加导致半透明翻倍；open 时线收窄成 V 形嵌进 chevron 保持连续。
-uniform float u_lineArrowSolid;
+// 线 FS 专用：起 / 终端各自的箭头样式 id（ARROW_STYLE_*）。两端可不同——
+// 起点实心、终点空心时收口策略也要分别按各自样式走，不能共用一个标志。
+// solid 类：线在箭头长度内整段收平到 base，避免线体在三角形内那层与实心箭头
+// 叠加导致半透明翻倍；open 类：线收窄成 V 形嵌进 chevron 保持连续。
+uniform float u_lineArrowStyleStart;
+uniform float u_lineArrowStyleEnd;
 
 ${ cesiumMetersPerPixel }
 #endif
@@ -1202,11 +1209,8 @@ void main() {
 		);
 		float distFromGlobalEnd = ( 1.0 - s ) * u_lineTotalMeters;
 		if ( distFromGlobalEnd < arrowLm && arrowLm > 0.0 ) {
-			if ( u_lineArrowSolid > 0.5 ) {
-				// SOLID：整段裁掉,线在箭头 base 处收平,让实心三角独占该区域。
-				// 否则线在三角形内保留的那层会与箭头叠加 → 半透明翻倍。
-				discard;
-			} else {
+			// 终端按**终端自己的**样式 id 收口（与起端独立）。
+			if ( int( u_lineArrowStyleEnd + 0.5 ) == ARROW_STYLE_OPEN ) {
 				// OPEN：横向半宽线性收窄成 V 形嵌进 chevron,保持线在 chevron 内连续。
 				float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
 					u_arrowHalfWidthMeters,
@@ -1216,6 +1220,10 @@ void main() {
 				if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
 					discard;
 				}
+			} else {
+				// SOLID（及其它实心类，默认）：整段裁掉,线在箭头 base 处收平,让实心
+				// 三角独占该区域。否则线在三角形内保留的那层会与箭头叠加 → 半透明翻倍。
+				discard;
 			}
 		}
 	}
@@ -1226,9 +1234,8 @@ void main() {
 		);
 		float distFromGlobalStart = s * u_lineTotalMeters;
 		if ( distFromGlobalStart < arrowLm && arrowLm > 0.0 ) {
-			if ( u_lineArrowSolid > 0.5 ) {
-				discard;
-			} else {
+			// 起端按**起端自己的**样式 id 收口（与终端独立）。
+			if ( int( u_lineArrowStyleStart + 0.5 ) == ARROW_STYLE_OPEN ) {
 				float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
 					u_arrowHalfWidthMeters,
 					u_arrowHalfWidthPixels * czm_metersPerPixel( eyeCoordinate )
@@ -1237,6 +1244,8 @@ void main() {
 				if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
 					discard;
 				}
+			} else {
+				discard;
 			}
 		}
 	}
@@ -1340,10 +1349,13 @@ in vec3 arrowRightDir;
 in vec3 arrowUpDir;
 in vec3 arrowCorner;             // (aCoef, bSign, topBottomSide)
 in vec2 arrowTerrainHeights;     // (minHeight, maxHeight) 端点处地形高度窗口（米）
+in float arrowStyleId;           // 逐盒样式 id（见 ARROW_STYLE_ID / ARROW_STYLE_* define）
 
 out vec3 v_arrowTipEC;
 out vec3 v_arrowBackEC;
 out vec3 v_arrowRightEC;
+// 逐盒常量（同一盒 8 顶点同值），flat 直透 FS——两端可不同样式。
+flat out float v_arrowStyle;
 
 void main() {
 	// 1) tip EC：RTE 解码（与线 ecStart 同路径），消除高 zoom 抖动。
@@ -1357,6 +1369,7 @@ void main() {
 	v_arrowTipEC   = tipEC.xyz;
 	v_arrowBackEC  = backEC;
 	v_arrowRightEC = rightEC;
+	v_arrowStyle   = arrowStyleId;
 
 	// 3) 像素 → 米：盒子放大 ARROW_BOX_PADDING 倍包住 FS 三角形。
 	//    *关键*：tip 在 alt=0（椭球面），相机若高于 tip 又看着地形，则 mpp(tipEC)
@@ -1428,14 +1441,16 @@ void main() {
 `;
 
 /**
- * 线端箭头 FS。深度纹理重建 + 端点切平面 (a,b) 投影 + 实心三角形成员判定。
+ * 线端箭头 FS。深度纹理重建 + 端点切平面 (a,b) 投影 + 逐盒成员判定。
  * 屏幕恒定来自「FS 用地形点 EC 算 metersPerPixel」（与线 halfMaxWidth 同口径）。
- * `ARROW_OPEN` define 切换为「开口雪佛龙」样式（仅画到两条斜边的笔宽内）。
+ * 样式由 `v_arrowStyle`（逐盒 `arrowStyleId`）运行时分派：ARROW_STYLE_SOLID 实心
+ * 三角、ARROW_STYLE_OPEN 开口雪佛龙——同一 mesh 内两端可不同样式。
  */
 const ARROWHEAD_FS = /* glsl */ `
 in vec3 v_arrowTipEC;
 in vec3 v_arrowBackEC;
 in vec3 v_arrowRightEC;
+flat in float v_arrowStyle;      // 逐盒样式 id（见 ARROW_STYLE_* define）
 
 void main() {
 	// 1) 采样全局地形深度纹理（与线 FS 完全一致）。
@@ -1481,13 +1496,26 @@ void main() {
 	float aShift   = a + aOffset;
 	float LmShift  = Lm + aOffset;
 
-	// 6) 三角形成员判定（用 aShift / LmShift；几何意义不变，只是 apex 外移了）。
-#ifdef ARROW_OPEN
-	// 开口雪佛龙：只画三角形两条斜边附近的笔宽内像素。V 形保留完整作为边界，
-	// 让线 FS 在端点附近按 V 形收口（线 FS 自带 arrow Lm/Wm uniform 做裁剪）。
-	float lineFactor = LmShift / sqrt( LmShift * LmShift + Wm * Wm );
-	float edgeDistance = abs( abs( b ) - Wm * ( aShift / LmShift ) ) * lineFactor;
-	if ( aShift < 0.0 || aShift > LmShift || edgeDistance > u_arrowStrokeHalfPixels * mpp ) {
+	// 6) 成员判定（用 aShift / LmShift；几何意义不变，只是 apex 外移了）。
+	//    逐盒按样式 id 分派——同一 mesh 里两端可不同样式（起点实心、终点空心）。
+	//    新增样式：加一个 else-if ( style == ARROW_STYLE_X ) 分支即可，默认落回
+	//    实心三角。insideArrow 为 true 表示该像素属于箭头，留下；否则 discard。
+	int style = int( v_arrowStyle + 0.5 );
+	bool insideArrow;
+	if ( style == ARROW_STYLE_OPEN ) {
+		// 开口雪佛龙：只画三角形两条斜边附近的笔宽内像素。V 形保留完整作为边界，
+		// 让线 FS 在端点附近按 V 形收口（线 FS 自带 arrow Lm/Wm uniform 做裁剪）。
+		float lineFactor = LmShift / sqrt( LmShift * LmShift + Wm * Wm );
+		float edgeDistance = abs( abs( b ) - Wm * ( aShift / LmShift ) ) * lineFactor;
+		insideArrow = aShift >= 0.0 && aShift <= LmShift
+			&& edgeDistance <= u_arrowStrokeHalfPixels * mpp;
+	} else {
+		// 实心三角（ARROW_STYLE_SOLID，默认）：0 ≤ aShift ≤ LmShift 且
+		// |b| ≤ Wm·(aShift/LmShift)（基底向 apex 线性收窄；apex 落在端点处）。
+		insideArrow = aShift >= 0.0 && aShift <= LmShift
+			&& abs( b ) <= Wm * ( aShift / LmShift );
+	}
+	if ( ! insideArrow ) {
 #ifdef DEBUG_SHOW_VOLUME
 		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
 		return;
@@ -1495,18 +1523,6 @@ void main() {
 		discard;
 #endif
 	}
-#else
-	// 实心三角（默认）：0 ≤ aShift ≤ LmShift 且 |b| ≤ Wm·(aShift/LmShift)
-	// （基底向 apex 线性收窄；apex 落在 a=-aOffset 即端点之外 aOffset 米）。
-	if ( aShift < 0.0 || aShift > LmShift || abs( b ) > Wm * ( aShift / LmShift ) ) {
-#ifdef DEBUG_SHOW_VOLUME
-		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
-		return;
-#else
-		discard;
-#endif
-	}
-#endif
 
 	// 7) 上色（预乘 alpha，配合 blendSrc=ONE）+ log-depth。
 	vec4 col = u_arrowColor;
@@ -1523,21 +1539,21 @@ void main() {
  * 创建线端箭头材质。与线材质字节级相同的渲染状态，只换 shader 主体 + 加
  * `CESIUM_THREE_POLYLINE_ARROW` define 拉出 arrow uniform。
  *
+ * 样式不再走 define 分支：每个盒子的样式由顶点属性 `arrowStyleId` 携带，FS 按 id
+ * 分派——单材质即可同时渲染两端不同样式（起点实心、终点空心）。
+ *
  * @param uniforms     共享 uniforms（与同一 polyline 实例共用）。
  * @param debugVolume  把盒子整体染绿调试用。
- * @param open         true → 走开口雪佛龙样式（`ARROW_OPEN`）；默认实心三角。
  * @returns            RawShaderMaterial。
  */
 export function createArrowHeadMaterial(
 	uniforms: SharedUniforms,
 	debugVolume = false,
-	open = false,
 ): RawShaderMaterial {
 	const defines = combineDefines( [
 		'PER_INSTANCE_COLOR',
 		'CESIUM_THREE_POLYLINE',
 		'CESIUM_THREE_POLYLINE_ARROW',
-		open ? 'ARROW_OPEN' : '',
 		debugVolume ? 'DEBUG_SHOW_VOLUME' : '',
 	] );
 

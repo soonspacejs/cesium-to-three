@@ -51,6 +51,7 @@ import {
 import type { LineGeometryUserData } from './line/line-shadow-volume';
 import {
 	ARROW_MODE,
+	ARROW_STYLE_ID,
 	buildArrowHeadGeometry,
 } from './line/line-arrowhead';
 import { LineWidthMode } from './line/line-types';
@@ -901,11 +902,13 @@ export class CesiumGroundPolylinePrimitive {
 			userData.startFrame,
 			userData.endFrame,
 			this.options.arrowMode,
+			this.options.arrowStartStyle,
+			this.options.arrowEndStyle,
 		);
+		// 单材质即可：两端样式由几何顶点属性 arrowStyleId 携带，FS 按 id 分派。
 		this.arrowMaterial = createArrowHeadMaterial(
 			this.uniforms,
 			this.options.debugVolume,
-			this.options.arrowStyle === 'open',
 		);
 		this.arrowMesh = new Mesh( this.arrowGeometry, this.arrowMaterial );
 		this.arrowMesh.name = 'CesiumGroundPolylineArrowCommand';
@@ -1058,32 +1061,50 @@ export class CesiumGroundPolylinePrimitive {
 	}
 
 	/**
-	 * 切换箭头样式（实心三角 / 开口雪佛龙）。要换 material 的 define，所以
-	 * 必须重建材质——但几何不变。
+	 * 切换两端箭头样式（统一设成同一样式）。要让两端不同请用 `setArrowStyles`。
 	 *
 	 * @param style 'solid' / 'open'。
 	 */
 	public setArrowStyle( style: CesiumGroundArrowStyle ): void {
-		const newStyle = parseArrowStyle( style );
-		if ( newStyle === this.options.arrowStyle ) {
+		this.setArrowStyles( style, style );
+	}
+
+	/**
+	 * 分别设置起 / 终端箭头样式——两端可不同（例：起点实心三角、终点开口雪佛龙）。
+	 *
+	 * 样式 id 烘焙在箭头几何的 `arrowStyleId` 顶点属性里，所以换样式需重建箭头
+	 * 几何（材质单一、不带 style define，按 id 分派）。线 FS 的逐端收口 uniform
+	 * 一并刷新——即使当前没有 arrowMesh 也先写，之后开启箭头时 clipEnabled 决定
+	 * 是否生效。
+	 *
+	 * @param startStyle 起点端样式 'solid' / 'open'。
+	 * @param endStyle   终点端样式 'solid' / 'open'。
+	 */
+	public setArrowStyles(
+		startStyle: CesiumGroundArrowStyle,
+		endStyle: CesiumGroundArrowStyle,
+	): void {
+		const newStart = parseArrowStyle( startStyle );
+		const newEnd = parseArrowStyle( endStyle );
+		if (
+			newStart === this.options.arrowStartStyle &&
+			newEnd === this.options.arrowEndStyle
+		) {
 			return;
 		}
-		this.options.arrowStyle = newStyle;
-		// 线 FS 的收口裁剪随 style 变化：solid 整段收平、open 收窄成 V 形。
-		// 即使当前没有 arrowMesh 也先刷新——之后开启箭头时 enabled 决定是否生效。
-		( this.uniforms.u_lineArrowSolid as { value: number } ).value =
-			newStyle === 'solid' ? 1.0 : 0.0;
+		this.options.arrowStartStyle = newStart;
+		this.options.arrowEndStyle = newEnd;
+		( this.uniforms.u_lineArrowStyleStart as { value: number } ).value =
+			ARROW_STYLE_ID[ newStart ];
+		( this.uniforms.u_lineArrowStyleEnd as { value: number } ).value =
+			ARROW_STYLE_ID[ newEnd ];
 		if ( this.arrowMesh === undefined ) {
-			return; // 没启用箭头，等开启时再用新 style 建。
+			return; // 没启用箭头，等开启时再用新 style 建几何。
 		}
-		// 只换材质，几何复用。
-		this.arrowMaterial?.dispose();
-		this.arrowMaterial = createArrowHeadMaterial(
-			this.uniforms,
-			this.options.debugVolume,
-			newStyle === 'open',
-		);
-		this.arrowMesh.material = this.arrowMaterial;
+		// 样式烘焙在几何顶点属性里 → 重建箭头几何（不只是换材质）。
+		const userData = this.geometry.userData as LineGeometryUserData;
+		this.disposeArrowMesh();
+		this.buildArrowMesh( userData );
 	}
 
 	/**
@@ -1272,7 +1293,9 @@ function createPolylineUniforms(
 			value: options.arrowMode === ARROW_MODE.LEFT || options.arrowMode === ARROW_MODE.BOTH
 				? 1.0 : 0.0,
 		},
-		// solid → 线整段收平到箭头 base（避免与实心三角叠加）；open → 收窄成 V 形。
-		u_lineArrowSolid: { value: options.arrowStyle === 'solid' ? 1.0 : 0.0 },
+		// 起 / 终端各自的箭头样式 id（与 ARROW_STYLE_ID 对齐）。线 FS 按各端 id 选
+		// 收口策略：solid 整段收平到 base、open 收窄成 V 形。两端独立。
+		u_lineArrowStyleStart: { value: ARROW_STYLE_ID[ options.arrowStartStyle ] },
+		u_lineArrowStyleEnd: { value: ARROW_STYLE_ID[ options.arrowEndStyle ] },
 	} as unknown as SharedUniforms;
 }

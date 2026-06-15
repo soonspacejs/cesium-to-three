@@ -49,6 +49,7 @@ import {
 } from '../lib/plot';
 
 import { createInfoPanel, installPageStyle } from './dom';
+import { installDrawArrowTool } from './draw-tool';
 import { readNumberEnv, readStringEnv } from './env';
 import {
 	configureLoadedTileScene,
@@ -1644,6 +1645,50 @@ export function runPlotDemo(): void {
 	buildArrowFolder( largeGroup, 'arrow', largeArrowState, largeArrowHandle, 300, 20000 );
 	buildTextFolder( largeGroup, 'text', largeTextState, largeTextHandle, 8, 128, 0.5, 80, 10, 0.0001, 0.0001, 5000 );
 
+
+	// ── 点击地图绘制箭头(交互工具)──
+	// 左下角浮动面板:开启拾取 → 左键单击地图采集 (lon, lat) → 选类型 → 确定绘制。
+	// onConfirm 用拾取到的控制点经 GroundDecalManager.addPlot 真正落地箭头,并把它
+	// 登记进 allStates,使信息面板的标绘列表同步显示新绘制的箭头。
+	let drawnArrowCount = 0;
+	const DRAWN_ARROW_FILL_COLORS = [
+		'#33ddff', '#ff9933', '#3a86ff', '#ff66cc', '#9bff66',
+	];
+	installDrawArrowTool( {
+		renderer,
+		camera,
+		tilesRenderer,
+		onConfirm: ( arrowType: PlotArrowType, points: LonLatPoint[] ): void => {
+			const fillColor =
+				DRAWN_ARROW_FILL_COLORS[ drawnArrowCount % DRAWN_ARROW_FILL_COLORS.length ];
+			const state: ArrowState = {
+				visible: true,
+				arrowType,
+				sizeScale: 1.0,
+				curvedBodyWidthFactor: 0.06,
+				curvedHeadWidthFactor: 0.12,
+				curvedHeadLengthFactor: 0.14,
+				strokeColor: '#ffffff',
+				strokeWidth: 0.6,
+				strokeOpacity: 95,
+				fillColor,
+				fillOpacity: 85,
+				translateEastMeters: 0,
+				translateNorthMeters: 0,
+				_appliedEastMeters: 0,
+				_appliedNorthMeters: 0,
+			};
+			const id = decals.addPlot( arrowStateToOptions( state, points ) );
+			drawnArrowCount += 1;
+			const handle: PlotHandle = {
+				key: `drawn-arrow-${ drawnArrowCount }`,
+				label: `[drawn] arrow ${ arrowType } (${ points.length } pts)`,
+				id,
+				initialPoints: points,
+			};
+			allStates.push( { state, handle } );
+		},
+	} );
 
 	function resize(): void {
 		const w = window.innerWidth;

@@ -91,7 +91,11 @@
       "Bash(cat)",
       "Bash(cp /tmp/u-demo-check.ts .claude-tmp-arrow-repro/u-demo-check.ts)",
       "Bash(npx -y tsx .claude-tmp-arrow-repro/u-demo-check.ts)",
-      "Bash(npx -y tsx .claude-tmp-arrow-repro/switch.ts)"
+      "Bash(npx -y tsx .claude-tmp-arrow-repro/switch.ts)",
+      "Bash(npx -y tsx .claude-tmp-arrow-repro/sizecheck.ts)",
+      "Bash(xargs grep -l \"class Ellipsoid\\\\|getPositionToCartographic\\\\|getCartographicToPosition\\\\|class EllipsoidRegion\")",
+      "Bash(xargs grep -ln \"ellipsoid\\\\s*:\")",
+      "Bash(node .claude-tmp-arrow-repro/pick-math-check.mjs)"
     ]
   }
 }

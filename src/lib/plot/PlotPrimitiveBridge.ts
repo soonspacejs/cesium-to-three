@@ -461,8 +461,13 @@ export class PlotPrimitiveBridge {
 						: ( end !== null ) ? 'right'
 							: ( start !== null ) ? 'left'
 								: 'none';
-				const styleHint = start ?? end;
-				const arrowStyle: CesiumGroundArrowStyle = styleHint === 'unfilledArrow' ? 'open' : 'solid';
+				// 起 / 终端各自映射样式——**不再用 `start ?? end` 折叠成一个样式**
+				// （那会让 filledArrow + unfilledArrow 两端渲染成同一种箭头）。
+				// 未启用的那端样式无所谓（arrowMode 不含该端就不渲染），给 'solid' 占位。
+				const startArrowStyle: CesiumGroundArrowStyle =
+					start === 'unfilledArrow' ? 'open' : 'solid';
+				const endArrowStyle: CesiumGroundArrowStyle =
+					end === 'unfilledArrow' ? 'open' : 'solid';
 				const isDash = o.strokeStyle === 'dashed';
 				const dashLengthMeters = isDash ? 60 : undefined;
 				const gapLengthMeters = isDash ? 40 : undefined;
@@ -478,7 +483,8 @@ export class PlotPrimitiveBridge {
 					widthMeters,
 					visible,
 					arrowMode,
-					arrowStyle,
+					startArrowStyle,
+					endArrowStyle,
 					arrowWidthMode: 'world',
 					arrowLengthMeters: lengthMeters,
 					arrowWidthMeters: widthMetersArrow,
