@@ -38,6 +38,7 @@ import type {
 } from './plugins/types';
 
 import { plotOrderToRenderOrder } from './plot-order';
+import { createPlainPlotPrimitive, PlainPlotPrimitive } from './PlainPlotPrimitive';
 
 /**
  * 妗ユ帴鍣ㄦ瀯閫犻€夐」銆? */
@@ -55,12 +56,19 @@ type AnyGroundPrimitive =
 	| CesiumGroundTextPrimitive;
 
 /**
+ * 桥接器可持有的全部渲染图元：贴地路径的 CesiumGround*（classification / 折线 / 文字）
+ * 与不贴地路径的 PlainPlotPrimitive。两条路径共享同一套 PlotEntry 生命周期管理
+ * （resolveGroup / update / dispose / setRenderOrder / 可见性），按 clampToGround 分流。
+ */
+type AnyPlotPrimitive = AnyGroundPrimitive | PlainPlotPrimitive;
+
+/**
  * 鍗曟潯鏍囩粯鍦ㄦˉ鎺ュ櫒鍐呴儴鐨勮褰曘€? *   - signature      鍑犱綍绛惧悕锛岀敤浜庡垽瀹氬嚑浣曟槸鍚﹀彉鍖栥€佹槸鍚﹂渶瑕侀噸寤哄浘鍏冦€? *   - styleSignature 鏍峰紡绛惧悕锛堥鑹?/ 涓嶉€忔槑搴?/ strokeWidth + 鍏ㄥ眬 opacity锛夛紝
  *                    闈㈢被鏃?setColor 鈫?棰滆壊鍙樺寲绾冲叆绛惧悕璧伴噸寤猴紱鎶樼嚎 / 鏂囧瓧
  *                    璧扮儹鏇存柊锛堜粛绾冲叆绛惧悕锛屼究浜庡悗缁瓥鐣ヤ竴鑷村寲锛夈€? */
 interface PlotEntry {
 	plot: GisPlotBase;
-	primitive: AnyGroundPrimitive;
+	primitive: AnyPlotPrimitive;
 	group: Group;
 	signature: string;
 	styleSignature: string;
@@ -69,7 +77,11 @@ interface PlotEntry {
 /**
  * 鍙栧嚭鍥惧厓搴旀寕鍒板満鏅殑 Group銆? * 鎶樼嚎涓庢枃瀛楀浘鍏冭嚜韬毚闇?group锛涘叾浣欙紙鐐?/ 澶氳竟褰?/ 鍦?/ 鎵?/ 鐭╁舰 / 绠ご锛? * 缁?classification 璐村湴锛屾寕 primitive.classification.group銆? *
  * @param primitive 浠绘剰 c2t 璐村湴鍥惧厓銆? * @returns         搴旇 scene.add 鐨?THREE.Group銆? */
-function resolveGroup( primitive: AnyGroundPrimitive ): Group {
+function resolveGroup( primitive: AnyPlotPrimitive ): Group {
+	// 不贴地图元自身就是一个 Group 持有者，直接取其 group。
+	if ( primitive instanceof PlainPlotPrimitive ) {
+		return primitive.group;
+	}
 	if ( primitive instanceof CesiumGroundPolylinePrimitive ) {
 		return primitive.group;
 	}
@@ -115,6 +127,24 @@ function geometrySignature( plot: GisPlotBase ): string {
 		default:
 			return `${ plot.category }|${ pts }`;
 	}
+}
+
+/**
+ * 计算"贴地模式签名"，并入几何签名前缀，使切换 clampToGround / 修改不贴地高度时
+ * 必然触发整图元重建（两条渲染路径产出的图元类型不同，不能走轻量刷新）。
+ *   - 贴地（clampToGround !== false）：返回固定 'ground'，与 heightMeters 无关
+ *     （贴地路径忽略高度，故移动高度滑杆不会让贴地图元做无谓重建）。
+ *   - 不贴地（clampToGround === false）：返回 'plain|<heightMeters>'，高度变化即重建。
+ *
+ * @param plot 数据模型。
+ * @returns    稳定的模式签名前缀。
+ */
+function clampModeSignature( plot: GisPlotBase ): string {
+	const o = plot.options as { clampToGround?: boolean; heightMeters?: number };
+	if ( o.clampToGround === false ) {
+		return `plain|${ o.heightMeters ?? '' }`;
+	}
+	return 'ground';
 }
 
 /**
@@ -214,7 +244,7 @@ export class PlotPrimitiveBridge {
 			plotOrder += 1;
 
 			const existing = this._entries.get( id );
-			const geomSig = geometrySignature( plot );
+			const geomSig = `${ clampModeSignature( plot ) }|${ geometrySignature( plot ) }`;
 			const styleSig = styleSignature( plot, this._opacity );
 
 			if (
@@ -286,7 +316,7 @@ export class PlotPrimitiveBridge {
 	/**
 	 * 褰撳墠鍥惧厓鏄惁鏀寔鏍峰紡鐑洿鏂帮紙棰滆壊 / 鎻忚竟绛夛級銆?	 * 鎶樼嚎锛坰etColor / setWidth锛変笌鏂囧瓧锛坰etText锛夋敮鎸侊紱闈㈢被涓嶆敮鎸侊紝闇€閲嶅缓銆?	 *
 	 * @param primitive 娓叉煋鍥惧厓銆?	 * @returns         true 琛ㄧず鏍峰紡鍙樺寲涔熷彲浠ヨ蛋杞婚噺鍒锋柊銆?	 */
-	private _supportsStyleHotUpdate( primitive: AnyGroundPrimitive ): boolean {
+	private _supportsStyleHotUpdate( primitive: AnyPlotPrimitive ): boolean {
 		return (
 			primitive instanceof CesiumGroundPolylinePrimitive ||
 			primitive instanceof CesiumGroundTextPrimitive
@@ -357,7 +387,15 @@ export class PlotPrimitiveBridge {
 	private _buildPrimitive(
 		plot: GisPlotBase,
 		renderOrder: number,
-	): AnyGroundPrimitive | null {
+	): AnyPlotPrimitive | null {
+		// 不贴地分流：clampToGround === false 时走普通 Three 图元路径
+		// （PlainPlotPrimitive），在 options.heightMeters 高度成面 / 线 / 字，完全不依赖
+		// 贴地深度纹理与 stencil。默认（undefined / true）仍走下方 CesiumGround* 贴地路径，
+		// 既有行为零变化。
+		if ( ( plot.options as { clampToGround?: boolean } ).clampToGround === false ) {
+			return createPlainPlotPrimitive( plot, renderOrder, this._opacity );
+		}
+
 		const base = plot.options;
 		const pts = ( base.points ?? [] ) as LonLatPoint[];
 		const g = this._opacity;

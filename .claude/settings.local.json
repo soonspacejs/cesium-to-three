@@ -95,7 +95,16 @@
       "Bash(npx -y tsx .claude-tmp-arrow-repro/sizecheck.ts)",
       "Bash(xargs grep -l \"class Ellipsoid\\\\|getPositionToCartographic\\\\|getCartographicToPosition\\\\|class EllipsoidRegion\")",
       "Bash(xargs grep -ln \"ellipsoid\\\\s*:\")",
-      "Bash(node .claude-tmp-arrow-repro/pick-math-check.mjs)"
+      "Bash(node .claude-tmp-arrow-repro/pick-math-check.mjs)",
+      "Read(//c/Users/WIN11/**)",
+      "Bash(where fnm *)",
+      "Bash(where volta *)",
+      "Read(//c/Users/WIN11/AppData/Local/nvm/v20.19.1/**)",
+      "Read(//c/Users/WIN11/AppData/Roaming/**)",
+      "Read(//c/Users/WIN11/AppData/Local/**)",
+      "Bash(curl -s -m 5 \"http://localhost:5180/\" -o /dev/null -w \"HTTP %{http_code}\\\\n\")",
+      "Bash(curl -s -m 5 \"http://localhost:5180/\")",
+      "Bash(curl -s -m 5 \"http://localhost:5180/@vite/client\" -o /dev/null -w \"client HTTP %{http_code}\\\\n\")"
     ]
   }
 }

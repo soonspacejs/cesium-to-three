@@ -1229,6 +1229,12 @@ export function runPlotDemo(): void {
 	const globalState = {
 		globalOpacity: 1.0,
 		hideAll: false,
+		// 贴地 / 不贴地全局开关。true（默认）= 全部标绘走 Cesium 贴地路径
+		// （有地形贴地形、无地形贴椭球面）；false = 全部走 PlainPlotPrimitive 普通图元路径，
+		// 在 plainHeightMeters 高度直接渲染，完全不依赖贴地深度。
+		clampToGround: true,
+		// 不贴地时的离地高度（米，相对 WGS84 椭球面）。仅 clampToGround=false 时生效。
+		plainHeightMeters: 0,
 		clearAll: (): void => {
 			decals.clear();
 		},
@@ -1278,6 +1284,24 @@ export function runPlotDemo(): void {
 		} );
 	globalFolder.add( globalState, 'clearAll' ).name( 'clear()' );
 	globalFolder.add( globalState, 'readdAll' ).name( 're-add all (addPlot)' );
+	// ── 贴地 / 不贴地切换 ──────────────────────────────────────────────────────
+	// 关掉"clamp to ground"即把全部标绘从 Cesium 贴地路径切到 PlainPlotPrimitive
+	// 普通图元路径：标绘不再依赖深度纹理 / stencil，直接在 height 高度成面 / 线 / 字，
+	// 故"无地形也照样渲染"。height 滑杆控制不贴地时的离地高度（贴地时忽略）。
+	globalFolder.add( globalState, 'clampToGround' )
+		.name( 'clamp to ground (off = plain)' )
+		.onChange( ( clamp: boolean ) => {
+			for ( const { handle } of allStates ) {
+				decals.setStyle( handle.id, { clampToGround: clamp } );
+			}
+		} );
+	globalFolder.add( globalState, 'plainHeightMeters', 0, 20000, 10 )
+		.name( 'non-clamp height (m)' )
+		.onChange( ( height: number ) => {
+			for ( const { handle } of allStates ) {
+				decals.setStyle( handle.id, { heightMeters: height } );
+			}
+		} );
 	function bindBaseStyleControls<S extends BaseState>(
 		folder: GUI,
 		state: S,
@@ -1714,7 +1738,11 @@ export function runPlotDemo(): void {
 		// 的 updateTerrainLogDepthUniforms 同口径，保证两者深度空间一致）。
 		ellipsoidDepth.update( camera );
 
-		globeDepth.render( renderer, camera, scene, tilesRenderer.group );
+		globeDepth.render( renderer, camera, scene, tilesRenderer.group, {
+			// terrain 开启时 packed depth 只写真实瓦片，避免完整椭球兜底把天空区域
+			// 变成可被贴地线着色的“隐形地面”；关闭 terrain 时再启用兜底。
+			includeFallbackDepth: ! terrainState.terrainOn,
+		} );
 
 		decals.update( {
 			depthTexture: globeDepth.target.texture,

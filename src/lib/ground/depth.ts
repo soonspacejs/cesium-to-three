@@ -11,6 +11,7 @@ import {
 	Color,
 	Mesh,
 	NearestFilter,
+	NoColorSpace,
 	Object3D,
 	RGBAFormat,
 	RawShaderMaterial,
@@ -30,6 +31,15 @@ import {
 	WGS84_Z_RADIUS,
 } from './constants';
 import { createPackDepthMaterial, ENABLE_LOG_DEPTH } from './materials';
+
+export interface CesiumGlobeDepthRenderOptions {
+	/**
+	 * 是否把本通道私有场景中的椭球兜底深度写入 packed depth。
+	 * 有真实地形参与渲染时应关闭，避免不可见的椭球兜底在低角度视角下把天空
+	 * 伪装成有效地面深度；无地形模式则打开，让标绘贴到 WGS84 椭球面。
+	 */
+	includeFallbackDepth?: boolean;
+}
 
 /**
  * 渲染 Cesium 风格的 packed globe depth 纹理。
@@ -52,6 +62,8 @@ export class CesiumGlobeDepth {
 			stencilBuffer: false,
 		} );
 		this.target.texture.name = 'CesiumGlobeDepthPackedTexture';
+		this.target.texture.colorSpace = NoColorSpace;
+		this.target.texture.generateMipmaps = false;
 	}
 
 	/**
@@ -86,9 +98,11 @@ export class CesiumGlobeDepth {
 		camera: PerspectiveCamera,
 		sourceScene: Scene = this.scene,
 		depthRoot?: Object3D,
+		options: CesiumGlobeDepthRenderOptions = {},
 	): void {
 		this.updateLogDepthUniforms( camera );
 
+		const includeFallbackDepth = options.includeFallbackDepth ?? true;
 		const previousTarget = renderer.getRenderTarget();
 		const previousClearColor = new Color();
 		renderer.getClearColor( previousClearColor );
@@ -128,7 +142,7 @@ export class CesiumGlobeDepth {
 		// 从而让贴地 classification 与瓦片是否加载解耦——无瓦片时标绘贴到椭球面，
 		// 而不是因 CULL_FRAGMENTS 读到空深度被整段丢弃。先画兜底、再画瓦片，瓦片
 		// 凭 LESS_EQUAL 在有覆盖处覆盖兜底。当调用方本身就传入 this.scene 时跳过。
-		if ( sourceScene !== this.scene && this.scene.children.length > 0 ) {
+		if ( includeFallbackDepth && sourceScene !== this.scene && this.scene.children.length > 0 ) {
 			const previousFallbackOverride = this.scene.overrideMaterial;
 			this.scene.overrideMaterial = this.packDepthMaterial;
 			renderer.render( this.scene, camera );

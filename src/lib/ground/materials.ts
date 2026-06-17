@@ -44,6 +44,8 @@ import {
 	CLASSIFICATION_MASK,
 	MAX_POLYGON_STYLE_VERTICES,
 	SCENE_MODE_3D,
+	WGS84_X_RADIUS,
+	WGS84_Z_RADIUS,
 } from './constants';
 import type { SharedUniforms } from './types';
 
@@ -285,9 +287,12 @@ out vec4 out_FragColor;
 
 uniform sampler2D czm_globeDepthTexture;
 uniform vec4 czm_viewport;
+uniform mat4 czm_modelViewRelativeToEye;
 uniform mat4 czm_inverseProjection;
 uniform mat4 czm_viewportTransformation;
 uniform vec4 czm_frustumPlanes;
+uniform vec3 czm_encodedCameraPositionMCHigh;
+uniform vec3 czm_encodedCameraPositionMCLow;
 uniform vec3 czm_currentFrustum;
 uniform float czm_farDepthFromNearPlusOne;
 uniform float czm_log2FarDepthFromNearPlusOne;
@@ -442,6 +447,93 @@ uniform float u_lineArrowClipStartEnabled;
 // 叠加导致半透明翻倍；open 类：线收窄成 V 形嵌进 chevron 保持连续。
 uniform float u_lineArrowStyleStart;
 uniform float u_lineArrowStyleEnd;
+
+const float C23_POLYLINE_FAR_DEPTH_EPSILON = 0.999999;
+const float C23_POLYLINE_EMPTY_DEPTH_EPSILON = 0.0000001;
+const float C23_POLYLINE_SCREEN_EPSILON = 0.0000001;
+const float C23_POLYLINE_RAY_ELLIPSOID_EPSILON = 0.0000001;
+const float C23_POLYLINE_HORIZON_RADIUS_METERS = ${ WGS84_X_RADIUS.toFixed( 1 ) };
+const float C23_POLYLINE_HORIZON_MARGIN_METERS = 512000.0;
+const vec3 C23_POLYLINE_ONE_OVER_WGS84_RADII = vec3(
+	${ ( 1.0 / WGS84_X_RADIUS ).toExponential( 16 ) },
+	${ ( 1.0 / WGS84_X_RADIUS ).toExponential( 16 ) },
+	${ ( 1.0 / WGS84_Z_RADIUS ).toExponential( 16 ) }
+);
+
+vec2 c23_polylineScreenCoordinate(vec2 fragmentCoordinateXY) {
+	return (fragmentCoordinateXY - czm_viewport.xy) / czm_viewport.zw;
+}
+
+bool c23_polylineScreenCoordinateIsInvalid(vec2 screenCoordinate) {
+	return screenCoordinate.x < -C23_POLYLINE_SCREEN_EPSILON ||
+		screenCoordinate.y < -C23_POLYLINE_SCREEN_EPSILON ||
+		screenCoordinate.x > 1.0 + C23_POLYLINE_SCREEN_EPSILON ||
+		screenCoordinate.y > 1.0 + C23_POLYLINE_SCREEN_EPSILON;
+}
+
+vec4 c23_polylineFetchPackedDepth(vec2 screenCoordinate) {
+	ivec2 depthSize = textureSize(czm_globeDepthTexture, 0);
+	vec2 maxTexel = vec2(depthSize) - vec2(1.0);
+	vec2 texel = clamp(screenCoordinate * vec2(depthSize), vec2(0.0), maxTexel);
+	return texelFetch(czm_globeDepthTexture, ivec2(floor(texel)), 0);
+}
+
+// 贴地线 / 箭头是透明覆盖层且 depthTest=false，必须在 FS 里主动拒绝天空。
+// 非零但接近 1 的 log-depth 往往来自地平线附近被 clamp / 远平面量化的地形片元；
+// 把它当真实地面会让线盒在天空整片着色，所以这里把“空深度”和“近远平面哨兵”
+// 都归为无效深度。
+bool c23_polylineDepthIsInvalid(float logDepthOrDepth) {
+	return logDepthOrDepth <= C23_POLYLINE_EMPTY_DEPTH_EPSILON ||
+		logDepthOrDepth >= C23_POLYLINE_FAR_DEPTH_EPSILON;
+}
+
+// 深度纹理在低视角地平线附近可能给出非零伪深度。用 WGS84 椭球的可见地平线
+// 距离做一道物理上限：重建出的 eye-space 点若比地平线还远很多，就不是当前
+// 视线下可见地面，必须丢弃，避免线色污染天空。512km margin 覆盖高海拔地形、
+// 粗 LOD 瓦片包围误差和数值误差，但远小于 40,000km 级相机远平面。
+bool c23_polylineEyePointBeyondHorizon(vec3 eyePoint) {
+	vec3 cameraMC =
+		czm_encodedCameraPositionMCHigh +
+		czm_encodedCameraPositionMCLow;
+	float cameraRadius = length(cameraMC);
+	float horizonDistance = sqrt(max(
+		cameraRadius * cameraRadius -
+		C23_POLYLINE_HORIZON_RADIUS_METERS * C23_POLYLINE_HORIZON_RADIUS_METERS,
+		0.0
+	));
+	return length(eyePoint) > horizonDistance + C23_POLYLINE_HORIZON_MARGIN_METERS;
+}
+
+bool c23_polylineRayMissesEllipsoid(vec2 screenCoordinate) {
+	vec4 clipCoordinate = vec4(screenCoordinate * 2.0 - 1.0, -1.0, 1.0);
+	vec4 eyeCoordinate = czm_inverseProjection * clipCoordinate;
+	vec3 eyeDirection = normalize(eyeCoordinate.xyz);
+	vec3 rayDirectionMC = normalize(
+		transpose(mat3(czm_modelViewRelativeToEye)) * eyeDirection
+	);
+
+	vec3 cameraMC =
+		czm_encodedCameraPositionMCHigh +
+		czm_encodedCameraPositionMCLow;
+	vec3 scaledOrigin = cameraMC * C23_POLYLINE_ONE_OVER_WGS84_RADII;
+	vec3 scaledDirection = normalize(
+		rayDirectionMC * C23_POLYLINE_ONE_OVER_WGS84_RADII
+	);
+	float b = dot(scaledOrigin, scaledDirection);
+	float c = dot(scaledOrigin, scaledOrigin) - 1.0;
+
+	if (c <= 0.0) {
+		return false;
+	}
+
+	float discriminant = b * b - c;
+	if (discriminant < -C23_POLYLINE_RAY_ELLIPSOID_EPSILON) {
+		return true;
+	}
+
+	float farHit = -b + sqrt(max(discriminant, 0.0));
+	return farHit < 0.0;
+}
 
 ${ cesiumMetersPerPixel }
 #endif
@@ -1111,13 +1203,30 @@ in vec4 v_texcoordNormalizationAndStartEcYZ;
 
 void main() {
 	// 1) 采样全局地形深度纹理：屏幕 UV = gl_FragCoord.xy / czm_viewport.zw。
+	vec2 screenCoordinate = c23_polylineScreenCoordinate( gl_FragCoord.xy );
+	if ( c23_polylineScreenCoordinateIsInvalid( screenCoordinate ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 1.0, 0.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
 	float logDepthOrDepth = czm_unpackDepth(
-		texture( czm_globeDepthTexture, gl_FragCoord.xy / czm_viewport.zw )
+		c23_polylineFetchPackedDepth( screenCoordinate )
 	);
 	vec3 ecStart = vec3( v_endEcAndStartEcX.w, v_texcoordNormalizationAndStartEcYZ.zw );
 
-	// 2) 天空（无地形写入处）→ discard。
-	if ( logDepthOrDepth == 0.0 ) {
+	// 2) 天空（无地形写入处）或远平面伪深度 → discard。
+	if ( c23_polylineDepthIsInvalid( logDepthOrDepth ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 1.0, 0.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
+	if ( c23_polylineRayMissesEllipsoid( screenCoordinate ) ) {
 #ifdef DEBUG_SHOW_VOLUME
 		out_FragColor = vec4( 1.0, 0.0, 0.0, 0.5 );
 		return;
@@ -1130,6 +1239,14 @@ void main() {
 	//    跑在「真实地形点」上而非盒子顶点本身。
 	vec4 eyeCoordinate = czm_windowToEyeCoordinates( gl_FragCoord.xy, logDepthOrDepth );
 	eyeCoordinate /= eyeCoordinate.w;
+	if ( c23_polylineEyePointBeyondHorizon( eyeCoordinate.xyz ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 1.0, 0.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
 
 	// 4) 半宽换算：屏宽模式下乘 metersPerPixel(地形点)；世界宽模式直接拿米。
 	float halfMaxWidth = czm_branchFreeTernary(
@@ -1454,14 +1571,31 @@ flat in float v_arrowStyle;      // 逐盒样式 id（见 ARROW_STYLE_* define�
 
 void main() {
 	// 1) 采样全局地形深度纹理（与线 FS 完全一致）。
+	vec2 screenCoordinate = c23_polylineScreenCoordinate( gl_FragCoord.xy );
+	if ( c23_polylineScreenCoordinateIsInvalid( screenCoordinate ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
 	float depth = czm_unpackDepth(
-		texture( czm_globeDepthTexture, gl_FragCoord.xy / czm_viewport.zw )
+		c23_polylineFetchPackedDepth( screenCoordinate )
 	);
 
-	// 2) 天空（无地形写入处）→ discard，否则箭头糊在天空背景。
-	if ( depth == 0.0 ) {
+	// 2) 天空（无地形写入处）或远平面伪深度 → discard，否则箭头糊在天空背景。
+	if ( c23_polylineDepthIsInvalid( depth ) ) {
 #ifdef DEBUG_SHOW_VOLUME
 		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );   // 调试染绿（区别于线的红）
+		return;
+#else
+		discard;
+#endif
+	}
+	if ( c23_polylineRayMissesEllipsoid( screenCoordinate ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
 		return;
 #else
 		discard;
@@ -1471,6 +1605,14 @@ void main() {
 	// 3) 重建当前像素下的地形点（EC）。
 	vec4 P = czm_windowToEyeCoordinates( gl_FragCoord.xy, depth );
 	P /= P.w;
+	if ( c23_polylineEyePointBeyondHorizon( P.xyz ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
 
 	// 4) 把地形点投到端点切平面坐标：a 沿线内向、b 横向。
 	vec3 v = P.xyz - v_arrowTipEC;

@@ -53,6 +53,22 @@ export type GisPlotBaseOptions = {
 	fillOpacity: number;
 	/** 可见性。 */
 	visible: boolean;
+	/**
+	 * 是否贴地（ground-clamp）。默认 true。
+	 *   - true（默认）：走 Cesium classification / stencil shadow-volume 贴地路径
+	 *     （CesiumGround*Primitive）。有地形贴地形、无地形贴 EllipsoidDepthSource
+	 *     椭球面，几何始终精确"贴"在地表/海平面上。
+	 *   - false：走普通 Three 图元路径（PlainPlotPrimitive），在 heightMeters 指定的
+	 *     离地高度直接成面/成线/成字，**完全不依赖深度纹理与 stencil**——即便宿主
+	 *     没有接入任何贴地深度通道也能渲染。
+	 * 该字段不进入几何/样式之外的语义，桥接器据此在两条渲染路径间分流。
+	 */
+	clampToGround?: boolean;
+	/**
+	 * 不贴地（clampToGround === false）时的离地高度，单位米，相对 WGS84 椭球面
+	 * （海平面）。默认 0（贴在椭球面上）。贴地模式（clampToGround !== false）忽略此字段。
+	 */
+	heightMeters?: number;
 };
 
 /**

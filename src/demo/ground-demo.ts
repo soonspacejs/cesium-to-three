@@ -2631,7 +2631,11 @@ export function runGroundDemo(): void {
 		updateTerrainLogDepthUniforms( camera.near, camera.far );
 
 		tilesRenderer.group.visible = debugSettings.useTilesDepth;
-		globeDepth.render( renderer, camera, scene, tilesRenderer.group );
+		globeDepth.render( renderer, camera, scene, tilesRenderer.group, {
+			// 使用真实瓦片深度时关闭 packed 椭球兜底，防止低视角地平线附近的
+			// 不可见椭球面被贴地线当成天空中的有效地面。无瓦片测试时再打开兜底。
+			includeFallbackDepth: ! debugSettings.useTilesDepth,
+		} );
 		tilesRenderer.group.visible = debugSettings.showTiles;
 		groundRectangle.update( {
 			depthTexture: globeDepth.target.texture,
