@@ -8,6 +8,7 @@
 // 被消费：text-primitive 构造 / setText。
 // ============================================================
 
+import { ClassificationType } from '../types';
 import type {
 	PlotTextAlign,
 	PlotTextAnchorX,
@@ -144,6 +145,8 @@ export function resolvePlotTextOptions(
 		maximumHeight: Number.isFinite( options.maximumHeight )
 			? ( options.maximumHeight as number )
 			: null,
+		// 贴地分类目标：缺省 BOTH（贴地形与模型中离相机更近的表面）。
+		classificationType: options.classificationType ?? ClassificationType.BOTH,
 	};
 }
 

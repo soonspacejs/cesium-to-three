@@ -26,6 +26,8 @@ export {
 	MAX_CIRCLE_GRANULARITY_RADIANS,
 	MIN_CIRCLE_GRANULARITY_RADIANS,
 } from './constants';
+// 贴地分类目标枚举（贴地形 / 贴模型 / 二者）——值导出，业务可直接引用。
+export { ClassificationType } from './types';
 export type {
 	CartesianLike,
 	CesiumClassificationCommandVisibility,
@@ -45,6 +47,7 @@ export type {
 	CesiumGroundPolylineOptions,
 	CesiumGroundRectangleOptions,
 	CesiumGroundRectanglePrimitiveOptions,
+	ClassificationDepthTextureSet,
 	EastNorthOffsetMeters,
 	EncodedScalar,
 	LonLatPoint,

@@ -9,6 +9,7 @@
 //        text-extents / text-primitive。
 // ============================================================
 
+import { ClassificationType } from '../types';
 import type { LonLatPoint } from '../types';
 
 export type { LonLatPoint };
@@ -118,6 +119,11 @@ export interface PlotTextOptions {
 	/** shadow volume 顶/底高度（米），可选。 */
 	minimumHeight?: number;
 	maximumHeight?: number;
+	/**
+	 * 贴地分类目标（贴地形 / 贴模型 / 二者）。默认 BOTH。
+	 * 仅当宿主提供多纹理时生效，否则回退到单纹理。
+	 */
+	classificationType?: ClassificationType;
 }
 
 /**
@@ -176,6 +182,8 @@ export interface ResolvedPlotTextOptions {
 	renderOrder: number;
 	minimumHeight: number | null;
 	maximumHeight: number | null;
+	/** 贴地分类目标（贴地形 / 贴模型 / 二者）。 */
+	classificationType: ClassificationType;
 }
 
 /** 单个字符在 canvas 局部坐标系（纹素像素，原点左上、Y 向下）的放置。 */

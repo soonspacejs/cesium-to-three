@@ -16,6 +16,8 @@
 //   - 颜色字段为 CSS 字符串（'#rrggbb' / 'rgb()' / 'rgba()' / 'transparent'）。
 // ============================================================
 
+import type { ClassificationType } from '../../ground';
+
 /** 经纬度顶点：[经度°, 纬度°]，单位度。 */
 export type LonLatPoint = [ number, number ];
 
@@ -69,6 +71,14 @@ export type GisPlotBaseOptions = {
 	 * （海平面）。默认 0（贴在椭球面上）。贴地模式（clampToGround !== false）忽略此字段。
 	 */
 	heightMeters?: number;
+	/**
+	 * 贴地分类目标（贴地形 / 贴模型 / 二者）。默认 BOTH。
+	 * 仅在贴地模式（clampToGround !== false）生效——决定标绘贴到地形、3D Tiles
+	 * 模型，还是二者中离相机更近的表面。需宿主用 ClassificationDepthManager 提供
+	 * 多纹理；否则回退到单一深度纹理（行为与历史一致）。
+	 * 不贴地模式（clampToGround === false，走 PlainPlotPrimitive）忽略此字段。
+	 */
+	classificationType?: ClassificationType;
 };
 
 /**

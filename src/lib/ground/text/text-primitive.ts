@@ -183,7 +183,7 @@ export class CesiumGroundTextPrimitive {
 		const extents = computeTextPlanarExtents( this.footprint );
 
 		// 白色 + alpha 1 占位：文字 color 走纹理；u_color 仅作 VS 的 v_color 来源
-		return new CesiumClassificationPrimitive(
+		const classification = new CesiumClassificationPrimitive(
 			geometry,
 			extents,
 			new Color( 1.0, 1.0, 1.0 ),
@@ -195,6 +195,9 @@ export class CesiumGroundTextPrimitive {
 				extraUniforms: { u_textTexture: { value: this.texture } },
 			},
 		);
+		// 文字也支持贴地形 / 贴模型 / 二者：把解析出的分类目标传给 classification。
+		classification.setClassificationType( this.resolved.classificationType );
+		return classification;
 	}
 
 	/** 已 dispose 后再调用 → 抛错（防御 use-after-free）。 */
@@ -248,6 +251,7 @@ export class CesiumGroundTextPrimitive {
 			renderOrder: r.renderOrder,
 			minimumHeight: r.minimumHeight ?? undefined,
 			maximumHeight: r.maximumHeight ?? undefined,
+			classificationType: r.classificationType,
 		};
 	}
 }

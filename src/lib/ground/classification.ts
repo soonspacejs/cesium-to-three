@@ -23,6 +23,7 @@ import {
 	Vector4,
 	type Material,
 	type RawShaderMaterial,
+	type Texture,
 } from 'three';
 
 import {
@@ -34,12 +35,50 @@ import {
 } from './constants';
 import { encodeCesiumVector3 } from './geometry';
 import { createColorMaterial, createStencilMaterial } from './materials';
-import type {
-	CesiumClassificationCommandVisibility,
-	CesiumGroundFrameState,
-	PlanarExtents,
-	SharedUniforms,
+import {
+	ClassificationType,
+	type CesiumClassificationCommandVisibility,
+	type CesiumGroundFrameState,
+	type PlanarExtents,
+	type SharedUniforms,
 } from './types';
+
+/**
+ * 据分类目标从帧状态中解析出该图元应采样的 packed 深度纹理。
+ *
+ * 这是"标绘贴模型 / 倾斜摄影"多纹理深度管线的消费端：宿主用
+ * {@link ClassificationDepthManager} 渲染出 terrain / tileset / both 三张纹理后，
+ * 通过 {@link CesiumGroundFrameState.classificationDepthTextures} 传入；本函数按
+ * 图元自身的 {@link ClassificationType} 选对应纹理。
+ *
+ * 向后兼容：当宿主未提供 `classificationDepthTextures`（旧宿主 / 纯地形场景）时，
+ * 一律回退到 `frameState.depthTexture` 单纹理，行为与历史完全一致。某个分类目标
+ * 的纹理缺省时同样回退到单纹理，保证不会因配置不全而黑屏。
+ *
+ * @param frameState 当前帧状态。
+ * @param classificationType 图元的分类目标（TERRAIN / CESIUM_3D_TILE / BOTH）。
+ * @returns 应绑定到 `czm_globeDepthTexture` 的纹理。
+ */
+export function resolveClassificationDepthTexture(
+	frameState: CesiumGroundFrameState,
+	classificationType: ClassificationType,
+): Texture | null {
+	const fallback = frameState.depthTexture ?? null;
+	const set = frameState.classificationDepthTextures;
+	if ( set === undefined ) {
+		return fallback;
+	}
+
+	switch ( classificationType ) {
+		case ClassificationType.TERRAIN:
+			return set.terrain ?? fallback;
+		case ClassificationType.CESIUM_3D_TILE:
+			return set.tileset ?? fallback;
+		case ClassificationType.BOTH:
+		default:
+			return set.both ?? fallback;
+	}
+}
 
 /**
  * 创建 Cesium 用于 window-to-eye 重建的 viewport transform。
@@ -450,6 +489,12 @@ export class CesiumClassificationPrimitive {
 		( uniforms: SharedUniforms, fragmentCull: boolean ) => RawShaderMaterial;
 	private colorFragmentCull: boolean;
 
+	/**
+	 * 分类目标：决定 {@link update} 时采样哪张 packed 深度纹理（贴地形 / 贴模型 / 二者）。
+	 * 默认 BOTH。单纹理宿主下该值不影响结果（始终回退到 frameState.depthTexture）。
+	 */
+	private classificationType: ClassificationType = ClassificationType.BOTH;
+
 	public constructor(
 		geometry: BufferGeometry,
 		extents: PlanarExtents,
@@ -751,6 +796,17 @@ export class CesiumClassificationPrimitive {
 	}
 
 	/**
+	 * 设置分类目标（贴地形 / 贴模型 / 二者）。
+	 *
+	 * @param classificationType 目标枚举；undefined 时保持当前值不变。
+	 */
+	public setClassificationType( classificationType?: ClassificationType ): void {
+		if ( classificationType !== undefined ) {
+			this.classificationType = classificationType;
+		}
+	}
+
+	/**
 	 * 更新本帧 Cesium automatic uniform。
 	 *
 	 * @param frameState Cesium frame state 的 Three 侧等价结构。
@@ -758,6 +814,13 @@ export class CesiumClassificationPrimitive {
 	public update( frameState: CesiumGroundFrameState ): void {
 		encodeCesiumVector3( frameState.camera.position, this.cameraHigh, this.cameraLow );
 		updateFrameStateUniforms( frameState, this.uniforms );
+		// updateFrameStateUniforms 已写入默认深度纹理（frameState.depthTexture）。
+		// 这里按本图元的分类目标覆盖为对应的 packed 深度纹理：
+		//   TERRAIN→terrain、CESIUM_3D_TILE→tileset、BOTH→both。
+		// 多纹理未提供时 resolveClassificationDepthTexture 返回同一张默认纹理，
+		// 故单纹理宿主行为不变。
+		this.uniforms.czm_globeDepthTexture.value =
+			resolveClassificationDepthTexture( frameState, this.classificationType );
 	}
 
 	/**

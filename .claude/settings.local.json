@@ -104,7 +104,16 @@
       "Read(//c/Users/WIN11/AppData/Local/**)",
       "Bash(curl -s -m 5 \"http://localhost:5180/\" -o /dev/null -w \"HTTP %{http_code}\\\\n\")",
       "Bash(curl -s -m 5 \"http://localhost:5180/\")",
-      "Bash(curl -s -m 5 \"http://localhost:5180/@vite/client\" -o /dev/null -w \"client HTTP %{http_code}\\\\n\")"
+      "Bash(curl -s -m 5 \"http://localhost:5180/@vite/client\" -o /dev/null -w \"client HTTP %{http_code}\\\\n\")",
+      "Bash(rm -rf .design-files)",
+      "Bash(mkdir -p .design-files)",
+      "Bash(unzip -o /c/Users/WIN11/Downloads/files.zip)",
+      "Read(//d/d/my/code/cesium-to-three/src/lib/**)",
+      "Read(//d/d/my/code/cesium-to-three/src/lib/ground/**)",
+      "Read(//d/d/my/code/cesium-to-three/src/lib/plot/**)",
+      "Read(//d/d/my/code/cesium-to-three/src/**)",
+      "Bash(git -C /d/my/code/cesium-to-three status --short)",
+      "Bash(git -C /d/my/code/cesium-to-three diff --stat)"
     ]
   }
 }

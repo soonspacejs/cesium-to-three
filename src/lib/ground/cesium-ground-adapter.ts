@@ -24,7 +24,15 @@ export type {
 	EllipsoidDepthAttachTarget,
 	EllipsoidRadii,
 } from './ellipsoid-depth-source';
-export { CesiumClassificationPrimitive } from './classification';
+export {
+	CesiumClassificationPrimitive,
+	resolveClassificationDepthTexture,
+} from './classification';
+export { ClassificationDepthManager } from './classification-depth';
+export type {
+	ClassificationDepthManagerOptions,
+	DepthContributorKind,
+} from './classification-depth';
 export {
 	CesiumGroundCirclePrimitive,
 	CesiumGroundPointPrimitive,
@@ -46,6 +54,10 @@ export {
 	wgs84NormalFromDegrees,
 	wgs84PositionFromDegrees,
 } from './math/wgs84-helpers';
+
+// ENU 基底矩阵：把局部 (E, N, U) 映射到 ECEF，供宿主在椭球面上摆放合成模型
+// （如 model-clamp-demo 的合成楼房）。
+export { eastNorthUpToFixedFrame } from './math/enu-frame';
 
 export {
 	initializeApproximateTerrainHeights,

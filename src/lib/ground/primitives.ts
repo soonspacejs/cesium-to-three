@@ -29,7 +29,11 @@ import {
 	type RawShaderMaterial,
 } from 'three';
 
-import { CesiumClassificationPrimitive, updateFrameStateUniforms } from './classification';
+import {
+	CesiumClassificationPrimitive,
+	resolveClassificationDepthTexture,
+	updateFrameStateUniforms,
+} from './classification';
 import { computeCirclePlanarExtents } from './circle/circle-extents';
 import { buildCircleShadowVolumeGeometry } from './circle/circle-shadow-volume';
 import { encodeCesiumVector3 } from './geometry';
@@ -77,6 +81,7 @@ import {
 } from './rectangle/rectangle-helpers';
 import { rectangleRadiansFromDegrees } from './rectangle/rectangle-radians';
 import { buildRectangleShadowVolumeGeometry } from './rectangle/rectangle-shadow-volume';
+import { ClassificationType } from './types';
 import type {
 	CartesianLike,
 	CesiumGroundArrowMode,
@@ -261,6 +266,7 @@ export class CesiumGroundRectanglePrimitive {
 			options.fragmentCull ?? true,
 		);
 		this.classification.group.visible = options.visible;
+		this.classification.setClassificationType( options.classificationType );
 		this.classification.setBorderStyle(
 			strokeWidthMeters > 0.0,
 			new Color( options.strokeColor ),
@@ -475,6 +481,7 @@ export class CesiumGroundPolygonPrimitive {
 			options.fragmentCull ?? true,
 		);
 		this.classification.group.visible = options.visible ?? true;
+		this.classification.setClassificationType( options.classificationType );
 		this.classification.setBorderStyle(
 			strokeWidthMeters > 0.0,
 			new Color( options.strokeColor ?? '#ffffff' ),
@@ -622,6 +629,7 @@ export class CesiumGroundCirclePrimitive {
 			options.fragmentCull ?? true,
 		);
 		this.classification.group.visible = options.visible;
+		this.classification.setClassificationType( options.classificationType );
 		this.classification.setBorderStyle(
 			strokeWidthMeters > 0.0,
 			new Color( options.strokeColor ),
@@ -723,6 +731,7 @@ export class CesiumGroundPointPrimitive {
 				maximumHeight: options.maximumHeight,
 				renderOrder: options.renderOrder,
 				fragmentCull: options.fragmentCull,
+				classificationType: options.classificationType,
 			} );
 		} else {
 			const halfSize = sizeMeters * 0.5;
@@ -755,6 +764,7 @@ export class CesiumGroundPointPrimitive {
 				maximumHeight: options.maximumHeight,
 				renderOrder: options.renderOrder,
 				fragmentCull: options.fragmentCull,
+				classificationType: options.classificationType,
 			} );
 		}
 
@@ -825,8 +835,15 @@ export class CesiumGroundPolylinePrimitive {
 	private arrowColorExplicit = false;
 	private disposed = false;
 
+	/**
+	 * 分类目标：决定 {@link update} 采样哪张 packed 深度纹理（贴地形 / 贴模型 / 二者）。
+	 * 默认 BOTH；单纹理宿主下不影响结果。
+	 */
+	private readonly classificationType: ClassificationType;
+
 	public constructor( options: CesiumGroundPolylineOptions ) {
 		this.options = resolvePublicLineOptions( options );
+		this.classificationType = options.classificationType ?? ClassificationType.BOTH;
 
 		// 1. 几何（line-shadow-volume facade）。一次性、纯 CPU。
 		this.geometry = buildLineShadowVolumeGeometry(
@@ -949,6 +966,10 @@ export class CesiumGroundPolylinePrimitive {
 		// 漏掉这一步线就被 RTE 解码到 ECEF 原点附近，全帧不可见。
 		encodeCesiumVector3( frameState.camera.position, this.cameraHigh, this.cameraLow );
 		updateFrameStateUniforms( frameState, this.uniforms );
+		// updateFrameStateUniforms 已写入默认深度纹理；按本线的分类目标覆盖为对应
+		// packed 深度纹理（贴地形 / 贴模型 / 二者）。单纹理宿主下回退到同一张默认纹理。
+		this.uniforms.czm_globeDepthTexture.value =
+			resolveClassificationDepthTexture( frameState, this.classificationType );
 	}
 
 	/**

@@ -91,13 +91,17 @@ export class CesiumGlobeDepth {
 	 * @param renderer 当前 Three 渲染器。
 	 * @param camera 当前相机。pack-depth 材质需要它逐帧写入 Cesium 兼容的 LOG_DEPTH。
 	 * @param sourceScene 可选外部场景，用于 um-3d-tiles-renderer 内容。
-	 * @param depthRoot 渲染 sourceScene 时需要单独保留的可选根对象。
+	 * @param depthRoot 渲染 sourceScene 时需要单独保留的可选根对象，或一组根对象。
+	 *        传入数组时，只有"包含其中任意一个根"的 sourceScene 顶层子对象会被保留，
+	 *        其余临时隐藏——用于"只把地形 / 只把模型 / 同时把地形与模型"渲入深度纹理，
+	 *        是分类目标（terrain / tileset / both）多纹理深度管线的核心控制点。
+	 *        见 {@link ClassificationDepthManager}。
 	 */
 	public render(
 		renderer: WebGLRenderer,
 		camera: PerspectiveCamera,
 		sourceScene: Scene = this.scene,
-		depthRoot?: Object3D,
+		depthRoot?: Object3D | readonly Object3D[],
 		options: CesiumGlobeDepthRenderOptions = {},
 	): void {
 		this.updateLogDepthUniforms( camera );
@@ -110,19 +114,35 @@ export class CesiumGlobeDepth {
 		const previousOverrideMaterial = sourceScene.overrideMaterial;
 		const visibilityRestore: Array<{ object: Object3D; visible: boolean }> = [];
 
-		if ( depthRoot ) {
+		// 归一化为根对象数组，统一处理"单根 / 多根"两种调用形态。空数组（显式传
+		// `[]`）表示"不保留任何外部对象"——只渲染兜底层（用于无模型时的纯椭球深度）。
+		const depthRoots: readonly Object3D[] | undefined =
+			depthRoot === undefined
+				? undefined
+				: Array.isArray( depthRoot )
+					? depthRoot
+					: [ depthRoot as Object3D ];
+
+		if ( depthRoots ) {
 			for ( const child of sourceScene.children ) {
-				let current: Object3D | null = depthRoot;
-				let childContainsDepthRoot = false;
-				while ( current ) {
-					if ( current === child ) {
-						childContainsDepthRoot = true;
+				// 判断该顶层子对象是否"包含"任一指定根（即某个根是它本身或其后代）。
+				// 逐根从根向上回溯 parent 链，命中 child 即视为包含。
+				let childContainsAnyRoot = false;
+				for ( const root of depthRoots ) {
+					let current: Object3D | null = root;
+					while ( current ) {
+						if ( current === child ) {
+							childContainsAnyRoot = true;
+							break;
+						}
+						current = current.parent;
+					}
+					if ( childContainsAnyRoot ) {
 						break;
 					}
-					current = current.parent;
 				}
 
-				if ( ! childContainsDepthRoot ) {
+				if ( ! childContainsAnyRoot ) {
 					visibilityRestore.push( { object: child, visible: child.visible } );
 					child.visible = false;
 				}

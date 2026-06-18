@@ -23,7 +23,7 @@ import type {
 	CesiumGlobeDepth,
 	EllipsoidDepthSourceOptions,
 } from '../ground';
-import { EllipsoidDepthSource } from '../ground';
+import { ClassificationType, EllipsoidDepthSource } from '../ground';
 
 import { GisPlotBase } from './plugins/base';
 import {
@@ -489,6 +489,35 @@ export class GroundDecalManager {
 			}
 		}
 		return bestIdx;
+	}
+
+	/**
+	 * 收集当前所有标绘用到的分类目标集合，供宿主决定每帧渲染哪些深度纹理
+	 * （传给 ClassificationDepthManager.renderDepth）。贴地模式
+	 * （clampToGround !== false）的标绘才计入；未显式设置 classificationType
+	 * 的按默认 BOTH 计。
+	 *
+	 * @returns 去重后的分类目标集合（可能为空，宿主据此跳过深度渲染）。
+	 */
+	public collectActiveClassificationTypes(): Set<ClassificationType> {
+		const set = new Set<ClassificationType>();
+		for ( const shape of this._items.values() ) {
+			if ( shape.options.clampToGround === false ) {
+				continue; // 不贴地，不消费深度纹理
+			}
+			set.add( shape.options.classificationType ?? ClassificationType.BOTH );
+		}
+		return set;
+	}
+
+	/**
+	 * 返回当前所有标绘的 id 列表（快照，顺序为插入序）。便于宿主遍历批量
+	 * setStyle（如 demo 一键切换全部标绘的 classificationType）。
+	 *
+	 * @returns id 数组。
+	 */
+	public getAllIds(): string[] {
+		return Array.from( this._items.keys() );
 	}
 
 	// ── 渲染接入（c2t 适配）──

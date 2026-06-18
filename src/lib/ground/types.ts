@@ -18,6 +18,33 @@ import type {
 	WebGLRenderTarget,
 } from 'three';
 
+// ── 贴地分类目标（标绘"贴什么表面"）─────────────────────────────────
+// 数值与 Cesium `Source/Scene/ClassificationType.js` 逐值对齐，便于业务层在
+// Cesium / cesium-to-three 间迁移时直接复用同一常量含义。
+//
+// 在 Cesium 中，三种类型对应不同的渲染 Pass 与深度比对来源：
+//   - TERRAIN：只在 globe（地形）深度上分类——标绘贴到地形表面，即便地形上方
+//     有 3D Tiles 模型（楼房 / 倾斜摄影）遮挡，标绘仍贴在模型【下方】的地面。
+//   - CESIUM_3D_TILE：只在 3D Tiles 模型表面分类——标绘贴到模型（楼顶 / 立面 /
+//     倾斜摄影网格）上；没有模型覆盖的像素不着色（被掩掉）。
+//   - BOTH：地形与模型都分类——标绘贴到二者中【离相机更近】的那个表面，
+//     即"有模型贴模型、无模型贴地形"。
+//
+// cesium-to-three 的实现差异（见 classification-depth.ts 文件头详注）：
+//   Cesium 用"globe 深度纹理 + 帧缓冲深度 + 3D-Tile stencil 位掩码"区分三类；
+//   本移植把贴地深度统一打包成 packed RGBA 纹理，因此改为"按分类目标渲染至多
+//   三张 packed 深度纹理"（terrain / tileset / both），标绘按自身 classificationType
+//   采样对应纹理。CESIUM_3D_TILE 的"无模型处掩掉"由 tileset 纹理在无模型像素
+//   留下清屏哨兵值（depth==0）+ 既有 CULL_FRAGMENTS 分支天然达成，无需 stencil 位。
+export enum ClassificationType {
+	/** 仅地形参与分类（贴到地形表面，忽略其上的 3D Tiles 模型）。 */
+	TERRAIN = 0,
+	/** 仅 3D Tiles 模型参与分类（贴到模型表面，无模型处不着色）。 */
+	CESIUM_3D_TILE = 1,
+	/** 地形与 3D Tiles 模型都参与分类（贴到二者中离相机更近的表面）。 */
+	BOTH = 2,
+}
+
 export interface EncodedScalar {
 	high: number;
 	low: number;
@@ -93,6 +120,12 @@ export interface CesiumGroundRectanglePrimitiveOptions extends CesiumGroundRecta
 	debugSurface?: boolean;
 	debugSurfaceHeight?: number;
 	debugSurfaceOpacity?: number;
+	/**
+	 * 贴地分类目标（贴地形 / 贴模型 / 二者）。默认 BOTH。
+	 * 仅当宿主通过 frameState.classificationDepthTextures 提供多纹理时生效；
+	 * 否则回退到 frameState.depthTexture 单纹理（行为与历史一致）。
+	 */
+	classificationType?: ClassificationType;
 	fragmentCull?: boolean;
 }
 
@@ -120,6 +153,12 @@ export interface CesiumGroundPolygonOptions {
 	minimumHeight?: number;
 	maximumHeight?: number;
 	renderOrder?: number;
+	/**
+	 * 贴地分类目标（贴地形 / 贴模型 / 二者）。默认 BOTH。
+	 * 仅当宿主通过 frameState.classificationDepthTextures 提供多纹理时生效；
+	 * 否则回退到 frameState.depthTexture 单纹理（行为与历史一致）。
+	 */
+	classificationType?: ClassificationType;
 	fragmentCull?: boolean;
 }
 
@@ -151,6 +190,12 @@ export interface CesiumGroundCirclePrimitiveOptions extends CesiumGroundCircleOp
 	minimumHeight?: number;
 	maximumHeight?: number;
 	renderOrder?: number;
+	/**
+	 * 贴地分类目标（贴地形 / 贴模型 / 二者）。默认 BOTH。
+	 * 仅当宿主通过 frameState.classificationDepthTextures 提供多纹理时生效；
+	 * 否则回退到 frameState.depthTexture 单纹理（行为与历史一致）。
+	 */
+	classificationType?: ClassificationType;
 	fragmentCull?: boolean;
 }
 
@@ -181,6 +226,12 @@ export interface CesiumGroundPointPrimitiveOptions extends CesiumGroundPointOpti
 	minimumHeight?: number;
 	maximumHeight?: number;
 	renderOrder?: number;
+	/**
+	 * 贴地分类目标（贴地形 / 贴模型 / 二者）。默认 BOTH。
+	 * 仅当宿主通过 frameState.classificationDepthTextures 提供多纹理时生效；
+	 * 否则回退到 frameState.depthTexture 单纹理（行为与历史一致）。
+	 */
+	classificationType?: ClassificationType;
 	fragmentCull?: boolean;
 }
 
@@ -309,6 +360,12 @@ export interface CesiumGroundPolylineOptions {
 	arrowOpacity?: number;
 	/** open 样式的斜边笔宽（屏幕像素，默认 3）。 */
 	arrowStrokeWidthPixels?: number;
+	/**
+	 * 贴地分类目标（贴地形 / 贴模型 / 二者）。默认 BOTH。
+	 * 仅当宿主通过 frameState.classificationDepthTextures 提供多纹理时生效；
+	 * 否则回退到 frameState.depthTexture 单纹理（行为与历史一致）。
+	 */
+	classificationType?: ClassificationType;
 }
 
 export interface CesiumGroundFrameState {
@@ -322,6 +379,32 @@ export interface CesiumGroundFrameState {
 	 * 面图元不读，缺省 1.0（HiDPI 下线宽偏窄）。
 	 */
 	pixelRatio?: number;
+	/**
+	 * 可选：按 {@link ClassificationType} 分目标的 packed 深度纹理集合。
+	 *
+	 * 当宿主使用 {@link ClassificationDepthManager}（贴模型 / 倾斜摄影场景）时填入；
+	 * 标绘图元据自身 classificationType 采样对应纹理：
+	 *   - TERRAIN        → terrain（地形 + 椭球兜底）
+	 *   - CESIUM_3D_TILE → tileset（仅 3D Tiles 模型；无模型处为清屏哨兵被掩掉）
+	 *   - BOTH           → both（地形 + 模型 + 椭球兜底，取最近表面）
+	 *
+	 * 不填（旧宿主 / 纯地形场景）时，所有图元回退到 {@link depthTexture} 单纹理，
+	 * 行为与历史完全一致——这是向后兼容的关键。
+	 */
+	classificationDepthTextures?: ClassificationDepthTextureSet;
+}
+
+/**
+ * 按 {@link ClassificationType} 分目标的 packed 深度纹理集合。
+ * 任一字段缺省时，对应分类目标的图元回退到 {@link CesiumGroundFrameState.depthTexture}。
+ */
+export interface ClassificationDepthTextureSet {
+	/** TERRAIN 目标纹理：地形（含椭球兜底）深度。 */
+	terrain?: Texture | null;
+	/** CESIUM_3D_TILE 目标纹理：仅 3D Tiles 模型深度（无模型处留清屏哨兵）。 */
+	tileset?: Texture | null;
+	/** BOTH 目标纹理：地形 + 模型 + 椭球兜底（取最近表面）的合并深度。 */
+	both?: Texture | null;
 }
 
 export interface CesiumLogDepthParameters {

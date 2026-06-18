@@ -409,6 +409,7 @@ export class PlotPrimitiveBridge {
 				if ( pts.length === 0 ) return null;
 				const o = base as PlotPointOptions;
 				return new CesiumGroundPointPrimitive( {
+					classificationType: base.classificationType,
 					position: pts[ 0 ],
 					shape: o.pointStyle ?? 'circle',
 					size: o.size ?? 100,
@@ -426,6 +427,7 @@ export class PlotPrimitiveBridge {
 				if ( pts.length === 0 ) return null;
 				const o = base as PlotCircleOptions;
 				return new CesiumGroundCirclePrimitive( {
+					classificationType: base.classificationType,
 					center: pts[ 0 ],
 					radius: o.radius ?? 100,
 					strokeColor: o.strokeColor,
@@ -442,6 +444,7 @@ export class PlotPrimitiveBridge {
 				if ( pts.length === 0 ) return null;
 				const o = base as PlotSectorOptions;
 				return new CesiumGroundCirclePrimitive( {
+					classificationType: base.classificationType,
 					center: pts[ 0 ],
 					radius: o.radius ?? 100,
 					strokeColor: o.strokeColor,
@@ -460,6 +463,7 @@ export class PlotPrimitiveBridge {
 			case 'rectangle': {
 				if ( pts.length < 3 ) return null;
 				return new CesiumGroundPolygonPrimitive( {
+					classificationType: base.classificationType,
 					points: pts,
 					strokeColor: base.strokeColor,
 					strokeWidth: base.strokeWidth ?? 0,
@@ -478,6 +482,7 @@ export class PlotPrimitiveBridge {
 				}
 				const o = base as PlotArrowOptions;
 				return new CesiumGroundPolygonPrimitive( {
+					classificationType: base.classificationType,
 					points: coords,
 					strokeColor: o.strokeColor,
 					strokeWidth: o.strokeWidth ?? 0,
@@ -514,6 +519,7 @@ export class PlotPrimitiveBridge {
 					: 5;
 				const { lengthMeters, widthMetersArrow } = arrowSizeFromStrokeMeters( widthMeters );
 				return new CesiumGroundPolylinePrimitive( {
+					classificationType: base.classificationType,
 					points: pts,
 					strokeColor: o.strokeColor,
 					strokeOpacity,
@@ -536,6 +542,7 @@ export class PlotPrimitiveBridge {
 				if ( pts.length === 0 ) return null;
 				const t = base as PlotTextOptions;
 				return new CesiumGroundTextPrimitive( {
+					classificationType: base.classificationType,
 					points: [ pts[ 0 ] ],
 					content: t.content,
 					fontColor: t.fontColor,
