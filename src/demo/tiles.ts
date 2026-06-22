@@ -43,12 +43,29 @@ export interface TileRuntimeCounters {
 	rootUrl: string;
 }
 
+/** {@link configureLoadedTileScene} 选项。 */
+export interface ConfigureLoadedTileSceneOptions {
+	/**
+	 * 是否把材质重染成统一的灰绿色（roughness/metalness 也一并归一）。
+	 * 默认 true，适合“纯色地形 / 合成模型”想要统一外观的场景。
+	 * **倾斜摄影 / 带真实照片纹理的 3D Tiles 必须传 false**，否则
+	 * baseColorTexture 会被 color 乘成绿色，照片细节全毁。无论真假，
+	 * depthTest/Write、单面、Cesium log 深度始终应用（贴模型 clamp 必需）。
+	 */
+	recolor?: boolean;
+}
+
 /**
  * 为 um-3d-tiles-renderer 加载的每个模型设置稳定渲染状态。
  *
  * @param modelScene 已加载瓦片创建的根对象。
+ * @param options 配置项；见 {@link ConfigureLoadedTileSceneOptions}。
  */
-export function configureLoadedTileScene( modelScene: Object3D ): void {
+export function configureLoadedTileScene(
+	modelScene: Object3D,
+	options: ConfigureLoadedTileSceneOptions = {},
+): void {
+	const recolor = options.recolor !== false;
 	modelScene.traverse( object => {
 		object.visible = true;
 		object.frustumCulled = false;
@@ -68,19 +85,21 @@ export function configureLoadedTileScene( modelScene: Object3D ): void {
 				material.depthWrite = true;
 				material.side = FrontSide;
 
-				const maybeColoredMaterial = material as Material & {
-					color?: Color;
-					roughness?: number;
-					metalness?: number;
-				};
-				if ( maybeColoredMaterial.color ) {
-					maybeColoredMaterial.color.set( 0x8ea37c );
-				}
-				if ( typeof maybeColoredMaterial.roughness === 'number' ) {
-					maybeColoredMaterial.roughness = 0.92;
-				}
-				if ( typeof maybeColoredMaterial.metalness === 'number' ) {
-					maybeColoredMaterial.metalness = 0.0;
+				if ( recolor ) {
+					const maybeColoredMaterial = material as Material & {
+						color?: Color;
+						roughness?: number;
+						metalness?: number;
+					};
+					if ( maybeColoredMaterial.color ) {
+						maybeColoredMaterial.color.set( 0x8ea37c );
+					}
+					if ( typeof maybeColoredMaterial.roughness === 'number' ) {
+						maybeColoredMaterial.roughness = 0.92;
+					}
+					if ( typeof maybeColoredMaterial.metalness === 'number' ) {
+						maybeColoredMaterial.metalness = 0.0;
+					}
 				}
 
 				applyCesiumLogDepthToMaterial( material );

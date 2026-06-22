@@ -55,6 +55,12 @@ export {
 	wgs84PositionFromDegrees,
 } from './math/wgs84-helpers';
 
+// ECEF → cartographic：wgs84PositionFromDegrees 的逆运算。宿主拿到瓦片包围球
+// 中心（ECEF Vector3）后反算 lon/lat/height，把标绘摆到“倾斜摄影模型中心”附近
+// （model-clamp-demo 的贴倾斜测试）。
+export { cartesianToCartographic } from './math/ellipsoid';
+export type { Cartographic } from './math/cartographic';
+
 // ENU 基底矩阵：把局部 (E, N, U) 映射到 ECEF，供宿主在椭球面上摆放合成模型
 // （如 model-clamp-demo 的合成楼房）。
 export { eastNorthUpToFixedFrame } from './math/enu-frame';

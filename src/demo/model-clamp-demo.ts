@@ -1,24 +1,29 @@
 // ============================================================
 // model-clamp-demo.ts
 // 层级：贴模型 / 倾斜摄影 demo（标绘贴 3D Tiles 模型）。
-// 职责：直观验证"标绘贴模型"，并能切换 classificationType 对比
-//      TERRAIN / CESIUM_3D_TILE / BOTH 三种效果。两种模型来源：
-//        1. 合成楼房盒子（零依赖，必做）——在标绘中心附近用 BoxGeometry 拼一组
-//           高度各异、留有空地的"楼群"，登记为 tileset 深度贡献者。证明贴模型
-//           算法独立于具体数据源，是最佳可复现验证。
-//        2. 可选 Ion 倾斜 / 3D Tiles 模型——配置 VITE_CESIUM_ION_MODEL_ASSET_ID
-//           且有 token 时，另起一个 TilesRenderer 加载该资产作 tileset 贡献者。
+// 职责：直观验证"标绘贴模型 / 贴倾斜摄影"，并能切换 classificationType 对比
+//      TERRAIN / CESIUM_3D_TILE / BOTH 三种效果。三种模型来源（优先级从高到低，
+//      可用 `?model=` 或 VITE_MODEL_SOURCE 强制）：
+//        1. oblique（默认）——直连一个倾斜摄影 / 3D Tiles 的 tileset.json URL
+//           （不走 Cesium Ion，无需 token；URL 由 VITE_OBLIQUE_TILESET_URL 覆盖，
+//           缺省用 DEFAULT_OBLIQUE_URL）。加载后运行时从瓦片包围球反算中心，
+//           把"全部标绘图形"摆到模型中心周围，再 clamp 到模型表面——这就是
+//           用户要的"贴倾斜测试"。
+//        2. ion——配置 VITE_CESIUM_ION_MODEL_ASSET_ID 且有 token 时，从 Ion 加载
+//           该资产作 tileset 贡献者（同样运行时定位 + 标绘环绕）。
+//        3. buildings——零依赖的合成楼房盒子（必做兜底）：在固定中心用 BoxGeometry
+//           拼一组楼群，证明贴模型算法独立于具体数据源，离线可复现。
 // 依赖：three、um-3d-tiles-renderer、lil-gui、lib/ground（ClassificationDepthManager
-//      / ClassificationType / ENU / WGS84 / log 深度）、lib/plot（GroundDecalManager）、
-//      demo/dom、demo/env、demo/tiles。
+//      / ClassificationType / ENU / WGS84 / ECEF↔carto / log 深度）、lib/plot
+//      （GroundDecalManager）、demo/dom、demo/env、demo/tiles。
 // 被消费：main.ts（?demo=model 或 VITE_DEMO=model）。
 //
-// ── 三种 classificationType 的视觉预期（合成楼房 + 中心留空地）──────────
-//   | 类型           | 楼顶/立面 | 楼间空地（中心） | 远处无模型     |
-//   | TERRAIN        | 不显示    | 贴地面/椭球面    | 贴地面/椭球面  |
-//   | CESIUM_3D_TILE | 贴模型    | 不着色（哨兵掩掉）| 不着色         |
-//   | BOTH           | 贴模型    | 贴地面/椭球面    | 贴地面/椭球面  |
-//   切 GUI"分类目标"三档应能明显看出差异——这就是贴模型功能的最终验收。
+// ── 三种 classificationType 的视觉预期 ───────────────────────────────────
+//   | 类型           | 模型表面 | 模型外（空地/无覆盖）           |
+//   | TERRAIN        | 不显示   | 贴地面/椭球面                   |
+//   | CESIUM_3D_TILE | 贴模型   | 不着色（哨兵掩掉）              |
+//   | BOTH（默认）   | 贴模型   | 贴椭球面（兜底）               |
+//   切 GUI"分类目标"三档应能明显看出差异——这就是贴模型 / 贴倾斜功能的最终验收。
 // ============================================================
 
 import GUI from 'lil-gui';
@@ -34,6 +39,7 @@ import {
 	type Object3D,
 	PerspectiveCamera,
 	Scene,
+	Sphere,
 	Vector3,
 	WebGLRenderer,
 } from 'three';
@@ -42,10 +48,14 @@ import { CesiumIonAuthPlugin } from 'um-3d-tiles-renderer/core/plugins';
 
 import {
 	applyCesiumLogDepthToMaterial,
+	cartesianToCartographic,
+	type Cartographic,
 	CESIUM_GROUND_NON_PICKABLE_LAYER,
 	ClassificationDepthManager,
 	ClassificationType,
 	eastNorthUpToFixedFrame,
+	longitudeLatitudeFromCenterOffsetsMeters,
+	type LonLatPoint,
 	validateCesiumGroundRenderer,
 	wgs84NormalFromDegrees,
 	wgs84PositionFromDegrees,
@@ -54,11 +64,23 @@ import { GroundDecalManager } from '../lib/plot';
 
 import { createInfoPanel, installPageStyle } from './dom';
 import { readStringEnv } from './env';
-import { configureLoadedTileScene } from './tiles';
+import { configureLoadedTileScene, createCesiumTilesRenderer } from './tiles';
 
-/** 楼群中心（示例：可对准 Ion 模型或随意一处）。 */
-const CENTER_LON = 120.0;
-const CENTER_LAT = 30.0;
+/** 默认倾斜摄影 tileset（用户提供，直连，CORS=*，无需 token）。 */
+const DEFAULT_OBLIQUE_URL =
+	'https://sooncps.xwbuilders.com/api/ugis-dataprocess/v1/model/taz4Wo8Q5/tileset.json';
+
+/**
+ * 首帧相机的"位置提示"——仅在倾斜瓦片包围球就绪前给一个合理的初始视角，
+ * 让根 tileset 尽快进入加载；真正的中心在运行时由 getBoundingSphere 反算后
+ * flyToModel 修正。取默认 URL 的大致位置（陕西），自定义 URL 也会在数帧内自动归位。
+ */
+const INITIAL_HINT_LON = 110.39;
+const INITIAL_HINT_LAT = 33.01;
+
+/** 合成楼房中心（buildings 兜底源专用）。 */
+const BUILDINGS_LON = 120.0;
+const BUILDINGS_LAT = 30.0;
 
 /** classificationType 字面量 ↔ 枚举值映射（GUI 下拉用）。 */
 const TYPE_MAP: Record<string, ClassificationType> = {
@@ -67,15 +89,29 @@ const TYPE_MAP: Record<string, ClassificationType> = {
 	BOTH: ClassificationType.BOTH,
 };
 
+/** 模型来源。 */
+type ModelSource = 'oblique' | 'ion' | 'buildings';
+
+/** 数值钳位。 */
+function clamp( value: number, min: number, max: number ): number {
+	return Math.min( max, Math.max( min, value ) );
+}
+
+/**
+ * 解析模型来源：`?model=oblique|ion|buildings` 或 VITE_MODEL_SOURCE 强制；
+ * 缺省 oblique（贴倾斜测试是本 demo 的主线）。
+ */
+function pickModelSource(): ModelSource {
+	const fromUrl = new URLSearchParams( window.location.search ).get( 'model' );
+	const fromEnv = readStringEnv( 'VITE_MODEL_SOURCE' );
+	const choice = ( fromUrl ?? fromEnv ?? '' ).trim().toLowerCase();
+	if ( choice === 'buildings' ) return 'buildings';
+	if ( choice === 'ion' ) return 'ion';
+	return 'oblique';
+}
+
 /**
  * 在 (lon°, lat°) 处生成一栋"楼"：底面贴椭球面，沿椭球法线向上挤出 heightMeters。
- *
- * @param lonDeg 经度（度）。
- * @param latDeg 纬度（度）。
- * @param footprint 平面足迹边长（米，正方形）。
- * @param heightMeters 楼高（米）。
- * @param color 楼体颜色。
- * @returns 配置好（log 深度 / 不剔除）的 Mesh，ENU 摆放，局部 +Z 朝天。
  */
 function makeBuilding(
 	lonDeg: number,
@@ -84,7 +120,6 @@ function makeBuilding(
 	heightMeters: number,
 	color: number,
 ): Mesh {
-	// 盒子：X/Y 为足迹、Z 为高度；平移 +Z 半高，使底面落在 z=0（即椭球面）。
 	const geometry = new BoxGeometry( footprint, footprint, heightMeters );
 	geometry.translate( 0, 0, heightMeters * 0.5 );
 
@@ -98,9 +133,8 @@ function makeBuilding(
 	applyCesiumLogDepthToMaterial( material );
 
 	const mesh = new Mesh( geometry, material );
-	mesh.frustumCulled = false; // 防止视锥剔除把贡献深度的网格剔掉
+	mesh.frustumCulled = false;
 
-	// ENU 基底：把局部 (E, N, U) 映射到 ECEF；U(+Z) = 椭球法线（朝天）。
 	const origin = wgs84PositionFromDegrees( lonDeg, latDeg, 0.0 );
 	const enu = eastNorthUpToFixedFrame( origin, new Matrix4() );
 	mesh.matrixAutoUpdate = false;
@@ -111,34 +145,25 @@ function makeBuilding(
 }
 
 /**
- * 在中心点附近生成一组高度各异、留有空地的"楼群"。
- * 高度差异 + 楼间空地用于直观验证：
- *   - 楼顶 / 立面贴模型；
- *   - 楼间空地贴地形（BOTH）或不着色（CESIUM_3D_TILE）。
- *
- * @param centerLon 中心经度（度）。
- * @param centerLat 中心纬度（度）。
- * @returns 含全部楼体的 Group（登记为 tileset 贡献者）。
+ * 在中心点附近生成一组高度各异、留有空地的"楼群"（buildings 兜底源）。
  */
 function makeBuildingCluster( centerLon: number, centerLat: number ): Group {
 	const group = new Group();
 	group.name = 'synthetic-buildings';
 
-	// 经纬度步进：约 0.0006° ≈ 60–70m（够拉开楼间距）。
-	const step = 0.0006;
+	const step = 0.0006; // 约 60–70m
 	const layout: Array<{ dx: number; dy: number; h: number; c: number }> = [
 		{ dx: -1, dy: -1, h: 20, c: 0xb24a4a },
 		{ dx: 0, dy: -1, h: 50, c: 0x4a78b2 },
 		{ dx: 1, dy: -1, h: 35, c: 0x4ab27a },
-		{ dx: -1, dy: 1, h: 120, c: 0xb2a14a }, // 高楼，验证 ±55km 阴影体覆盖
+		{ dx: -1, dy: 1, h: 120, c: 0xb2a14a },
 		{ dx: 1, dy: 1, h: 80, c: 0x7a4ab2 },
-		// 中心 (0,0) 留空地：用来看"楼间空地"的贴地形 / 掩掉对比
 	];
 	for ( const b of layout ) {
 		group.add( makeBuilding(
 			centerLon + b.dx * step,
 			centerLat + b.dy * step,
-			40, // 足迹 40m
+			40,
 			b.h,
 			b.c,
 		) );
@@ -147,11 +172,28 @@ function makeBuildingCluster( centerLon: number, centerLat: number ): Group {
 }
 
 /**
- * 若配置了 VITE_CESIUM_ION_MODEL_ASSET_ID，加载该 Ion 3D Tiles 模型作 tileset 贡献者。
- * 未配置（或无 token）时返回 null（退回合成楼房）。
+ * 直连一个 tileset.json URL（倾斜摄影 / 普通 3D Tiles，不走 Cesium Ion）。
+ * 加载的瓦片保留真实照片纹理（recolor:false），只统一 log 深度 / 不剔除 / 深度写。
  *
- * @param ionToken Ion 访问令牌（VITE_CESIUM_ION_TOKEN）。
- * @returns 配置好的 TilesRenderer 或 null。
+ * @param url tileset.json 的完整 URL。
+ * @returns 配置好的 TilesRenderer。
+ */
+function createUrlTileset( url: string ): TilesRenderer {
+	const tiles = new TilesRenderer( url );
+	tiles.group.name = 'ObliqueUrlTilesGroup';
+	tiles.errorTarget = 6.0;
+	tiles.autoDisableRendererCulling = true;
+	tiles.displayActiveTiles = true;
+	tiles.addEventListener( 'load-model', ( { scene: modelScene }: { scene: Object3D } ) => {
+		// 倾斜摄影：保留照片纹理（不要染绿）。
+		configureLoadedTileScene( modelScene, { recolor: false } );
+	} );
+	return tiles;
+}
+
+/**
+ * 若配置了 VITE_CESIUM_ION_MODEL_ASSET_ID，加载该 Ion 3D Tiles 模型作 tileset 贡献者。
+ * 未配置（或无 token）时返回 null。
  */
 function createIonModelTiles( ionToken: string ): TilesRenderer | null {
 	const assetId = readStringEnv( 'VITE_CESIUM_ION_MODEL_ASSET_ID' );
@@ -164,15 +206,242 @@ function createIonModelTiles( ionToken: string ): TilesRenderer | null {
 		apiToken: ionToken,
 		assetId,
 	} ) );
-	// 模型瓦片与地形同样配置：log 深度 + 不剔除 + 同 renderOrder。
 	tiles.addEventListener( 'load-model', ( { scene: modelScene }: { scene: Object3D } ) => {
-		configureLoadedTileScene( modelScene );
+		configureLoadedTileScene( modelScene, { recolor: false } );
 	} );
 	return tiles;
 }
 
+/** 正多边形 ENU 偏移（米），rotationDeg 控制朝向。 */
+function regularPolygonOffsets(
+	eastMeters: number,
+	northMeters: number,
+	radiusMeters: number,
+	vertexCount: number,
+	rotationDeg: number,
+): { eastMeters: number; northMeters: number }[] {
+	const rad = ( rotationDeg * Math.PI ) / 180.0;
+	const cos = Math.cos( rad );
+	const sin = Math.sin( rad );
+	const out: { eastMeters: number; northMeters: number }[] = [];
+	for ( let i = 0; i < vertexCount; i++ ) {
+		const a = ( Math.PI * 2 * i ) / vertexCount + Math.PI * 0.5;
+		const x = Math.cos( a ) * radiusMeters;
+		const y = Math.sin( a ) * radiusMeters;
+		out.push( {
+			eastMeters: eastMeters + x * cos - y * sin,
+			northMeters: northMeters + x * sin + y * cos,
+		} );
+	}
+	return out;
+}
+
 /**
- * 运行"标绘贴模型 / 倾斜摄影" demo。
+ * 在 (centerLon, centerLat) 周围摆放"全部标绘图形"：点（圆/方）、圆、扇形、矩形、
+ * 多边形、折线（带箭头）、攻击箭头、燕尾攻击箭头、文字。所有尺寸以 u（米）为基准
+ * 等比缩放，便于适配不同体量的模型。全部用同一 classificationType 入册，便于 GUI 联动。
+ *
+ * @param decals 标绘管理器。
+ * @param centerLon 中心经度（度）。
+ * @param centerLat 中心纬度（度）。
+ * @param u 基准长度（米）：整组标绘大致铺在 ±6u 的范围内。
+ * @param classificationType 入册时的分类目标。
+ */
+function buildPlotsAround(
+	decals: GroundDecalManager,
+	centerLon: number,
+	centerLat: number,
+	u: number,
+	classificationType: ClassificationType,
+): void {
+	const pts = (
+		offs: { eastMeters: number; northMeters: number }[],
+	): LonLatPoint[] =>
+		longitudeLatitudeFromCenterOffsetsMeters( centerLon, centerLat, offs )
+			.map( ( p ) => [ p.longitude, p.latitude ] as LonLatPoint );
+	const pt = ( e: number, n: number ): LonLatPoint =>
+		pts( [ { eastMeters: e, northMeters: n } ] )[ 0 ];
+	const sw = Math.max( 0.5, u * 0.05 ); // 基准描边宽（米）
+
+	// 中心圆
+	decals.addPlot( {
+		type: 'circle',
+		points: [ pt( 0, 0 ) ],
+		radius: u * 1.2,
+		strokeColor: '#ffcc00',
+		strokeWidth: sw,
+		strokeOpacity: 100,
+		fillColor: '#ffcc00',
+		fillOpacity: 25,
+		visible: true,
+		classificationType,
+	} );
+
+	// 点 / 圆
+	decals.addPlot( {
+		type: 'point',
+		points: [ pt( -2 * u, -1.6 * u ) ],
+		pointStyle: 'circle',
+		size: u * 0.7,
+		strokeColor: '#ffffff',
+		strokeWidth: Math.max( 0.3, sw * 0.3 ),
+		strokeOpacity: 95,
+		fillColor: '#ffaa00',
+		fillOpacity: 90,
+		visible: true,
+		classificationType,
+	} );
+
+	// 点 / 方
+	decals.addPlot( {
+		type: 'point',
+		points: [ pt( 2 * u, -1.6 * u ) ],
+		pointStyle: 'square',
+		size: u * 0.7,
+		strokeColor: '#ffffff',
+		strokeWidth: Math.max( 0.3, sw * 0.3 ),
+		strokeOpacity: 95,
+		fillColor: '#aa66ff',
+		fillOpacity: 90,
+		visible: true,
+		classificationType,
+	} );
+
+	// 扇形
+	decals.addPlot( {
+		type: 'sector',
+		points: [ pt( -3.6 * u, 2.0 * u ) ],
+		radius: u * 1.4,
+		startAngle: 30,
+		sectorAngle: 120,
+		strokeColor: '#ffffff',
+		strokeWidth: sw,
+		strokeOpacity: 95,
+		fillColor: '#ff5577',
+		fillOpacity: 55,
+		visible: true,
+		classificationType,
+	} );
+
+	// 矩形
+	decals.addPlot( {
+		type: 'rectangle',
+		points: pts( [
+			{ eastMeters: 3.2 * u - 1.0 * u, northMeters: 2.0 * u - 0.7 * u },
+			{ eastMeters: 3.2 * u + 1.0 * u, northMeters: 2.0 * u - 0.7 * u },
+			{ eastMeters: 3.2 * u + 1.0 * u, northMeters: 2.0 * u + 0.7 * u },
+			{ eastMeters: 3.2 * u - 1.0 * u, northMeters: 2.0 * u + 0.7 * u },
+		] ),
+		strokeColor: '#ffffff',
+		strokeWidth: sw,
+		strokeOpacity: 95,
+		fillColor: '#ff3333',
+		fillOpacity: 55,
+		visible: true,
+		classificationType,
+	} );
+
+	// 多边形（六边形）
+	decals.addPlot( {
+		type: 'polygon',
+		points: pts( regularPolygonOffsets( -3.4 * u, -2.6 * u, u * 1.2, 6, 14 ) ),
+		strokeColor: '#ffffff',
+		strokeWidth: sw,
+		strokeOpacity: 95,
+		fillColor: '#00aaff',
+		fillOpacity: 55,
+		visible: true,
+		classificationType,
+	} );
+
+	// 折线（虚线 + 末端实心箭头）
+	decals.addPlot( {
+		type: 'line',
+		points: pts( [
+			{ eastMeters: -4 * u, northMeters: 3.4 * u },
+			{ eastMeters: -1.3 * u, northMeters: 3.9 * u },
+			{ eastMeters: 1.3 * u, northMeters: 3.2 * u },
+			{ eastMeters: 4 * u, northMeters: 3.8 * u },
+		] ),
+		strokeColor: '#ffd633',
+		strokeWidth: Math.max( 1, u * 0.08 ),
+		strokeOpacity: 95,
+		fillColor: '#000000',
+		fillOpacity: 0,
+		visible: true,
+		strokeStyle: 'dashed',
+		showArrow: true,
+		startArrowStyle: null,
+		endArrowStyle: 'filledArrow',
+		classificationType,
+	} );
+
+	// 攻击箭头
+	decals.addPlot( {
+		type: 'arrow',
+		arrowType: 'attack',
+		sizeScale: 1.0,
+		curvedBodyWidthFactor: 0.06,
+		curvedHeadWidthFactor: 0.12,
+		curvedHeadLengthFactor: 0.14,
+		points: pts( [
+			{ eastMeters: -3.2 * u, northMeters: -3.6 * u },
+			{ eastMeters: -3.2 * u, northMeters: -3.2 * u },
+			{ eastMeters: -0.6 * u, northMeters: -3.0 * u },
+			{ eastMeters: 2.6 * u, northMeters: -3.5 * u },
+		] ),
+		strokeColor: '#ffffff',
+		strokeWidth: Math.max( 0.3, sw * 0.4 ),
+		strokeOpacity: 95,
+		fillColor: '#33ddff',
+		fillOpacity: 80,
+		visible: true,
+		classificationType,
+	} );
+
+	// 燕尾攻击箭头
+	decals.addPlot( {
+		type: 'arrow',
+		arrowType: 'swallowtailAttack',
+		sizeScale: 1.0,
+		curvedBodyWidthFactor: 0.06,
+		curvedHeadWidthFactor: 0.12,
+		curvedHeadLengthFactor: 0.14,
+		points: pts( [
+			{ eastMeters: -3.2 * u, northMeters: -4.9 * u },
+			{ eastMeters: -3.2 * u, northMeters: -4.5 * u },
+			{ eastMeters: -0.6 * u, northMeters: -4.3 * u },
+			{ eastMeters: 2.6 * u, northMeters: -4.8 * u },
+		] ),
+		strokeColor: '#ffffff',
+		strokeWidth: Math.max( 0.3, sw * 0.4 ),
+		strokeOpacity: 95,
+		fillColor: '#ff9933',
+		fillOpacity: 80,
+		visible: true,
+		classificationType,
+	} );
+
+	// 文字标签（放在整组标绘上方，避免与折线 / 矩形重叠）
+	decals.addPlot( {
+		type: 'text',
+		points: [ pt( 0, 5.4 * u ) ],
+		content: '贴倾斜测试',
+		fontColor: '#ffffff',
+		fontSize: 48,
+		fillColor: '#1e3a8a',
+		fillOpacity: 75,
+		strokeColor: '#ffffff',
+		strokeWidth: 4,
+		strokeOpacity: 100,
+		scale: Math.max( 0.4, u / 70 ),
+		visible: true,
+		classificationType,
+	} );
+}
+
+/**
+ * 运行"标绘贴模型 / 贴倾斜摄影" demo。
  */
 export function runModelClampDemo(): void {
 	installPageStyle();
@@ -184,11 +453,13 @@ export function runModelClampDemo(): void {
 	}
 	app.innerHTML = '';
 
+	const source = pickModelSource();
+
 	// ── 场景 / 灯光 ──
 	const scene = new Scene();
 	scene.background = new Color( 0x05070a );
-	scene.add( new AmbientLight( 0xffffff, 0.55 ) );
-	const sun = new DirectionalLight( 0xffffff, 1.6 );
+	scene.add( new AmbientLight( 0xffffff, 0.65 ) );
+	const sun = new DirectionalLight( 0xffffff, 1.4 );
 	sun.position.set( 0.35, -0.45, 0.82 ).normalize();
 	scene.add( sun );
 
@@ -216,35 +487,45 @@ export function runModelClampDemo(): void {
 	camera.up.set( 0.0, 0.0, 1.0 );
 	camera.layers.enable( CESIUM_GROUND_NON_PICKABLE_LAYER );
 
-	// 相机预设：楼群中心上方约 360m，向东 + 抬高俯视，让楼群与中心空地完整可见。
-	const target = wgs84PositionFromDegrees( CENTER_LON, CENTER_LAT, 0.0 );
-	const up = wgs84NormalFromDegrees( CENTER_LON, CENTER_LAT );
-	const eastBias = new Vector3( -up.y, up.x, 0.0 ).normalize();
-	function flyToCluster(): void {
-		camera.position
-			.copy( target )
-			.addScaledVector( up, 360.0 )
-			.addScaledVector( eastBias, 220.0 );
-		camera.lookAt( target );
-		camera.updateMatrixWorld();
-	}
-	flyToCluster();
+	// 首帧位置提示：放在初始 hint 上空约 12km，俯视，等包围球就绪后 flyToModel 修正。
+	const hint = wgs84PositionFromDegrees( INITIAL_HINT_LON, INITIAL_HINT_LAT, 0.0 );
+	camera.position.copy( hint ).addScaledVector(
+		wgs84NormalFromDegrees( INITIAL_HINT_LON, INITIAL_HINT_LAT ),
+		12000.0,
+	);
+	camera.lookAt( hint );
+	camera.updateMatrixWorld();
 
-	// ── 椭球参考瓦片（无地形：空 TilesRenderer，仅提供 ellipsoid + group 给
-	//    GlobeControls；不需要 token）。它的 group 始终为空，整个屏幕处于"无地形"，
-	//    由 ClassificationDepthManager 的椭球兜底承担 terrain/both 的地面深度。──
-	const ellipsoidTiles = new TilesRenderer( '' );
-	ellipsoidTiles.group.name = 'CesiumEllipsoidReferenceGroup';
-	ellipsoidTiles.registerPlugin( {
-		name: 'NO_TERRAIN_PLUGIN',
-		loadRootTileset: () => Promise.resolve( null ),
-	} );
-	ellipsoidTiles.setCamera( camera );
-	ellipsoidTiles.setResolutionFromRenderer( camera, renderer );
-	scene.add( ellipsoidTiles.group );
+	// ── 底图 / 椭球参考瓦片 ──
+	// 有 Cesium Ion token 时：加载真实地形 + Cesium World Imagery 作「底图」，让倾斜
+	//   模型不再悬在黑色虚空里，模型外的区域也有卫星影像；同时登记为 terrain 深度
+	//   贡献者（TERRAIN / BOTH 时标绘可贴到底图）。
+	// 无 token 时：退回一个空 TilesRenderer，仅给 GlobeControls 提供 ellipsoid + group
+	//   （此时确实没有底图，背景为纯色——属预期降级）。
+	let baseTiles: TilesRenderer;
+	let hasBaseMap = false;
+	try {
+		baseTiles = createCesiumTilesRenderer( renderer );
+		baseTiles.addEventListener( 'load-model', ( { scene: baseScene }: { scene: Object3D } ) => {
+			// 底图保留真实卫星影像（recolor:false），只统一 log 深度 / 不剔除。
+			configureLoadedTileScene( baseScene, { recolor: false } );
+		} );
+		hasBaseMap = true;
+	} catch ( err ) {
+		console.warn( '[model-clamp] 无底图（Cesium Ion 不可用，退回空椭球参考）:', err );
+		baseTiles = new TilesRenderer( '' );
+		baseTiles.group.name = 'CesiumEllipsoidReferenceGroup';
+		baseTiles.registerPlugin( {
+			name: 'NO_TERRAIN_PLUGIN',
+			loadRootTileset: () => Promise.resolve( null ),
+		} );
+	}
+	baseTiles.setCamera( camera );
+	baseTiles.setResolutionFromRenderer( camera, renderer );
+	scene.add( baseTiles.group );
 
 	const controls = new GlobeControls( scene, camera, renderer.domElement );
-	controls.setEllipsoid( ellipsoidTiles.ellipsoid, ellipsoidTiles.group );
+	controls.setEllipsoid( baseTiles.ellipsoid, baseTiles.group );
 	controls.enableDamping = true;
 	controls.dampingFactor = 0.14;
 	controls.minDistance = 0.1;
@@ -258,98 +539,135 @@ export function runModelClampDemo(): void {
 	);
 	depthManager.attach( scene );
 
-	// ── 模型来源：优先 Ion 模型，否则合成楼房（始终可跑）──
-	const ionToken = readStringEnv( 'VITE_CESIUM_ION_TOKEN' );
-	const ionModel = createIonModelTiles( ionToken );
-	let buildingCluster: Group | null = null;
-	let modelSourceLabel = '';
-	if ( ionModel ) {
-		ionModel.setCamera( camera );
-		ionModel.setResolutionFromRenderer( camera, renderer );
-		scene.add( ionModel.group );
-		depthManager.addContributor( ionModel.group, 'tileset' );
-		modelSourceLabel = `Ion model asset ${ readStringEnv( 'VITE_CESIUM_ION_MODEL_ASSET_ID' ) }`;
-	} else {
-		buildingCluster = makeBuildingCluster( CENTER_LON, CENTER_LAT );
-		scene.add( buildingCluster );
-		depthManager.addContributor( buildingCluster, 'tileset' );
-		modelSourceLabel = 'synthetic buildings (5 boxes, center gap)';
+	// 底图作为 terrain 深度贡献者：TERRAIN / BOTH 时标绘可贴到底图地形表面。
+	if ( hasBaseMap ) {
+		depthManager.addContributor( baseTiles.group, 'terrain' );
 	}
 
 	// ── 标绘管理器：不传 globeDepth，兜底唯一归 depthManager（避免双重兜底）──
 	const decals = new GroundDecalManager( { scene } );
 
-	// 在楼群上画标绘（覆盖中心空地 + 楼顶）。初始 BOTH。
-	decals.addPlot( {
-		type: 'circle',
-		points: [ [ CENTER_LON, CENTER_LAT ] ],
-		radius: 120,
-		strokeColor: '#ffcc00',
-		strokeWidth: 3,
-		strokeOpacity: 100,
-		fillColor: '#ffcc00',
-		fillOpacity: 30,
-		visible: true,
-		classificationType: ClassificationType.BOTH,
-	} );
-	decals.addPlot( {
-		type: 'polygon',
-		points: [
-			[ CENTER_LON - 0.0009, CENTER_LAT - 0.0009 ],
-			[ CENTER_LON + 0.0009, CENTER_LAT - 0.0009 ],
-			[ CENTER_LON + 0.0009, CENTER_LAT + 0.0009 ],
-			[ CENTER_LON - 0.0009, CENTER_LAT + 0.0009 ],
-		],
-		strokeColor: '#00e5ff',
-		strokeWidth: 2,
-		strokeOpacity: 100,
-		fillColor: '#00e5ff',
-		fillOpacity: 20,
-		visible: true,
-		classificationType: ClassificationType.BOTH,
-	} );
-	decals.addPlot( {
-		type: 'text',
-		points: [ [ CENTER_LON, CENTER_LAT ] ],
-		content: '贴模型',
-		fontColor: '#ffffff',
-		fontSize: 64,
-		fillColor: '#1e3a8a',
-		fillOpacity: 70,
-		strokeColor: '#ffffff',
-		strokeWidth: 4,
-		strokeOpacity: 100,
-		scale: 0.6, // 桥接器映射为 metersPerPixel（每纹素 0.6m 足迹）
-		visible: true,
-		classificationType: ClassificationType.BOTH,
-	} );
-
+	// 贴倾斜 / 贴模型默认用 BOTH：模型表面贴模型、模型外贴椭球面兜底，标绘始终可见；
+	// 想看"纯贴模型（无模型处掩掉）"切到 CESIUM_3D_TILE。
 	let currentType: ClassificationType = ClassificationType.BOTH;
+
+	// ── 模型来源装配 ──
+	const ionToken = readStringEnv( 'VITE_CESIUM_ION_TOKEN' );
+	let modelTiles: TilesRenderer | null = null; // oblique / ion 的瓦片渲染器
+	let buildingCluster: Group | null = null;
+	let modelSourceLabel = '';
+	let resolvedSource: ModelSource = source;
+	let tileLoadError = '';
+
+	if ( source === 'ion' ) {
+		modelTiles = createIonModelTiles( ionToken );
+		if ( modelTiles ) {
+			modelSourceLabel = `Ion model asset ${ readStringEnv( 'VITE_CESIUM_ION_MODEL_ASSET_ID' ) }`;
+		} else {
+			resolvedSource = 'buildings'; // 未配置 Ion → 退回楼房
+		}
+	} else if ( source === 'oblique' ) {
+		const url = readStringEnv( 'VITE_OBLIQUE_TILESET_URL' ) || DEFAULT_OBLIQUE_URL;
+		modelTiles = createUrlTileset( url );
+		modelSourceLabel = `oblique URL: ${ url }`;
+	}
+
+	if ( modelTiles ) {
+		modelTiles.setCamera( camera );
+		modelTiles.setResolutionFromRenderer( camera, renderer );
+		scene.add( modelTiles.group );
+		depthManager.addContributor( modelTiles.group, 'tileset' );
+		modelTiles.addEventListener( 'load-error', ( event ) => {
+			const err = ( event as unknown as { error?: { message?: string } } ).error;
+			tileLoadError = err?.message ?? 'unknown';
+		} );
+	}
+
+	if ( resolvedSource === 'buildings' ) {
+		buildingCluster = makeBuildingCluster( BUILDINGS_LON, BUILDINGS_LAT );
+		scene.add( buildingCluster );
+		depthManager.addContributor( buildingCluster, 'tileset' );
+		modelSourceLabel = 'synthetic buildings (5 boxes, center gap)';
+	}
+
+	// ── 运行时定位：拿到模型中心后摆标绘 + 飞过去（只做一次）──
+	let plotsBuilt = false;
+	let modelCenterEcef: Vector3 | null = null;
+	let modelUp = new Vector3( 0, 0, 1 );
+	let flyDistance = 3000.0;
+	const scratchSphere = new Sphere();
+	const scratchCarto: Cartographic = { longitude: 0, latitude: 0, height: 0 };
+
+	function flyToModel(): void {
+		if ( ! modelCenterEcef ) return;
+		// 俯视图：相机置于模型中心正上方，沿椭球法线竖直向下俯瞰（纯 nadir，无水平偏移）。
+		camera.position
+			.copy( modelCenterEcef )
+			.addScaledVector( modelUp, flyDistance );
+		camera.lookAt( modelCenterEcef );
+		camera.updateMatrixWorld();
+	}
+
+	function onModelReady(
+		centerLon: number,
+		centerLat: number,
+		centerHeight: number,
+		unit: number,
+		dist: number,
+	): void {
+		if ( plotsBuilt ) return;
+		plotsBuilt = true;
+
+		buildPlotsAround( decals, centerLon, centerLat, unit, currentType );
+
+		modelCenterEcef = wgs84PositionFromDegrees( centerLon, centerLat, centerHeight );
+		modelUp = wgs84NormalFromDegrees( centerLon, centerLat );
+		flyDistance = dist;
+		flyToModel();
+	}
+
+	// buildings 源：中心固定、无需等包围球，立即摆标绘 + 飞。
+	if ( resolvedSource === 'buildings' ) {
+		onModelReady( BUILDINGS_LON, BUILDINGS_LAT, 0.0, 14.0, 360.0 );
+	}
 
 	// ── GUI ──
 	const params = {
 		classificationType: 'BOTH' as 'TERRAIN' | 'CESIUM_3D_TILE' | 'BOTH',
 		buildingsVisible: true,
-		flyToCluster,
+		modelVisible: true,
+		baseMapVisible: true,
+		flyToModel,
 	};
-	const gui = new GUI( { title: '标绘贴模型 Demo' } );
+	const gui = new GUI( { title: '标绘贴倾斜 / 贴模型 Demo' } );
 	gui.add( params, 'classificationType', [ 'TERRAIN', 'CESIUM_3D_TILE', 'BOTH' ] )
 		.name( '分类目标' )
 		.onChange( ( v: string ) => {
 			currentType = TYPE_MAP[ v ];
-			// 联动：所有标绘切到新目标（setStyle 浅合并 → 重建图元）。
 			for ( const id of decals.getAllIds() ) {
 				decals.setStyle( id, { classificationType: currentType } );
 			}
 		} );
-	if ( buildingCluster ) {
+	if ( modelTiles ) {
+		gui.add( params, 'modelVisible' ).name( '显示倾斜模型' ).onChange( ( v: boolean ) => {
+			if ( modelTiles ) {
+				modelTiles.group.visible = v;
+			}
+		} );
+	}
+	if ( hasBaseMap ) {
+		gui.add( params, 'baseMapVisible' ).name( '显示底图' ).onChange( ( v: boolean ) => {
+			baseTiles.group.visible = v;
+		} );
+	}
+	if ( resolvedSource === 'buildings' ) {
 		gui.add( params, 'buildingsVisible' ).name( '显示楼群' ).onChange( ( v: boolean ) => {
 			if ( buildingCluster ) {
 				buildingCluster.visible = v;
 			}
 		} );
 	}
-	gui.add( params, 'flyToCluster' ).name( '回到楼群' );
+	gui.add( params, 'flyToModel' ).name( '回到模型' );
 
 	// ── resize ──
 	function resize(): void {
@@ -359,35 +677,53 @@ export function runModelClampDemo(): void {
 		camera.aspect = width / height;
 		camera.updateProjectionMatrix();
 		camera.updateMatrixWorld();
-		ellipsoidTiles.setResolutionFromRenderer( camera, renderer );
-		ionModel?.setResolutionFromRenderer( camera, renderer );
+		baseTiles.setResolutionFromRenderer( camera, renderer );
+		modelTiles?.setResolutionFromRenderer( camera, renderer );
 		depthManager.resize( renderer.domElement.width, renderer.domElement.height );
 	}
 	window.addEventListener( 'resize', resize );
 
 	// ── 渲染循环 ──
-	function renderFrame(): void {
+	// 单帧逻辑抽成 step()，renderFrame 负责 rAF 调度。step 也挂到 __demo 上，方便在
+	// 隐藏标签页（rAF 被节流）的无头环境里手动逐帧驱动做验证。
+	function step(): void {
 		controls.update();
 		camera.updateMatrixWorld();
 
-		ellipsoidTiles.setResolutionFromRenderer( camera, renderer );
-		ellipsoidTiles.update();
-		ionModel?.setResolutionFromRenderer( camera, renderer );
-		ionModel?.update();
+		baseTiles.setResolutionFromRenderer( camera, renderer );
+		baseTiles.update();
+		modelTiles?.setResolutionFromRenderer( camera, renderer );
+		modelTiles?.update();
+
+		// tileset 源（oblique / ion）：等包围球就绪 → 反算中心 → 摆标绘 + 飞过去。
+		if ( modelTiles && ! plotsBuilt && modelTiles.getBoundingSphere( scratchSphere ) ) {
+			const carto = cartesianToCartographic( scratchSphere.center, scratchCarto );
+			if ( carto ) {
+				const lon = ( carto.longitude * 180.0 ) / Math.PI;
+				const lat = ( carto.latitude * 180.0 ) / Math.PI;
+				const r = scratchSphere.radius;
+				// 基准长度随模型体量缩放（标绘铺在 ±6 单位内），相机高度同理。
+				// 放大基准让标绘铺满倾斜模型「周围」更大范围，远观也清晰可见。
+				const unit = clamp( r * 0.05, 120.0, 700.0 );
+				// 俯视高度：让 ±6 单位的标绘簇舒适落在竖直 FOV 内（约 ±0.52·高度）。
+				const dist = clamp( r * 0.6, 2500.0, 12000.0 );
+				onModelReady( lon, lat, carto.height, unit, dist );
+			}
+		}
 
 		// A. 刷新共享 log-depth uniform（renderDepth 之前）。
 		depthManager.update( camera );
 
-		// B. 本帧需要哪些分类目标纹理：从活跃标绘收集（多数为单一 currentType）。
+		// B. 本帧需要哪些分类目标纹理。
 		const requestedTypes = decals.collectActiveClassificationTypes();
 		if ( requestedTypes.size === 0 ) {
-			requestedTypes.add( ClassificationType.BOTH ); // 防御：避免无纹理可用
+			requestedTypes.add( ClassificationType.BOTH );
 		}
 
 		// C. 渲染所需深度纹理（懒创建，只渲请求目标）。
 		depthManager.renderDepth( renderer, camera, scene, requestedTypes );
 
-		// D. 选默认 depthTexture（resolve 的回退）+ 附多纹理集，透传给标绘。
+		// D. 选默认 depthTexture + 附多纹理集，透传给标绘。
 		const defaultTex =
 			depthManager.getTexture( currentType ) ??
 			depthManager.getTexture( ClassificationType.BOTH ) ??
@@ -407,15 +743,23 @@ export function runModelClampDemo(): void {
 		// E. 主场景渲染。
 		renderer.render( scene, camera );
 
-		infoBody.textContent =
-			`贴模型 / 倾斜摄影 Demo（ClassificationDepthManager）\n` +
-			`模型来源: ${ modelSourceLabel }\n` +
-			`当前分类目标: ${ params.classificationType }\n` +
-			`活跃目标数（本帧渲染纹理数）: ${ requestedTypes.size }\n` +
-			`中心: ${ CENTER_LON.toFixed( 4 ) }, ${ CENTER_LAT.toFixed( 4 ) }\n` +
-			`TERRAIN=楼下地面 / CESIUM_3D_TILE=贴楼面(空地掩掉) / BOTH=楼面+空地\n` +
-			`Drawing buffer: ${ renderer.domElement.width } x ${ renderer.domElement.height }`;
+		const centerLine = modelCenterEcef
+			? `中心: ${ ( ( cartesianToCartographic( modelCenterEcef, scratchCarto )?.longitude ?? 0 ) * 180 / Math.PI ).toFixed( 4 ) }, ` +
+				`${ ( ( cartesianToCartographic( modelCenterEcef, scratchCarto )?.latitude ?? 0 ) * 180 / Math.PI ).toFixed( 4 ) }`
+			: '中心: 等待模型包围球…';
 
+		infoBody.textContent =
+			`贴倾斜 / 贴模型 Demo（ClassificationDepthManager）\n` +
+			`模型来源: ${ modelSourceLabel }\n` +
+			`当前分类目标: ${ params.classificationType }（切 CESIUM_3D_TILE 看纯贴模型）\n` +
+			`标绘已就位: ${ plotsBuilt ? '是' : '否（等待模型加载）' }\n` +
+			`${ centerLine }\n` +
+			( tileLoadError ? `瓦片加载错误: ${ tileLoadError }\n` : '' ) +
+			`Drawing buffer: ${ renderer.domElement.width } x ${ renderer.domElement.height }`;
+	}
+
+	function renderFrame(): void {
+		step();
 		requestAnimationFrame( renderFrame );
 	}
 
@@ -426,7 +770,10 @@ export function runModelClampDemo(): void {
 		controls,
 		depthManager,
 		decals,
-		ionModel,
+		modelTiles,
+		baseTiles,
+		hasBaseMap,
+		step,
 		get buildingCluster() {
 			return buildingCluster;
 		},
