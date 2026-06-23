@@ -112,6 +112,16 @@ export class CesiumGlobeDepth {
 		renderer.getClearColor( previousClearColor );
 		const previousClearAlpha = renderer.getClearAlpha();
 		const previousOverrideMaterial = sourceScene.overrideMaterial;
+		// 关键：sourceScene 若设了 Color 背景（常见——demo 给主场景 scene.background =
+		// new Color(...)），Three.js 的 WebGLBackground 在每次 renderer.render(sourceScene)
+		// 时会对这张 Color 背景做 forceClear，用「背景色（经 sRGB→linear 转换）」清掉
+		// 整个颜色缓冲——把我们上面手动设的 (0,0,0,0) packed-depth 哨兵整片覆盖成一个
+		// 非零小值。带兜底的 terrain/both 纹理因兜底椭球随后铺满全屏被掩盖；但 tileset
+		// 纹理（includeFallbackDepth:false，无兜底）会因此「无模型处不再是哨兵 0」，
+		// 于是 CULL_FRAGMENTS 的 `logDepthOrDepth == 0.0` 判定永不成立 → CESIUM_3D_TILE
+		// 下无覆盖区域整片漏渲染（且经深度重建后随相机倾角漂移）。这里在离屏深度渲染
+		// 期间临时置空背景，禁掉那次 forceClear，让手动哨兵清屏生效；末尾恢复。
+		const previousBackground = sourceScene.background;
 		const visibilityRestore: Array<{ object: Object3D; visible: boolean }> = [];
 
 		// 归一化为根对象数组，统一处理"单根 / 多根"两种调用形态。空数组（显式传
@@ -151,6 +161,9 @@ export class CesiumGlobeDepth {
 
 		renderer.setRenderTarget( this.target );
 		renderer.setClearColor( 0x000000, 0.0 );
+		// 离屏深度渲染期间禁用 sourceScene 的背景 forceClear（见上方 previousBackground
+		// 注释）：置空后 WebGLBackground 不再清屏，下面手动的 (0,0,0,0) 哨兵清屏成为唯一清屏。
+		sourceScene.background = null;
 		// 兜底层与外部地形(瓦片)共享同一个深度缓冲：关掉 autoClear，避免第二次
 		// render 把第一次的结果清掉；这里只手动清一次。
 		const previousAutoClear = renderer.autoClear;
@@ -176,6 +189,7 @@ export class CesiumGlobeDepth {
 			entry.object.visible = entry.visible;
 		}
 		renderer.autoClear = previousAutoClear;
+		sourceScene.background = previousBackground;
 		renderer.setRenderTarget( previousTarget );
 		renderer.setClearColor( previousClearColor, previousClearAlpha );
 	}
