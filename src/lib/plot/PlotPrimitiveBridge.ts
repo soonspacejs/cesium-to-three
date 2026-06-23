@@ -22,6 +22,7 @@ import type {
 	CesiumGroundArrowMode,
 	CesiumGroundArrowStyle,
 	CesiumGroundFrameState,
+	ClassificationType,
 	LonLatPoint,
 } from '../ground';
 
@@ -328,6 +329,15 @@ export class PlotPrimitiveBridge {
 	 * @param entry       鐜版湁娓叉煋璁板綍銆?	 * @param renderOrder 鐢辨彃鍏ュ簭鎹㈢畻鐨勬覆鏌撻『搴忋€?	 */
 	private _refreshLightweight( entry: PlotEntry, renderOrder: number ): void {
 		entry.group.visible = entry.plot.options.visible !== false;
+
+		// 分类目标（贴地形 / 贴模型 / 二者）热更新。classificationType 不进几何 / 样式
+		// 签名，所以 GUI 切「分类目标」时只触发本轻量刷新——必须把新目标同步到贴地图元，
+		// 否则图元内部仍按旧目标采样：该目标的 packed 深度纹理已不再被宿主逐帧渲染，
+		// 标绘便读到一张定格在旧相机位姿的深度，表现为「随相机移动到处漂浮」（仅初始
+		// BOTH 正常，切 TERRAIN / CESIUM_3D_TILE 后异常）。不贴地的 PlainPlotPrimitive
+		// 无此方法 → 守卫自动跳过。
+		( entry.primitive as { setClassificationType?( t?: ClassificationType ): void } )
+			.setClassificationType?.( entry.plot.options.classificationType );
 
 		( entry.primitive as { setRenderOrder?( n: number ): void } )
 			.setRenderOrder?.( renderOrder );

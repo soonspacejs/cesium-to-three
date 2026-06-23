@@ -22,7 +22,7 @@ import {
 
 import { CesiumClassificationPrimitive } from '../classification';
 import { createTextColorMaterial } from '../materials';
-import type { CesiumGroundFrameState } from '../types';
+import type { CesiumGroundFrameState, ClassificationType } from '../types';
 
 import { paintTextToCanvas, type PaintedTextCanvas } from './text-canvas';
 import { resolvePlotTextOptions } from './text-defaults';
@@ -151,6 +151,21 @@ export class CesiumGroundTextPrimitive {
 		this.ensureNotDisposed();
 		this.resolved.visible = visible;
 		this.classification.group.visible = visible;
+	}
+
+	/**
+	 * 切换分类目标（贴地形 / 贴模型 / 二者）。供桥接器在 GUI 改「分类目标」时热更新调用，
+	 * 使共享 classification 改采样对应的 packed 深度纹理；不同步会导致采样旧纹理、
+	 * 文字随相机漂浮。同步写回 resolved，后续 setText 重建时沿用新目标。
+	 *
+	 * @param classificationType 目标枚举；undefined 时保持当前值。
+	 */
+	public setClassificationType( classificationType?: ClassificationType ): void {
+		this.ensureNotDisposed();
+		if ( classificationType !== undefined ) {
+			this.resolved.classificationType = classificationType;
+		}
+		this.classification.setClassificationType( classificationType );
 	}
 
 	/** 释放几何、材质、纹理。调用后实例不可再用。 */

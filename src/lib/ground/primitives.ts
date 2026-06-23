@@ -342,6 +342,17 @@ export class CesiumGroundRectanglePrimitive {
 	}
 
 	/**
+	 * 切换分类目标（贴地形 / 贴模型 / 二者）。供桥接器在 GUI 改「分类目标」时热更新调用。
+	 * 不同步会让图元继续采样上一目标那张已不再逐帧刷新的 packed 深度纹理，导致标绘
+	 * 随相机漂浮（仅初始 BOTH 正常，切 TERRAIN / CESIUM_3D_TILE 后异常）。
+	 *
+	 * @param classificationType 目标枚举；undefined 时保持当前值。
+	 */
+	public setClassificationType( classificationType?: ClassificationType ): void {
+		this.classification.setClassificationType( classificationType );
+	}
+
+	/**
 	 * 释放资源。
 	 */
 	public dispose(): void {
@@ -515,6 +526,16 @@ export class CesiumGroundPolygonPrimitive {
 	}
 
 	/**
+	 * 切换分类目标（贴地形 / 贴模型 / 二者）。供桥接器在 GUI 改「分类目标」时热更新调用，
+	 * 使图元改采样对应的 packed 深度纹理；不同步会导致采样旧纹理、标绘随相机漂浮。
+	 *
+	 * @param classificationType 目标枚举；undefined 时保持当前值。
+	 */
+	public setClassificationType( classificationType?: ClassificationType ): void {
+		this.classification.setClassificationType( classificationType );
+	}
+
+	/**
 	 * 释放资源。
 	 */
 	public dispose(): void {
@@ -666,6 +687,16 @@ export class CesiumGroundCirclePrimitive {
 	}
 
 	/**
+	 * 切换分类目标（贴地形 / 贴模型 / 二者）。供桥接器在 GUI 改「分类目标」时热更新调用，
+	 * 使图元改采样对应的 packed 深度纹理；不同步会导致采样旧纹理、标绘随相机漂浮。
+	 *
+	 * @param classificationType 目标枚举；undefined 时保持当前值。
+	 */
+	public setClassificationType( classificationType?: ClassificationType ): void {
+		this.classification.setClassificationType( classificationType );
+	}
+
+	/**
 	 * 释放资源。
 	 */
 	public dispose(): void {
@@ -786,6 +817,16 @@ export class CesiumGroundPointPrimitive {
 	}
 
 	/**
+	 * 切换分类目标（贴地形 / 贴模型 / 二者）。转发给底层圆 / 矩形委托图元，使其改采样
+	 * 对应的 packed 深度纹理；不同步会导致采样旧纹理、标绘随相机漂浮。
+	 *
+	 * @param classificationType 目标枚举；undefined 时保持当前值。
+	 */
+	public setClassificationType( classificationType?: ClassificationType ): void {
+		this.delegate.setClassificationType( classificationType );
+	}
+
+	/**
 	 * 释放资源。
 	 */
 	public dispose(): void {
@@ -837,9 +878,10 @@ export class CesiumGroundPolylinePrimitive {
 
 	/**
 	 * 分类目标：决定 {@link update} 采样哪张 packed 深度纹理（贴地形 / 贴模型 / 二者）。
-	 * 默认 BOTH；单纹理宿主下不影响结果。
+	 * 默认 BOTH；单纹理宿主下不影响结果。可经 {@link setClassificationType} 热更新
+	 * （GUI 改「分类目标」时由桥接器调用），故非 readonly。
 	 */
-	private readonly classificationType: ClassificationType;
+	private classificationType: ClassificationType;
 
 	public constructor( options: CesiumGroundPolylineOptions ) {
 		this.options = resolvePublicLineOptions( options );
@@ -970,6 +1012,19 @@ export class CesiumGroundPolylinePrimitive {
 		// packed 深度纹理（贴地形 / 贴模型 / 二者）。单纹理宿主下回退到同一张默认纹理。
 		this.uniforms.czm_globeDepthTexture.value =
 			resolveClassificationDepthTexture( frameState, this.classificationType );
+	}
+
+	/**
+	 * 切换分类目标（贴地形 / 贴模型 / 二者）。供桥接器在 GUI 改「分类目标」时热更新调用，
+	 * 使下一帧 {@link update} 改采样对应的 packed 深度纹理；不同步会导致采样旧纹理、
+	 * 折线随相机漂浮。
+	 *
+	 * @param classificationType 目标枚举；undefined 时保持当前值。
+	 */
+	public setClassificationType( classificationType?: ClassificationType ): void {
+		if ( classificationType !== undefined ) {
+			this.classificationType = classificationType;
+		}
 	}
 
 	/**
