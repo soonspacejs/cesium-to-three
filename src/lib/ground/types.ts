@@ -212,6 +212,11 @@ export type CesiumGroundArrowMode = 'none' | 'left' | 'right' | 'both';
 
 /**
  * 箭头形态：实心三角 / 开口雪佛龙（V 形线条）。
+ *
+ * **箭头样式的单一事实源**：内部 `ArrowStyle`（line-arrowhead.ts）直接别名到此处，
+ * `ARROW_STYLE_ID` 以 `Record<ArrowStyle, number>` 绑定数值 id，`parseArrowStyle`
+ * 按 `ARROW_STYLE_ID` 成员判定放行——在此联合加一个字面量即自动贯通到三者
+ * （再配一条 id + 一个 GLSL define + 一个 FS 分支，详见 ARROW_STYLE_ID 的步骤注释）。
  */
 export type CesiumGroundArrowStyle = 'solid' | 'open';
 
@@ -266,8 +271,16 @@ export interface CesiumGroundPolylineOptions {
 	debugVolume?: boolean;
 	/** 线端箭头：'none'/'left'/'right'/'both'。默认 'none'。 */
 	arrowMode?: CesiumGroundArrowMode;
-	/** 箭头形态：'solid' 实心三角 / 'open' 开口雪佛龙。默认 'solid'。 */
+	/**
+	 * 箭头形态：'solid' 实心三角 / 'open' 开口雪佛龙。默认 'solid'。
+	 * 作为两端的统一默认值；要让两端样式不同，用 `startArrowStyle` /
+	 * `endArrowStyle` 分别覆盖（未设的那端回退到本字段）。
+	 */
 	arrowStyle?: CesiumGroundArrowStyle;
+	/** 起点端（points[0]）箭头样式；缺省回退到 `arrowStyle`。 */
+	startArrowStyle?: CesiumGroundArrowStyle;
+	/** 终点端（points[N-1]）箭头样式；缺省回退到 `arrowStyle`。 */
+	endArrowStyle?: CesiumGroundArrowStyle;
 	/**
 	 * 箭头尺寸模式（默认 'world'，与线 / 面世界模式视觉一致——远小近大）。
 	 * 对应 Cesium `Billboard.sizeInMeters` 语义：
@@ -406,11 +419,14 @@ export interface SharedUniforms {
 	u_arrowHalfWidthMeters?: { value: number };
 	u_arrowColor?: { value: Vector4 };
 	u_arrowStrokeHalfPixels?: { value: number };
-	// ── 线 FS 端「arrow V 形收口裁剪」：让线在「端点 / 起点 Lm 米内」按
-	//    `|halfWidth| ≤ Wm·(distance/Lm)` 线性收口，与 SOLID 三角 / OPEN
-	//    chevron 的 V 形外轮廓重合形成「锐利尖端」视觉。任何 arrowMode 包含
-	//    对应端时启用（与 style 无关——SOLID/OPEN 收口几何边界一致）。
-	//    Enabled > 0.5 时启用，否则线 FS 跳过裁剪保留原有矩形端面。──
+	// ── 线 FS 端「arrow 收口裁剪」：让线在「端点 / 起点 Lm 米内」按 style 裁线，
+	//    避免线体与箭头在同一像素叠加（半透明翻倍）。任何 arrowMode 包含对应端时
+	//    启用。Enabled > 0.5 时启用，否则线 FS 跳过裁剪保留原有矩形端面。──
 	u_lineArrowClipEndEnabled?: { value: number };
 	u_lineArrowClipStartEnabled?: { value: number };
+	// 起 / 终端各自的箭头样式 id（与 ARROW_STYLE_ID 对齐）。线 FS 按各端 id 选收口
+	// 策略：solid 类整段收平到 base；open 类收窄成 V 形嵌进 chevron。两端独立，
+	// 支持「起点实心、终点空心」。随各端 arrowStyle 更新。
+	u_lineArrowStyleStart?: { value: number };
+	u_lineArrowStyleEnd?: { value: number };
 }

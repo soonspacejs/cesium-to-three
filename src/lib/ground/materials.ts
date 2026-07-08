@@ -24,24 +24,28 @@ import {
 	type StencilOp,
 } from 'three';
 
-import cesiumShadowVolumeAppearanceVS from '../../../cesium-ground-source/engine/Source/Shaders/ShadowVolumeAppearanceVS.glsl?raw';
-import cesiumShadowVolumeAppearanceFS from '../../../cesium-ground-source/engine/Source/Shaders/ShadowVolumeAppearanceFS.glsl?raw';
-import cesiumShadowVolumeFS from '../../../cesium-ground-source/engine/Source/Shaders/ShadowVolumeFS.glsl?raw';
-import cesiumDepthClamp from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/depthClamp.glsl?raw';
-import cesiumWriteDepthClamp from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/writeDepthClamp.glsl?raw';
-import cesiumTranslateRelativeToEye from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/translateRelativeToEye.glsl?raw';
-import cesiumWindowToEyeCoordinates from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/windowToEyeCoordinates.glsl?raw';
-import cesiumUnpackDepth from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/unpackDepth.glsl?raw';
-import cesiumPackDepth from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/packDepth.glsl?raw';
-import cesiumPlaneDistance from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/planeDistance.glsl?raw';
-import cesiumGammaCorrect from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/gammaCorrect.glsl?raw';
-import cesiumMetersPerPixel from '../../../cesium-ground-source/engine/Source/Shaders/Builtin/Functions/metersPerPixel.glsl?raw';
+import {
+	cesiumShadowVolumeAppearanceVS,
+	cesiumShadowVolumeAppearanceFS,
+	cesiumShadowVolumeFS,
+	cesiumDepthClamp,
+	cesiumWriteDepthClamp,
+	cesiumTranslateRelativeToEye,
+	cesiumWindowToEyeCoordinates,
+	cesiumUnpackDepth,
+	cesiumPackDepth,
+	cesiumPlaneDistance,
+	cesiumGammaCorrect,
+	cesiumMetersPerPixel,
+} from './shaders/shadow-volume-glsl';
 
 import type { IUniform } from 'three';
 import {
 	CLASSIFICATION_MASK,
 	MAX_POLYGON_STYLE_VERTICES,
 	SCENE_MODE_3D,
+	WGS84_X_RADIUS,
+	WGS84_Z_RADIUS,
 } from './constants';
 import type { SharedUniforms } from './types';
 
@@ -283,9 +287,12 @@ out vec4 out_FragColor;
 
 uniform sampler2D czm_globeDepthTexture;
 uniform vec4 czm_viewport;
+uniform mat4 czm_modelViewRelativeToEye;
 uniform mat4 czm_inverseProjection;
 uniform mat4 czm_viewportTransformation;
 uniform vec4 czm_frustumPlanes;
+uniform vec3 czm_encodedCameraPositionMCHigh;
+uniform vec3 czm_encodedCameraPositionMCLow;
 uniform vec3 czm_currentFrustum;
 uniform float czm_farDepthFromNearPlusOne;
 uniform float czm_log2FarDepthFromNearPlusOne;
@@ -425,10 +432,108 @@ uniform float u_arrowLengthPixels;
 uniform float u_arrowHalfWidthPixels;
 uniform float u_arrowLengthMeters;
 uniform float u_arrowHalfWidthMeters;
-// 线 FS 专用：是否对起 / 终端做 arrow V 形收口裁剪
-// （> 0.5 启用；arrowMode 包含对应端时启用，与 style 无关）
+// 箭头样式 id 常量——与 TS 端 ARROW_STYLE_ID 逐值对齐（line-arrowhead.ts）。
+// 新增样式时这里加一个同值 define，FS 加一个判定分支。线 FS 收口 + 箭头 FS
+// 成员判定都引用这套常量（两者都定义 CESIUM_THREE_POLYLINE）。
+#define ARROW_STYLE_SOLID 0
+#define ARROW_STYLE_OPEN  1
+// 线 FS 专用：是否对起 / 终端做 arrow 收口裁剪
+// （> 0.5 启用；arrowMode 包含对应端时启用）
 uniform float u_lineArrowClipEndEnabled;
 uniform float u_lineArrowClipStartEnabled;
+// 线 FS 专用：起 / 终端各自的箭头样式 id（ARROW_STYLE_*）。两端可不同——
+// 起点实心、终点空心时收口策略也要分别按各自样式走，不能共用一个标志。
+// solid 类：线在箭头长度内整段收平到 base，避免线体在三角形内那层与实心箭头
+// 叠加导致半透明翻倍；open 类：线收窄成 V 形嵌进 chevron 保持连续。
+uniform float u_lineArrowStyleStart;
+uniform float u_lineArrowStyleEnd;
+
+const float C23_POLYLINE_FAR_DEPTH_EPSILON = 0.999999;
+const float C23_POLYLINE_EMPTY_DEPTH_EPSILON = 0.0000001;
+const float C23_POLYLINE_SCREEN_EPSILON = 0.0000001;
+const float C23_POLYLINE_RAY_ELLIPSOID_EPSILON = 0.0000001;
+const float C23_POLYLINE_HORIZON_RADIUS_METERS = ${ WGS84_X_RADIUS.toFixed( 1 ) };
+const float C23_POLYLINE_HORIZON_MARGIN_METERS = 512000.0;
+const vec3 C23_POLYLINE_ONE_OVER_WGS84_RADII = vec3(
+	${ ( 1.0 / WGS84_X_RADIUS ).toExponential( 16 ) },
+	${ ( 1.0 / WGS84_X_RADIUS ).toExponential( 16 ) },
+	${ ( 1.0 / WGS84_Z_RADIUS ).toExponential( 16 ) }
+);
+
+vec2 c23_polylineScreenCoordinate(vec2 fragmentCoordinateXY) {
+	return (fragmentCoordinateXY - czm_viewport.xy) / czm_viewport.zw;
+}
+
+bool c23_polylineScreenCoordinateIsInvalid(vec2 screenCoordinate) {
+	return screenCoordinate.x < -C23_POLYLINE_SCREEN_EPSILON ||
+		screenCoordinate.y < -C23_POLYLINE_SCREEN_EPSILON ||
+		screenCoordinate.x > 1.0 + C23_POLYLINE_SCREEN_EPSILON ||
+		screenCoordinate.y > 1.0 + C23_POLYLINE_SCREEN_EPSILON;
+}
+
+vec4 c23_polylineFetchPackedDepth(vec2 screenCoordinate) {
+	ivec2 depthSize = textureSize(czm_globeDepthTexture, 0);
+	vec2 maxTexel = vec2(depthSize) - vec2(1.0);
+	vec2 texel = clamp(screenCoordinate * vec2(depthSize), vec2(0.0), maxTexel);
+	return texelFetch(czm_globeDepthTexture, ivec2(floor(texel)), 0);
+}
+
+// 贴地线 / 箭头是透明覆盖层且 depthTest=false，必须在 FS 里主动拒绝天空。
+// 非零但接近 1 的 log-depth 往往来自地平线附近被 clamp / 远平面量化的地形片元；
+// 把它当真实地面会让线盒在天空整片着色，所以这里把“空深度”和“近远平面哨兵”
+// 都归为无效深度。
+bool c23_polylineDepthIsInvalid(float logDepthOrDepth) {
+	return logDepthOrDepth <= C23_POLYLINE_EMPTY_DEPTH_EPSILON ||
+		logDepthOrDepth >= C23_POLYLINE_FAR_DEPTH_EPSILON;
+}
+
+// 深度纹理在低视角地平线附近可能给出非零伪深度。用 WGS84 椭球的可见地平线
+// 距离做一道物理上限：重建出的 eye-space 点若比地平线还远很多，就不是当前
+// 视线下可见地面，必须丢弃，避免线色污染天空。512km margin 覆盖高海拔地形、
+// 粗 LOD 瓦片包围误差和数值误差，但远小于 40,000km 级相机远平面。
+bool c23_polylineEyePointBeyondHorizon(vec3 eyePoint) {
+	vec3 cameraMC =
+		czm_encodedCameraPositionMCHigh +
+		czm_encodedCameraPositionMCLow;
+	float cameraRadius = length(cameraMC);
+	float horizonDistance = sqrt(max(
+		cameraRadius * cameraRadius -
+		C23_POLYLINE_HORIZON_RADIUS_METERS * C23_POLYLINE_HORIZON_RADIUS_METERS,
+		0.0
+	));
+	return length(eyePoint) > horizonDistance + C23_POLYLINE_HORIZON_MARGIN_METERS;
+}
+
+bool c23_polylineRayMissesEllipsoid(vec2 screenCoordinate) {
+	vec4 clipCoordinate = vec4(screenCoordinate * 2.0 - 1.0, -1.0, 1.0);
+	vec4 eyeCoordinate = czm_inverseProjection * clipCoordinate;
+	vec3 eyeDirection = normalize(eyeCoordinate.xyz);
+	vec3 rayDirectionMC = normalize(
+		transpose(mat3(czm_modelViewRelativeToEye)) * eyeDirection
+	);
+
+	vec3 cameraMC =
+		czm_encodedCameraPositionMCHigh +
+		czm_encodedCameraPositionMCLow;
+	vec3 scaledOrigin = cameraMC * C23_POLYLINE_ONE_OVER_WGS84_RADII;
+	vec3 scaledDirection = normalize(
+		rayDirectionMC * C23_POLYLINE_ONE_OVER_WGS84_RADII
+	);
+	float b = dot(scaledOrigin, scaledDirection);
+	float c = dot(scaledOrigin, scaledOrigin) - 1.0;
+
+	if (c <= 0.0) {
+		return false;
+	}
+
+	float discriminant = b * b - c;
+	if (discriminant < -C23_POLYLINE_RAY_ELLIPSOID_EPSILON) {
+		return true;
+	}
+
+	float farHit = -b + sqrt(max(discriminant, 0.0));
+	return farHit < 0.0;
+}
 
 ${ cesiumMetersPerPixel }
 #endif
@@ -850,15 +955,17 @@ function createTextColorFragmentBody(): string {
         textPlanarMeters.x / max(u_innerMetersRect.z, 1e-6),
         textPlanarMeters.y / max(u_innerMetersRect.w, 1e-6)
     );
-    // 足迹外丢弃（CPU-plane 精度的足迹裁剪）
+    // 足迹外写透明色：颜色不落屏，但 color pass 仍会执行 ZeroStencilOp。
     if (textUv.x < 0.0 || textUv.x > 1.0 || textUv.y < 0.0 || textUv.y > 1.0) {
-        discard;
+        out_FragColor = vec4(0.0);
+        return;
     }
     // canvas 原点左上、Y 向下；uv 原点 SW、Y 向上 → 翻转 V
     vec4 texel = texture(u_textTexture, vec2(textUv.x, 1.0 - textUv.y));
-    // 全透明像素丢弃，避免覆盖底下地形 / 其它贴地图元
+    // 透明纹素写透明色：预乘混合下不改变颜色缓冲，但会清掉 stencil。
     if (texel.a <= 0.0) {
-        discard;
+        out_FragColor = vec4(0.0);
+        return;
     }
     // 颜色空间：CanvasTexture 取样得 sRGB 编码值，直接输出与 fill 路径一致。
     out_FragColor = texel;
@@ -1096,13 +1203,30 @@ in vec4 v_texcoordNormalizationAndStartEcYZ;
 
 void main() {
 	// 1) 采样全局地形深度纹理：屏幕 UV = gl_FragCoord.xy / czm_viewport.zw。
+	vec2 screenCoordinate = c23_polylineScreenCoordinate( gl_FragCoord.xy );
+	if ( c23_polylineScreenCoordinateIsInvalid( screenCoordinate ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 1.0, 0.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
 	float logDepthOrDepth = czm_unpackDepth(
-		texture( czm_globeDepthTexture, gl_FragCoord.xy / czm_viewport.zw )
+		c23_polylineFetchPackedDepth( screenCoordinate )
 	);
 	vec3 ecStart = vec3( v_endEcAndStartEcX.w, v_texcoordNormalizationAndStartEcYZ.zw );
 
-	// 2) 天空（无地形写入处）→ discard。
-	if ( logDepthOrDepth == 0.0 ) {
+	// 2) 天空（无地形写入处）或远平面伪深度 → discard。
+	if ( c23_polylineDepthIsInvalid( logDepthOrDepth ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 1.0, 0.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
+	if ( c23_polylineRayMissesEllipsoid( screenCoordinate ) ) {
 #ifdef DEBUG_SHOW_VOLUME
 		out_FragColor = vec4( 1.0, 0.0, 0.0, 0.5 );
 		return;
@@ -1115,6 +1239,14 @@ void main() {
 	//    跑在「真实地形点」上而非盒子顶点本身。
 	vec4 eyeCoordinate = czm_windowToEyeCoordinates( gl_FragCoord.xy, logDepthOrDepth );
 	eyeCoordinate /= eyeCoordinate.w;
+	if ( c23_polylineEyePointBeyondHorizon( eyeCoordinate.xyz ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 1.0, 0.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
 
 	// 4) 半宽换算：屏宽模式下乘 metersPerPixel(地形点)；世界宽模式直接拿米。
 	float halfMaxWidth = czm_branchFreeTernary(
@@ -1176,10 +1308,13 @@ void main() {
 	float t = ( widthwiseDistance + halfMaxWidth ) / ( 2.0 * halfMaxWidth );
 	t = clamp( t, 0.0, 1.0 );
 
-	// 9.5) Arrow V 形收口裁剪：在线**全局**起 / 终端的 Lm 米内，把允许的
-	//      横向半宽线性收窄到 Wm·(distFromGlobalEnd / Lm) 之内——视觉上线段
-	//      在端点处收成一个尖角，正好嵌进箭头（SOLID / OPEN 都用同套 V 形
-	//      外轮廓，所以这道裁剪对所有 style 通用）。
+	// 9.5) Arrow 收口裁剪：在线**全局**起 / 终端的 Lm 米内,按 style 裁线,
+	//      避免线体与箭头在同一像素叠加(半透明翻倍)。
+	//        - SOLID：整段裁掉,线在箭头 base 处收平,实心三角独占箭头长度区域。
+	//          这是修复「箭头与线重叠处透明度叠加」的关键——之前这里把线收窄成
+	//          一个与实心三角完全重合的薄片并保留,箭头再画上去 → 重叠区 alpha 翻倍。
+	//        - OPEN：横向半宽线性收窄到 Wm·(dist / Lm) 之内,线收成尖角嵌进 chevron,
+	//          保持线在 chevron 内连续(否则线端与 chevron 之间会出现断口)。
 	//      用全局 s × u_lineTotalMeters 算「沿线到端点的米距离」，避免多段
 	//      polyline 在中间段的 distanceFromStart / End 误触发裁剪。
 	//      Lm / Wm 跟随 u_arrowWidthMode：world 直接用米、screen 用 px×mpp(P)。
@@ -1189,14 +1324,22 @@ void main() {
 			u_arrowLengthMeters,
 			u_arrowLengthPixels * czm_metersPerPixel( eyeCoordinate )
 		);
-		float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
-			u_arrowHalfWidthMeters,
-			u_arrowHalfWidthPixels * czm_metersPerPixel( eyeCoordinate )
-		);
 		float distFromGlobalEnd = ( 1.0 - s ) * u_lineTotalMeters;
 		if ( distFromGlobalEnd < arrowLm && arrowLm > 0.0 ) {
-			float allowedHalfWidth = arrowWm * ( distFromGlobalEnd / arrowLm );
-			if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
+			// 终端按**终端自己的**样式 id 收口（与起端独立）。
+			if ( int( u_lineArrowStyleEnd + 0.5 ) == ARROW_STYLE_OPEN ) {
+				// OPEN：横向半宽线性收窄成 V 形嵌进 chevron,保持线在 chevron 内连续。
+				float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+					u_arrowHalfWidthMeters,
+					u_arrowHalfWidthPixels * czm_metersPerPixel( eyeCoordinate )
+				);
+				float allowedHalfWidth = arrowWm * ( distFromGlobalEnd / arrowLm );
+				if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
+					discard;
+				}
+			} else {
+				// SOLID（及其它实心类，默认）：整段裁掉,线在箭头 base 处收平,让实心
+				// 三角独占该区域。否则线在三角形内保留的那层会与箭头叠加 → 半透明翻倍。
 				discard;
 			}
 		}
@@ -1206,14 +1349,19 @@ void main() {
 			u_arrowLengthMeters,
 			u_arrowLengthPixels * czm_metersPerPixel( eyeCoordinate )
 		);
-		float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
-			u_arrowHalfWidthMeters,
-			u_arrowHalfWidthPixels * czm_metersPerPixel( eyeCoordinate )
-		);
 		float distFromGlobalStart = s * u_lineTotalMeters;
 		if ( distFromGlobalStart < arrowLm && arrowLm > 0.0 ) {
-			float allowedHalfWidth = arrowWm * ( distFromGlobalStart / arrowLm );
-			if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
+			// 起端按**起端自己的**样式 id 收口（与终端独立）。
+			if ( int( u_lineArrowStyleStart + 0.5 ) == ARROW_STYLE_OPEN ) {
+				float arrowWm = czm_branchFreeTernary( u_arrowWidthMode > 0.5,
+					u_arrowHalfWidthMeters,
+					u_arrowHalfWidthPixels * czm_metersPerPixel( eyeCoordinate )
+				);
+				float allowedHalfWidth = arrowWm * ( distFromGlobalStart / arrowLm );
+				if ( abs( widthwiseDistance ) > allowedHalfWidth ) {
+					discard;
+				}
+			} else {
 				discard;
 			}
 		}
@@ -1318,10 +1466,13 @@ in vec3 arrowRightDir;
 in vec3 arrowUpDir;
 in vec3 arrowCorner;             // (aCoef, bSign, topBottomSide)
 in vec2 arrowTerrainHeights;     // (minHeight, maxHeight) 端点处地形高度窗口（米）
+in float arrowStyleId;           // 逐盒样式 id（见 ARROW_STYLE_ID / ARROW_STYLE_* define）
 
 out vec3 v_arrowTipEC;
 out vec3 v_arrowBackEC;
 out vec3 v_arrowRightEC;
+// 逐盒常量（同一盒 8 顶点同值），flat 直透 FS——两端可不同样式。
+flat out float v_arrowStyle;
 
 void main() {
 	// 1) tip EC：RTE 解码（与线 ecStart 同路径），消除高 zoom 抖动。
@@ -1335,6 +1486,7 @@ void main() {
 	v_arrowTipEC   = tipEC.xyz;
 	v_arrowBackEC  = backEC;
 	v_arrowRightEC = rightEC;
+	v_arrowStyle   = arrowStyleId;
 
 	// 3) 像素 → 米：盒子放大 ARROW_BOX_PADDING 倍包住 FS 三角形。
 	//    *关键*：tip 在 alt=0（椭球面），相机若高于 tip 又看着地形，则 mpp(tipEC)
@@ -1406,25 +1558,44 @@ void main() {
 `;
 
 /**
- * 线端箭头 FS。深度纹理重建 + 端点切平面 (a,b) 投影 + 实心三角形成员判定。
+ * 线端箭头 FS。深度纹理重建 + 端点切平面 (a,b) 投影 + 逐盒成员判定。
  * 屏幕恒定来自「FS 用地形点 EC 算 metersPerPixel」（与线 halfMaxWidth 同口径）。
- * `ARROW_OPEN` define 切换为「开口雪佛龙」样式（仅画到两条斜边的笔宽内）。
+ * 样式由 `v_arrowStyle`（逐盒 `arrowStyleId`）运行时分派：ARROW_STYLE_SOLID 实心
+ * 三角、ARROW_STYLE_OPEN 开口雪佛龙——同一 mesh 内两端可不同样式。
  */
 const ARROWHEAD_FS = /* glsl */ `
 in vec3 v_arrowTipEC;
 in vec3 v_arrowBackEC;
 in vec3 v_arrowRightEC;
+flat in float v_arrowStyle;      // 逐盒样式 id（见 ARROW_STYLE_* define）
 
 void main() {
 	// 1) 采样全局地形深度纹理（与线 FS 完全一致）。
+	vec2 screenCoordinate = c23_polylineScreenCoordinate( gl_FragCoord.xy );
+	if ( c23_polylineScreenCoordinateIsInvalid( screenCoordinate ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
 	float depth = czm_unpackDepth(
-		texture( czm_globeDepthTexture, gl_FragCoord.xy / czm_viewport.zw )
+		c23_polylineFetchPackedDepth( screenCoordinate )
 	);
 
-	// 2) 天空（无地形写入处）→ discard，否则箭头糊在天空背景。
-	if ( depth == 0.0 ) {
+	// 2) 天空（无地形写入处）或远平面伪深度 → discard，否则箭头糊在天空背景。
+	if ( c23_polylineDepthIsInvalid( depth ) ) {
 #ifdef DEBUG_SHOW_VOLUME
 		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );   // 调试染绿（区别于线的红）
+		return;
+#else
+		discard;
+#endif
+	}
+	if ( c23_polylineRayMissesEllipsoid( screenCoordinate ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
 		return;
 #else
 		discard;
@@ -1434,6 +1605,14 @@ void main() {
 	// 3) 重建当前像素下的地形点（EC）。
 	vec4 P = czm_windowToEyeCoordinates( gl_FragCoord.xy, depth );
 	P /= P.w;
+	if ( c23_polylineEyePointBeyondHorizon( P.xyz ) ) {
+#ifdef DEBUG_SHOW_VOLUME
+		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
+		return;
+#else
+		discard;
+#endif
+	}
 
 	// 4) 把地形点投到端点切平面坐标：a 沿线内向、b 横向。
 	vec3 v = P.xyz - v_arrowTipEC;
@@ -1459,13 +1638,26 @@ void main() {
 	float aShift   = a + aOffset;
 	float LmShift  = Lm + aOffset;
 
-	// 6) 三角形成员判定（用 aShift / LmShift；几何意义不变，只是 apex 外移了）。
-#ifdef ARROW_OPEN
-	// 开口雪佛龙：只画三角形两条斜边附近的笔宽内像素。V 形保留完整作为边界，
-	// 让线 FS 在端点附近按 V 形收口（线 FS 自带 arrow Lm/Wm uniform 做裁剪）。
-	float lineFactor = LmShift / sqrt( LmShift * LmShift + Wm * Wm );
-	float edgeDistance = abs( abs( b ) - Wm * ( aShift / LmShift ) ) * lineFactor;
-	if ( aShift < 0.0 || aShift > LmShift || edgeDistance > u_arrowStrokeHalfPixels * mpp ) {
+	// 6) 成员判定（用 aShift / LmShift；几何意义不变，只是 apex 外移了）。
+	//    逐盒按样式 id 分派——同一 mesh 里两端可不同样式（起点实心、终点空心）。
+	//    新增样式：加一个 else-if ( style == ARROW_STYLE_X ) 分支即可，默认落回
+	//    实心三角。insideArrow 为 true 表示该像素属于箭头，留下；否则 discard。
+	int style = int( v_arrowStyle + 0.5 );
+	bool insideArrow;
+	if ( style == ARROW_STYLE_OPEN ) {
+		// 开口雪佛龙：只画三角形两条斜边附近的笔宽内像素。V 形保留完整作为边界，
+		// 让线 FS 在端点附近按 V 形收口（线 FS 自带 arrow Lm/Wm uniform 做裁剪）。
+		float lineFactor = LmShift / sqrt( LmShift * LmShift + Wm * Wm );
+		float edgeDistance = abs( abs( b ) - Wm * ( aShift / LmShift ) ) * lineFactor;
+		insideArrow = aShift >= 0.0 && aShift <= LmShift
+			&& edgeDistance <= u_arrowStrokeHalfPixels * mpp;
+	} else {
+		// 实心三角（ARROW_STYLE_SOLID，默认）：0 ≤ aShift ≤ LmShift 且
+		// |b| ≤ Wm·(aShift/LmShift)（基底向 apex 线性收窄；apex 落在端点处）。
+		insideArrow = aShift >= 0.0 && aShift <= LmShift
+			&& abs( b ) <= Wm * ( aShift / LmShift );
+	}
+	if ( ! insideArrow ) {
 #ifdef DEBUG_SHOW_VOLUME
 		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
 		return;
@@ -1473,18 +1665,6 @@ void main() {
 		discard;
 #endif
 	}
-#else
-	// 实心三角（默认）：0 ≤ aShift ≤ LmShift 且 |b| ≤ Wm·(aShift/LmShift)
-	// （基底向 apex 线性收窄；apex 落在 a=-aOffset 即端点之外 aOffset 米）。
-	if ( aShift < 0.0 || aShift > LmShift || abs( b ) > Wm * ( aShift / LmShift ) ) {
-#ifdef DEBUG_SHOW_VOLUME
-		out_FragColor = vec4( 0.0, 1.0, 0.0, 0.5 );
-		return;
-#else
-		discard;
-#endif
-	}
-#endif
 
 	// 7) 上色（预乘 alpha，配合 blendSrc=ONE）+ log-depth。
 	vec4 col = u_arrowColor;
@@ -1501,21 +1681,21 @@ void main() {
  * 创建线端箭头材质。与线材质字节级相同的渲染状态，只换 shader 主体 + 加
  * `CESIUM_THREE_POLYLINE_ARROW` define 拉出 arrow uniform。
  *
+ * 样式不再走 define 分支：每个盒子的样式由顶点属性 `arrowStyleId` 携带，FS 按 id
+ * 分派——单材质即可同时渲染两端不同样式（起点实心、终点空心）。
+ *
  * @param uniforms     共享 uniforms（与同一 polyline 实例共用）。
  * @param debugVolume  把盒子整体染绿调试用。
- * @param open         true → 走开口雪佛龙样式（`ARROW_OPEN`）；默认实心三角。
  * @returns            RawShaderMaterial。
  */
 export function createArrowHeadMaterial(
 	uniforms: SharedUniforms,
 	debugVolume = false,
-	open = false,
 ): RawShaderMaterial {
 	const defines = combineDefines( [
 		'PER_INSTANCE_COLOR',
 		'CESIUM_THREE_POLYLINE',
 		'CESIUM_THREE_POLYLINE_ARROW',
-		open ? 'ARROW_OPEN' : '',
 		debugVolume ? 'DEBUG_SHOW_VOLUME' : '',
 	] );
 

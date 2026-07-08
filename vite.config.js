@@ -1,20 +1,21 @@
 // ============================================================
 // vite.config.ts
-// 用途:Vite 构建配置
+// 用途:Vite 构建配置。
 // 关键设置:
-//   - server.host: '0.0.0.0' 允许局域网访问(本机调试时无影响)
-//   - server.open: true 启动后自动打开浏览器
-//   - build.target: 'es2022' 与 tsconfig 对齐
+//   - server.host: '0.0.0.0' 允许局域网访问，本机调试时无影响。
+//   - server.open: true 启动后自动打开浏览器。
+//   - build.target: 'es2022' 与 tsconfig 对齐。
 // ============================================================
 import { defineConfig, loadEnv } from 'vite';
 export default defineConfig(function (_a) {
     var mode = _a.mode;
-    // 加载 .env 文件(VITE_ 前缀的变量会被注入到客户端)
+    // 加载 .env 文件，VITE_ 前缀的变量会被注入到客户端。
     var env = loadEnv(mode, process.cwd(), '');
     return {
         server: {
-            port: 5170,
-            open: true,
+            port: 5180,
+            strictPort: true,
+            open: false,
             host: '0.0.0.0',
         },
         build: {
@@ -22,21 +23,30 @@ export default defineConfig(function (_a) {
             sourcemap: true,
             rollupOptions: {
                 output: {
-                    // 拆分 three / 3d-tiles-renderer 为独立 chunk,加速冷启动
+                    // 拆分 three / um-3d-tiles-renderer 为独立 chunk，加速冷启动。
                     manualChunks: {
                         three: ['three'],
-                        'tiles-renderer': ['3d-tiles-renderer', '3d-tiles-renderer/plugins'],
+                        'tiles-renderer': [
+                            'um-3d-tiles-renderer',
+                            'um-3d-tiles-renderer/core/plugins',
+                            'um-3d-tiles-renderer/three/plugins',
+                        ],
                     },
                 },
             },
         },
         define: {
-            // 让 main.ts 能用 import.meta.env.VITE_CESIUM_ION_TOKEN
+            // 让 main.ts 能使用 import.meta.env.VITE_CESIUM_ION_TOKEN。
             __APP_ENV__: JSON.stringify(env.APP_ENV),
         },
         optimizeDeps: {
-            // 预构建这些依赖,避免冷启动时的多次刷新
-            include: ['three', '3d-tiles-renderer', '3d-tiles-renderer/plugins'],
+            // 预构建这些依赖，避免冷启动时反复刷新。
+            include: [
+                'three',
+                'um-3d-tiles-renderer',
+                'um-3d-tiles-renderer/core/plugins',
+                'um-3d-tiles-renderer/three/plugins',
+            ],
         },
     };
 });

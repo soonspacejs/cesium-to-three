@@ -68,6 +68,8 @@ import {
 	centripetalCatmullRomSamples,
 	computeTangents,
 	findPointAlongPolylineFromEnd,
+	resamplePolylineByArcLength,
+	trimLocalPolylineLoops,
 } from '../arrow-curves';
 import { finalizePolygon } from '../arrow-polygon';
 import type {
@@ -83,9 +85,17 @@ const DEFAULT_HEAD_WIDTH_FACTOR = 0.55;
 const DEFAULT_NECK_HEIGHT_FACTOR = 0.85;
 const DEFAULT_NECK_WIDTH_FACTOR = 0.22;
 const DEFAULT_HEAD_TAIL_FACTOR = 1.25;
-// 12:Catmull-Rom 每段采样 12 点。多控制点脊线下采样总数 = (n-1)*12 + 1,
-// 远低于 ARROW_OUTPUT_MAX_VERTICES = 120 的上限。
+// 12:Catmull-Rom 每段采样 12 点。脊线样本总数 = (脊线控制点数-1)*12 + 1。
 const DEFAULT_BODY_SMOOTHING_SEGMENTS = 12;
+
+// ── 脊线样本预算 ──
+// 环 = leftSide + 头部 3 点 + rightSide = 2 × bodySpine + 3。预算 58 ⟹ 环 ≤ 119
+// ≤ ARROW_OUTPUT_MAX_VERTICES(120)。手绘几十~上百控制点时 CR 密采样后脊线
+// 上千点,必须在偏移**之前**按弧长重采样收口到预算内 —— 否则环上千点交给
+// finalizePolygon 的降采样会大幅抽稀,decimation 极易在密集/近退化输入上引入
+// 新的自交(与曲线箭头同源的根因)。收口后 clamp 几乎不触发,union 兜底也只需
+// 处理少量交点。与 curved-arrow.ts 的 SPINE_SAMPLE_BUDGET 同值同理。
+const SPINE_SAMPLE_BUDGET = 58;
 // 注:`minBodyHalfAngleRadians` / `bodyWidthMargin` 在原实现里用来反算
 // w = (tailWidth/2 - dropoff) / sin(halfAngle) 时做 clamp。Frenet 构造下,
 // 体宽由 tailHalfWidth 与 neckHalfWidth 之间的线性插值决定,完全不进入
@@ -207,55 +217,135 @@ export function buildAttackArrowSkeleton(
 	const bodySmoothingSegments =
 		options.bodySmoothingSegments ?? DEFAULT_BODY_SMOOTHING_SEGMENTS;
 
-	// ── 步骤 1:tailLeft / tailRight + midTail ──
-	// 体部走 Frenet 法线偏移:perp_CCW = ( -spineDirY, spineDirX ) 指向脊线的
-	// 左侧(在 +y 朝北的右手系下)。要求 leftSide[0] = tailLeft 也位于这一侧,
-	// 否则 leftSide[0] → leftSide[1] 这条边会穿过脊线,整个多边形自交,
-	// 下游 polygon-helpers.ts 描边路径(centroid-径向外扩 + 偶奇规则
-	// point-in-polygon)在自交多边形上结果不定 → 描边只画一半、燕尾退化成
-	// 三角形等明显异常。
+	// ── 步骤 0:契约判定 —— 正常"尾边契约" vs 退化"路径契约" ──
+	// attack/swallowtail 的标准契约是 controlPoints[0..1] = 尾边、[2..] = 脊线。
+	// 但 demo / 上层把**曲线路径点**(每点都是脊线、相邻点很近)切到 attack 时,
+	// dist(p0,p1) ≈ 相邻采样距 → 尾宽≈0 → 整支箭头退化成"几乎没有宽度的细丝 +
+	// 错乱尾部"(用户反馈的渲染异常根因)。
 	//
-	// 判定:用 spineDir × (controlPoints[0] - midTail) 的 2D 叉积符号判定
-	// controlPoints[0] 落在脊线的 CCW(左)还是 CW(右)侧。叉积 > 0 → 左侧,
-	// 维持 tailLeft = controlPoints[0];叉积 < 0 → 右侧,交换。
-	//
-	// 注:原 cesium-plot-js 的 `isClockWise(p0, p1, p2)` 判定**也**做了一次交换,
-	// 但那是为它自己的"两次镜像偏移点 + 各自 Catmull-Rom"构造路径量身定做的;
-	// Frenet 构造下需要的"侧"语义不同,必须独立判定,**不能**沿用
-	// `isClockWise` 那一行。
-	const tentativeMidTail = mid( controlPoints[ 0 ], controlPoints[ 1 ] );
-	const tentativeSpineDirX = controlPoints[ 2 ][ 0 ] - tentativeMidTail[ 0 ];
-	const tentativeSpineDirY = controlPoints[ 2 ][ 1 ] - tentativeMidTail[ 1 ];
-	const tailVecX = controlPoints[ 0 ][ 0 ] - tentativeMidTail[ 0 ];
-	const tailVecY = controlPoints[ 0 ][ 1 ] - tentativeMidTail[ 1 ];
-	const sideTest =
-		tentativeSpineDirX * tailVecY - tentativeSpineDirY * tailVecX;
-
-	let tailLeft = controlPoints[ 0 ];
-	let tailRight = controlPoints[ 1 ];
-	if ( sideTest < 0.0 ) {
-		tailLeft = controlPoints[ 1 ];
-		tailRight = controlPoints[ 0 ];
+	// **判别依据是 p1 处的转角,而不是尾宽比例**(尾宽比例会把"正常但偏窄的
+	// attack 尾边"误判成路径,使正常箭头尾部变形 —— 已踩过这个坑):
+	//   - 尾边契约:p0→p1(尾边)≈ 垂直于 p1→p2(脊线起段)→ 转角接近 90°。
+	//   - 路径契约:p0,p1,p2 近共线(平滑路径)→ 转角接近 0°。
+	// 转角 < TAIL_EDGE_MIN_TURN(50°)即判为路径契约。p0≈p1(零长尾边)也归路径。
+	const TAIL_EDGE_MIN_TURN = Math.PI * 50.0 / 180.0;
+	const SYNTHETIC_TAIL_HALF_FRACTION = 0.075;
+	const fullPathBaseLen = getBaseLength( controlPoints );
+	const tailEdgeX = controlPoints[ 1 ][ 0 ] - controlPoints[ 0 ][ 0 ];
+	const tailEdgeY = controlPoints[ 1 ][ 1 ] - controlPoints[ 0 ][ 1 ];
+	const spine0X = controlPoints[ 2 ][ 0 ] - controlPoints[ 1 ][ 0 ];
+	const spine0Y = controlPoints[ 2 ][ 1 ] - controlPoints[ 1 ][ 1 ];
+	const tailEdgeLen = Math.hypot( tailEdgeX, tailEdgeY );
+	const spine0Len = Math.hypot( spine0X, spine0Y );
+	let tailIsDegenerate: boolean;
+	if ( tailEdgeLen < 1e-12 || spine0Len < 1e-12 ) {
+		// p0≈p1(无尾边)或 p1≈p2:无法判角,归路径契约。
+		tailIsDegenerate = true;
+	} else {
+		const cross = tailEdgeX * spine0Y - tailEdgeY * spine0X;
+		const dot = tailEdgeX * spine0X + tailEdgeY * spine0Y;
+		const turn = Math.abs( Math.atan2( cross, dot ) );
+		tailIsDegenerate = turn < TAIL_EDGE_MIN_TURN;
 	}
-	const midTail = mid( tailLeft, tailRight );
 
-	// ── 步骤 2:脊线控制点 ──
-	const spineControlPoints: LonLatPoint[] = [ midTail ];
-	for ( let i = 2; i < controlPoints.length; i++ ) {
-		spineControlPoints.push( controlPoints[ i ] );
+	let tailLeft: LonLatPoint;
+	let tailRight: LonLatPoint;
+	let midTail: LonLatPoint;
+	let spineControlPoints: LonLatPoint[];
+
+	if ( tailIsDegenerate ) {
+		// ── 路径契约:全部点为脊线,起点处合成尾边 ──
+		spineControlPoints = controlPoints.map(
+			( p ) => [ p[ 0 ], p[ 1 ] ] as LonLatPoint,
+		);
+		const start = controlPoints[ 0 ];
+		// 起始切线方向(找第一个与起点不重合的点)。
+		let dirX = 0.0;
+		let dirY = 0.0;
+		for ( let i = 1; i < controlPoints.length; i++ ) {
+			dirX = controlPoints[ i ][ 0 ] - start[ 0 ];
+			dirY = controlPoints[ i ][ 1 ] - start[ 1 ];
+			if ( dirX * dirX + dirY * dirY > 1e-18 ) {
+				break;
+			}
+		}
+		const dirLen = Math.hypot( dirX, dirY );
+		if ( dirLen < 1e-12 ) {
+			return null; // 全部点重合。
+		}
+		dirX /= dirLen;
+		dirY /= dirLen;
+		// 切线左手 90° 法线。
+		const perpX = -dirY;
+		const perpY = dirX;
+		const halfW = fullPathBaseLen * SYNTHETIC_TAIL_HALF_FRACTION;
+		tailLeft = [ start[ 0 ] + perpX * halfW, start[ 1 ] + perpY * halfW ];
+		tailRight = [ start[ 0 ] - perpX * halfW, start[ 1 ] - perpY * halfW ];
+		midTail = [ start[ 0 ], start[ 1 ] ];
+	} else {
+		// ── 标准尾边契约 ──
+		// 体部走 Frenet 法线偏移:perp_CCW = ( -spineDirY, spineDirX ) 指向脊线的
+		// 左侧(在 +y 朝北的右手系下)。要求 leftSide[0] = tailLeft 也位于这一侧,
+		// 否则 leftSide[0] → leftSide[1] 这条边会穿过脊线,整个多边形自交。
+		//
+		// 判定:用 spineDir × (controlPoints[0] - midTail) 的 2D 叉积符号判定
+		// controlPoints[0] 落在脊线的 CCW(左)还是 CW(右)侧。叉积 > 0 → 左侧,
+		// 维持 tailLeft = controlPoints[0];叉积 < 0 → 右侧,交换。
+		const tentativeMidTail = mid( controlPoints[ 0 ], controlPoints[ 1 ] );
+		const tentativeSpineDirX = controlPoints[ 2 ][ 0 ] - tentativeMidTail[ 0 ];
+		const tentativeSpineDirY = controlPoints[ 2 ][ 1 ] - tentativeMidTail[ 1 ];
+		const tailVecX = controlPoints[ 0 ][ 0 ] - tentativeMidTail[ 0 ];
+		const tailVecY = controlPoints[ 0 ][ 1 ] - tentativeMidTail[ 1 ];
+		const sideTest =
+			tentativeSpineDirX * tailVecY - tentativeSpineDirY * tailVecX;
+
+		tailLeft = controlPoints[ 0 ];
+		tailRight = controlPoints[ 1 ];
+		if ( sideTest < 0.0 ) {
+			tailLeft = controlPoints[ 1 ];
+			tailRight = controlPoints[ 0 ];
+		}
+		midTail = mid( tailLeft, tailRight );
+
+		// 脊线控制点 = [midTail, controlPoints[2..]]。
+		spineControlPoints = [ midTail ];
+		for ( let i = 2; i < controlPoints.length; i++ ) {
+			spineControlPoints.push( controlPoints[ i ] );
+		}
 	}
+
 	if ( spineControlPoints.length < 2 ) {
 		return null;
 	}
 
-	// ── 步骤 3:**唯一一次** Catmull-Rom 平滑脊线 ──
-	const spineSamples = centripetalCatmullRomSamples(
+	// ── 步骤 2.5:整体宽度倍率(调整箭头大小)──
+	// 把尾边相对 midTail 整体放大 widthScale 倍 → tailWidth 缩放 → 体宽缩放,
+	// 头高受 tailWidth×headTailFactor clamp 约束、随之等比例缩放 → 一个旋钮调整
+	// 整支攻击 / 燕尾箭头粗细。脊线(长度)不变,只改粗细。
+	const widthScale = Math.max( options.widthScale ?? 1.0, 1e-3 );
+	if ( widthScale !== 1.0 ) {
+		tailLeft = [
+			midTail[ 0 ] + ( tailLeft[ 0 ] - midTail[ 0 ] ) * widthScale,
+			midTail[ 1 ] + ( tailLeft[ 1 ] - midTail[ 1 ] ) * widthScale,
+		];
+		tailRight = [
+			midTail[ 0 ] + ( tailRight[ 0 ] - midTail[ 0 ] ) * widthScale,
+			midTail[ 1 ] + ( tailRight[ 1 ] - midTail[ 1 ] ) * widthScale,
+		];
+	}
+
+	// ── 步骤 3:**唯一一次** Catmull-Rom 平滑脊线 + 弧长预算收口 ──
+	const rawSpineSamples = centripetalCatmullRomSamples(
 		spineControlPoints,
 		bodySmoothingSegments,
 	);
-	if ( spineSamples.length < 2 ) {
+	if ( rawSpineSamples.length < 2 ) {
 		return null;
 	}
+	// 超预算才收口(手绘多控制点);常规 3~6 控制点不触发,行为与历史一致。
+	const spineSamples = rawSpineSamples.length > SPINE_SAMPLE_BUDGET
+		? resamplePolylineByArcLength( rawSpineSamples, SPINE_SAMPLE_BUDGET )
+		: rawSpineSamples;
 
 	// ── 步骤 4:头部尺寸 clamp ──
 	const tailWidth = mathDistance( tailLeft, tailRight );
@@ -264,17 +354,45 @@ export function buildAttackArrowSkeleton(
 		spineControlPoints[ spineControlPoints.length - 1 ][ 0 ],
 		spineControlPoints[ spineControlPoints.length - 1 ][ 1 ],
 	];
-	const beforeTip = spineControlPoints[ spineControlPoints.length - 2 ];
-	const lastSegLen = mathDistance( tip, beforeTip );
+
+	// 末端"近直段"弧长:从 tip 沿(已重采样的)spineSamples 回退,累计绝对转角
+	// 超过阈值即止。**取代原来的"最后一个控制点段长"** —— 后者在密集 / 手绘脊线
+	// 下趋近 0(相邻采样点很近),会把 headHeight 压到几乎为 0,头部退化成几乎
+	// 不可见的小三角(swallowtail / attack 在密集输入下"渲染异常 / 没有头"的根因)。
+	// 转角法对稀疏(3~6 点)输入退化为"最后一条骨段长"(末骨段是直线,回退到
+	// 拐点处才累计到转角),与历史行为一致;对密集输入给出末端真实近直段长度。
+	const HEAD_END_TURN_LIMIT = Math.PI / 4; // 45°
+	let endStraightRun = 0.0;
+	{
+		let cumTurn = 0.0;
+		for ( let j = spineSamples.length - 2; j >= 1; j-- ) {
+			endStraightRun += mathDistance( spineSamples[ j + 1 ], spineSamples[ j ] );
+			const v1x = spineSamples[ j ][ 0 ] - spineSamples[ j - 1 ][ 0 ];
+			const v1y = spineSamples[ j ][ 1 ] - spineSamples[ j - 1 ][ 1 ];
+			const v2x = spineSamples[ j + 1 ][ 0 ] - spineSamples[ j ][ 0 ];
+			const v2y = spineSamples[ j + 1 ][ 1 ] - spineSamples[ j ][ 1 ];
+			cumTurn += Math.abs( Math.atan2( v1x * v2y - v1y * v2x, v1x * v2x + v1y * v2y ) );
+			if ( cumTurn > HEAD_END_TURN_LIMIT ) {
+				break;
+			}
+		}
+		if ( endStraightRun <= 0.0 ) {
+			// 兜底:脊线退化,退回到尖端与前一个控制点的距离。
+			endStraightRun = mathDistance(
+				tip,
+				spineControlPoints[ spineControlPoints.length - 2 ],
+			);
+		}
+	}
 
 	let headHeight = baseLen * headHeightFactor;
 	// 防止箭头头大于身(原版 headTailFactor)。
 	if ( headHeight > tailWidth * headTailFactor ) {
 		headHeight = tailWidth * headTailFactor;
 	}
-	// 防止头部伸出脊线之外。
-	if ( headHeight > lastSegLen ) {
-		headHeight = lastSegLen;
+	// 防止头部伸出"末端近直段"之外(转角法,密集输入下不再塌成 0)。
+	if ( headHeight > endStraightRun ) {
+		headHeight = endStraightRun;
 	}
 	if ( headHeight <= 0.0 ) {
 		// 整条脊线退化为单点 → 无法构造头部。
@@ -359,6 +477,14 @@ export function buildAttackArrowSkeleton(
 	leftSide[ 0 ] = [ tailLeft[ 0 ], tailLeft[ 1 ] ];
 	rightSide[ 0 ] = [ tailRight[ 0 ], tailRight[ 1 ] ];
 
+	// ── 步骤 8b:裁剪偏移边上的局部微环 ──
+	// 攻击箭头没有曲率限宽(体宽由用户尾边决定),脊线急弯处 halfWidth >
+	// 局部曲率半径时弯曲内侧的偏移边必然出现小自交环(cusp)。按 untrimmed
+	// offset → local trimming 剪掉(必须在 tail 钉接之后,裁剪保端点,
+	// tailLeft / tailRight / neckLeft / neckRight 都不会被移除)。
+	const trimmedLeftSide = trimLocalPolylineLoops( leftSide );
+	const trimmedRightSide = trimLocalPolylineLoops( rightSide );
+
 	// ── 步骤 9:头部 3 个新点(headLeft / tip / headRight)──
 	// 翼尖在 neck 处沿法线外扩 headHalfWidth(比 neckHalfWidth 大 → 翼展张开)。
 	const neckTx = tangents[ lastBodyIdx ][ 0 ];
@@ -378,8 +504,8 @@ export function buildAttackArrowSkeleton(
 	];
 
 	return {
-		leftSide,
-		rightSide,
+		leftSide: trimmedLeftSide,
+		rightSide: trimmedRightSide,
 		headLeft,
 		headRight,
 		tip,

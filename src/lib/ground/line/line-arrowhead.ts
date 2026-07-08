@@ -8,7 +8,7 @@
 //      薄盒 BufferGeometry，每端一个；盒子尺寸只存「单位标架 + 角点系数」，
 //      真正的米尺寸在 VS 里按 `czm_metersPerPixel(tip)` 动态挤出。
 // 依赖：Three.js、math/cartographic.ts、math/ellipsoid.ts、math/rte-encoding.ts、
-//        line/line-types.ts。
+//        line/line-types.ts、types.ts（仅类型：ArrowStyle 别名公开契约）。
 // 被消费：CesiumGroundPolylinePrimitive、单测、line-shadow-volume facade。
 // 算法对应：见 ../../../docs/线端箭头-独立方案.md（自包含设计）。
 // ============================================================
@@ -29,6 +29,7 @@ import {
 	getTerrainMinMaxHeightsForRectangle,
 	isApproximateTerrainHeightsReady,
 } from '../terrain-heights';
+import type { CesiumGroundArrowStyle } from '../types';
 
 import type { DensifiedLine } from './line-types';
 
@@ -46,8 +47,33 @@ export const ARROW_MODE = {
 /* eslint-disable-next-line @typescript-eslint/no-redeclare */
 export type ArrowMode = typeof ARROW_MODE[ keyof typeof ARROW_MODE ];
 
-/** 箭头样式：实心三角 / 开口雪佛龙。 */
-export type ArrowStyle = 'solid' | 'open';
+/**
+ * 箭头样式联合。直接别名到公开契约 `CesiumGroundArrowStyle`（**单一事实源**在
+ * types.ts），内部各 line 模块继续用这个短名——两者由别名绑定，永不漂移。
+ */
+export type ArrowStyle = CesiumGroundArrowStyle;
+
+/**
+ * 箭头样式 → 数值 id。顶点属性 `arrowStyleId` 与线 FS uniform `u_lineArrowStyle*`
+ * 都携带这个 id，与 GLSL prefix 里同名 `ARROW_STYLE_*` define 常量**逐值对齐**。
+ * 类型 `Record<ArrowStyle, number>` 让「漏给新样式配 id」直接编译报错，强制本表
+ * 与样式联合同步。
+ *
+ * 为什么不用布尔 open 标志：那样只能区分两种样式，第三种（如实心菱形 / 圆点 /
+ * bar）就无处安放。改用数值 id 后，每端独立携带样式，shader 多分支按 id 分派。
+ *
+ * 新增一种箭头样式的完整步骤：
+ *   1) 在 `CesiumGroundArrowStyle`（types.ts）加字面量（如 `'diamond'`）——`ArrowStyle`
+ *      由别名自动跟随，`parseArrowStyle`（line-options.ts，按本表成员判定）自动放行；
+ *   2) 在本表加一条递增 id（如 `diamond: 2`）——Record 会强制你加，否则编译报错；
+ *   3) 在 GLSL prefix 加同值 `#define ARROW_STYLE_DIAMOND 2`（materials.ts）；
+ *   4) 在 ARROWHEAD_FS 加该样式的成员判定分支；线 FS 若收口策略不同再加分支。
+ * （id 值与 GLSL define 的对齐是唯一靠人保证的一处——TS 无法校验着色器常量。）
+ */
+export const ARROW_STYLE_ID: Record<ArrowStyle, number> = {
+	solid: 0,
+	open: 1,
+};
 
 /**
  * 端点局部标架（ECEF 三向单位向量 + 尖端 ECEF 位置 + 端点处地形高度窗口）。
@@ -293,9 +319,15 @@ export function computeEndpointFrames(
  * 构造箭头几何。每个启用的端 = 一个 8 顶点薄盒（盒尺寸在 VS 里按 metersPerPixel
  * 动态挤出，CPU 端只存「单位标架 + 角点系数」）。
  *
+ * 起 / 终两端的样式逐盒烘焙到 `arrowStyleId` 顶点属性里（见 `ARROW_STYLE_ID`），
+ * FS 据此对每个盒子按 id 分派成员判定——这是「两端箭头样式可不同」的关键
+ * （例：起点实心三角、终点开口雪佛龙），也是未来扩展更多样式的承载点。
+ *
  * @param startFrame 起点端标架（mode === LEFT 或 BOTH 时使用）。
  * @param endFrame   终点端标架（mode === RIGHT 或 BOTH 时使用）。
  * @param mode       箭头模式枚举。
+ * @param startStyle 起点端样式（默认 'solid'）。
+ * @param endStyle   终点端样式（默认 'solid'）。
  * @returns          已装好属性 + 索引的 BufferGeometry。无 `position` 属性，
  *                   调用方应设 `mesh.frustumCulled = false`。NONE 模式返回空几何。
  */
@@ -303,16 +335,19 @@ export function buildArrowHeadGeometry(
 	startFrame: EndpointFrame,
 	endFrame: EndpointFrame,
 	mode: ArrowMode,
+	startStyle: ArrowStyle = 'solid',
+	endStyle: ArrowStyle = 'solid',
 ): BufferGeometry {
-	const frames: EndpointFrame[] = [];
+	// 每个启用端打包成 { 标架, styleId }；styleId 逐盒烘焙到顶点属性。
+	const boxesSpec: Array<{ frame: EndpointFrame; styleId: number }> = [];
 	if ( mode === ARROW_MODE.LEFT || mode === ARROW_MODE.BOTH ) {
-		frames.push( startFrame );
+		boxesSpec.push( { frame: startFrame, styleId: ARROW_STYLE_ID[ startStyle ] } );
 	}
 	if ( mode === ARROW_MODE.RIGHT || mode === ARROW_MODE.BOTH ) {
-		frames.push( endFrame );
+		boxesSpec.push( { frame: endFrame, styleId: ARROW_STYLE_ID[ endStyle ] } );
 	}
 
-	const boxes = frames.length;
+	const boxes = boxesSpec.length;
 	const vertexCount = boxes * 8;
 	const tipHigh = new Float32Array( vertexCount * 3 );
 	const tipLow = new Float32Array( vertexCount * 3 );
@@ -321,10 +356,12 @@ export function buildArrowHeadGeometry(
 	const upDir = new Float32Array( vertexCount * 3 );
 	const corner = new Float32Array( vertexCount * 3 );
 	const terrainHeights = new Float32Array( vertexCount * 2 );  // (minHeight, maxHeight)
+	const styleIds = new Float32Array( vertexCount );           // 逐盒样式 id（见 ARROW_STYLE_ID）
 	const indices = new Uint16Array( boxes * 36 );
 
 	for ( let f = 0; f < boxes; f++ ) {
-		const fr = frames[ f ];
+		const fr = boxesSpec[ f ].frame;
+		const styleId = boxesSpec[ f ].styleId;
 		_tip.set( fr.tip[ 0 ], fr.tip[ 1 ], fr.tip[ 2 ] );
 		encodeVec3RTE( _tip, _tipHi, _tipLo );
 
@@ -348,6 +385,7 @@ export function buildArrowHeadGeometry(
 			corner[ vi + 2 ] = c[ 2 ];
 			terrainHeights[ ti ] = fr.terrainMinHeight;
 			terrainHeights[ ti + 1 ] = fr.terrainMaxHeight;
+			styleIds[ f * 8 + j ] = styleId;
 		}
 		for ( let k = 0; k < 36; k++ ) {
 			indices[ f * 36 + k ] = ARROW_BOX_INDICES[ k ] + f * 8;
@@ -362,6 +400,7 @@ export function buildArrowHeadGeometry(
 	g.setAttribute( 'arrowUpDir', new BufferAttribute( upDir, 3 ) );
 	g.setAttribute( 'arrowCorner', new BufferAttribute( corner, 3 ) );
 	g.setAttribute( 'arrowTerrainHeights', new BufferAttribute( terrainHeights, 2 ) );
+	g.setAttribute( 'arrowStyleId', new BufferAttribute( styleIds, 1 ) );
 	g.setIndex( new BufferAttribute( indices, 1 ) );
 	return g;
 }

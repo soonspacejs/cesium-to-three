@@ -23,7 +23,7 @@ import type {
 	LonLatPoint,
 } from '../types';
 
-import { ARROW_MODE, type ArrowMode, type ArrowStyle } from './line-arrowhead';
+import { ARROW_MODE, ARROW_STYLE_ID, type ArrowMode, type ArrowStyle } from './line-arrowhead';
 import { ArcType, LineWidthMode, type LineShadowVolumeOptions } from './line-types';
 
 /** 解析后的公开选项（含全部已填默认值与字符串→枚举映射）。 */
@@ -46,7 +46,10 @@ export interface ResolvedLineOptions {
 	dashEnabled: boolean;
 	debugVolume: boolean;
 	arrowMode: ArrowMode;
-	arrowStyle: ArrowStyle;
+	/** 起点端箭头样式（已把缺省回退到 `arrowStyle` 解析完毕）。 */
+	arrowStartStyle: ArrowStyle;
+	/** 终点端箭头样式（已把缺省回退到 `arrowStyle` 解析完毕）。 */
+	arrowEndStyle: ArrowStyle;
 	arrowWidthMode: LineWidthMode;
 	arrowLengthPixels: number;
 	arrowWidthPixels: number;
@@ -103,15 +106,22 @@ export function parseArrowMode(
 	throw new Error( `Unknown CesiumGroundPolyline arrowMode: "${ String( value ) }".` );
 }
 
-/** 字符串 arrowStyle → 内部联合。 */
+/**
+ * 字符串 arrowStyle → 内部联合。缺省回退 'solid'。
+ *
+ * 按 `ARROW_STYLE_ID` 成员判定，而非逐个硬编码 'solid'/'open'——否则这里会成为
+ * 「静默拦住新样式」的硬门：新增样式时只改 `CesiumGroundArrowStyle` + `ARROW_STYLE_ID`
+ * 即自动放行，不必再回头改本函数。用 hasOwnProperty 避免命中原型链上的键
+ * （如 'toString'）。
+ */
 export function parseArrowStyle(
 	value: CesiumGroundArrowStyle | undefined,
 ): ArrowStyle {
-	if ( value === undefined || value === 'solid' ) {
+	if ( value === undefined ) {
 		return 'solid';
 	}
-	if ( value === 'open' ) {
-		return 'open';
+	if ( Object.prototype.hasOwnProperty.call( ARROW_STYLE_ID, value ) ) {
+		return value;
 	}
 	throw new Error( `Unknown CesiumGroundPolyline arrowStyle: "${ String( value ) }".` );
 }
@@ -224,7 +234,15 @@ export function resolvePublicLineOptions(
 
 	// ── 箭头选项 ──
 	const arrowMode = parseArrowMode( options.arrowMode );
-	const arrowStyle = parseArrowStyle( options.arrowStyle );
+	// `arrowStyle` 是两端统一默认；`startArrowStyle` / `endArrowStyle` 各自覆盖。
+	// 缺省的那端回退到 `arrowStyle`（再缺省即 'solid'），从而两端可独立设样式。
+	const arrowStyleDefault = parseArrowStyle( options.arrowStyle );
+	const arrowStartStyle = options.startArrowStyle !== undefined
+		? parseArrowStyle( options.startArrowStyle )
+		: arrowStyleDefault;
+	const arrowEndStyle = options.endArrowStyle !== undefined
+		? parseArrowStyle( options.endArrowStyle )
+		: arrowStyleDefault;
 	// 箭头尺寸模式：默认 'world'（世界米恒定，与线/面 world 模式视觉一致——
 	// 远小近大跟相机透视）。要像素恒定（Cesium Billboard sizeInMeters=false
 	// 同义）显式传 'screen'。与线 widthMode 独立可设。
@@ -262,13 +280,13 @@ export function resolvePublicLineOptions(
 			);
 		}
 		if (
-			arrowStyle === 'open' && (
+			( arrowStartStyle === 'open' || arrowEndStyle === 'open' ) && (
 				! Number.isFinite( arrowStrokeWidthPixels ) ||
 				arrowStrokeWidthPixels <= 0.0
 			)
 		) {
 			throw new Error(
-				'CesiumGroundPolylineOptions.arrowStrokeWidthPixels must be > 0 when arrowStyle="open".',
+				'CesiumGroundPolylineOptions.arrowStrokeWidthPixels must be > 0 when any arrow end is "open".',
 			);
 		}
 	}
@@ -294,7 +312,8 @@ export function resolvePublicLineOptions(
 		dashEnabled,
 		debugVolume: options.debugVolume === true,
 		arrowMode,
-		arrowStyle,
+		arrowStartStyle,
+		arrowEndStyle,
 		arrowWidthMode,
 		arrowLengthPixels,
 		arrowWidthPixels,

@@ -38,6 +38,7 @@ import type {
 } from './plugins/types';
 
 import { plotOrderToRenderOrder } from './plot-order';
+import { createPlainPlotPrimitive, PlainPlotPrimitive } from './PlainPlotPrimitive';
 
 /**
  * 妗ユ帴鍣ㄦ瀯閫犻€夐」銆? */
@@ -55,12 +56,19 @@ type AnyGroundPrimitive =
 	| CesiumGroundTextPrimitive;
 
 /**
+ * 桥接器可持有的全部渲染图元：贴地路径的 CesiumGround*（classification / 折线 / 文字）
+ * 与不贴地路径的 PlainPlotPrimitive。两条路径共享同一套 PlotEntry 生命周期管理
+ * （resolveGroup / update / dispose / setRenderOrder / 可见性），按 clampToGround 分流。
+ */
+type AnyPlotPrimitive = AnyGroundPrimitive | PlainPlotPrimitive;
+
+/**
  * 鍗曟潯鏍囩粯鍦ㄦˉ鎺ュ櫒鍐呴儴鐨勮褰曘€? *   - signature      鍑犱綍绛惧悕锛岀敤浜庡垽瀹氬嚑浣曟槸鍚﹀彉鍖栥€佹槸鍚﹂渶瑕侀噸寤哄浘鍏冦€? *   - styleSignature 鏍峰紡绛惧悕锛堥鑹?/ 涓嶉€忔槑搴?/ strokeWidth + 鍏ㄥ眬 opacity锛夛紝
  *                    闈㈢被鏃?setColor 鈫?棰滆壊鍙樺寲绾冲叆绛惧悕璧伴噸寤猴紱鎶樼嚎 / 鏂囧瓧
  *                    璧扮儹鏇存柊锛堜粛绾冲叆绛惧悕锛屼究浜庡悗缁瓥鐣ヤ竴鑷村寲锛夈€? */
 interface PlotEntry {
 	plot: GisPlotBase;
-	primitive: AnyGroundPrimitive;
+	primitive: AnyPlotPrimitive;
 	group: Group;
 	signature: string;
 	styleSignature: string;
@@ -69,7 +77,11 @@ interface PlotEntry {
 /**
  * 鍙栧嚭鍥惧厓搴旀寕鍒板満鏅殑 Group銆? * 鎶樼嚎涓庢枃瀛楀浘鍏冭嚜韬毚闇?group锛涘叾浣欙紙鐐?/ 澶氳竟褰?/ 鍦?/ 鎵?/ 鐭╁舰 / 绠ご锛? * 缁?classification 璐村湴锛屾寕 primitive.classification.group銆? *
  * @param primitive 浠绘剰 c2t 璐村湴鍥惧厓銆? * @returns         搴旇 scene.add 鐨?THREE.Group銆? */
-function resolveGroup( primitive: AnyGroundPrimitive ): Group {
+function resolveGroup( primitive: AnyPlotPrimitive ): Group {
+	// 不贴地图元自身就是一个 Group 持有者，直接取其 group。
+	if ( primitive instanceof PlainPlotPrimitive ) {
+		return primitive.group;
+	}
 	if ( primitive instanceof CesiumGroundPolylinePrimitive ) {
 		return primitive.group;
 	}
@@ -99,7 +111,12 @@ function geometrySignature( plot: GisPlotBase ): string {
 			return `point|${ pts }|${ o.pointStyle }|${ o.size }`;
 
 		case 'arrow':
-			return `arrow|${ pts }|${ o.arrowType }`;
+			// 箭头体型(sizeScale 对全类型生效 + 曲线专属体型字段)影响几何 →
+			// 必须进签名,否则 GUI 改大小时 geomSig 不变 → 桥接器只做轻量样式刷新、
+			// 不重算 generateCoords → 改了没反应(踩过的坑)。
+			return `arrow|${ pts }|${ o.arrowType }|${ o.sizeScale }`
+				+ `|${ o.curvedBodyWidthFactor }|${ o.curvedHeadWidthFactor }`
+				+ `|${ o.curvedHeadLengthFactor }`;
 
 		case 'line':
 			return `line|${ pts }|${ o.strokeStyle }|${ o.startArrowStyle }|${ o.endArrowStyle }`;
@@ -110,6 +127,24 @@ function geometrySignature( plot: GisPlotBase ): string {
 		default:
 			return `${ plot.category }|${ pts }`;
 	}
+}
+
+/**
+ * 计算"贴地模式签名"，并入几何签名前缀，使切换 clampToGround / 修改不贴地高度时
+ * 必然触发整图元重建（两条渲染路径产出的图元类型不同，不能走轻量刷新）。
+ *   - 贴地（clampToGround !== false）：返回固定 'ground'，与 heightMeters 无关
+ *     （贴地路径忽略高度，故移动高度滑杆不会让贴地图元做无谓重建）。
+ *   - 不贴地（clampToGround === false）：返回 'plain|<heightMeters>'，高度变化即重建。
+ *
+ * @param plot 数据模型。
+ * @returns    稳定的模式签名前缀。
+ */
+function clampModeSignature( plot: GisPlotBase ): string {
+	const o = plot.options as { clampToGround?: boolean; heightMeters?: number };
+	if ( o.clampToGround === false ) {
+		return `plain|${ o.heightMeters ?? '' }`;
+	}
+	return 'ground';
 }
 
 /**
@@ -209,7 +244,7 @@ export class PlotPrimitiveBridge {
 			plotOrder += 1;
 
 			const existing = this._entries.get( id );
-			const geomSig = geometrySignature( plot );
+			const geomSig = `${ clampModeSignature( plot ) }|${ geometrySignature( plot ) }`;
 			const styleSig = styleSignature( plot, this._opacity );
 
 			if (
@@ -281,7 +316,7 @@ export class PlotPrimitiveBridge {
 	/**
 	 * 褰撳墠鍥惧厓鏄惁鏀寔鏍峰紡鐑洿鏂帮紙棰滆壊 / 鎻忚竟绛夛級銆?	 * 鎶樼嚎锛坰etColor / setWidth锛変笌鏂囧瓧锛坰etText锛夋敮鎸侊紱闈㈢被涓嶆敮鎸侊紝闇€閲嶅缓銆?	 *
 	 * @param primitive 娓叉煋鍥惧厓銆?	 * @returns         true 琛ㄧず鏍峰紡鍙樺寲涔熷彲浠ヨ蛋杞婚噺鍒锋柊銆?	 */
-	private _supportsStyleHotUpdate( primitive: AnyGroundPrimitive ): boolean {
+	private _supportsStyleHotUpdate( primitive: AnyPlotPrimitive ): boolean {
 		return (
 			primitive instanceof CesiumGroundPolylinePrimitive ||
 			primitive instanceof CesiumGroundTextPrimitive
@@ -352,7 +387,15 @@ export class PlotPrimitiveBridge {
 	private _buildPrimitive(
 		plot: GisPlotBase,
 		renderOrder: number,
-	): AnyGroundPrimitive | null {
+	): AnyPlotPrimitive | null {
+		// 不贴地分流：clampToGround === false 时走普通 Three 图元路径
+		// （PlainPlotPrimitive），在 options.heightMeters 高度成面 / 线 / 字，完全不依赖
+		// 贴地深度纹理与 stencil。默认（undefined / true）仍走下方 CesiumGround* 贴地路径，
+		// 既有行为零变化。
+		if ( ( plot.options as { clampToGround?: boolean } ).clampToGround === false ) {
+			return createPlainPlotPrimitive( plot, renderOrder, this._opacity );
+		}
+
 		const base = plot.options;
 		const pts = ( base.points ?? [] ) as LonLatPoint[];
 		const g = this._opacity;
@@ -456,8 +499,13 @@ export class PlotPrimitiveBridge {
 						: ( end !== null ) ? 'right'
 							: ( start !== null ) ? 'left'
 								: 'none';
-				const styleHint = start ?? end;
-				const arrowStyle: CesiumGroundArrowStyle = styleHint === 'unfilledArrow' ? 'open' : 'solid';
+				// 起 / 终端各自映射样式——**不再用 `start ?? end` 折叠成一个样式**
+				// （那会让 filledArrow + unfilledArrow 两端渲染成同一种箭头）。
+				// 未启用的那端样式无所谓（arrowMode 不含该端就不渲染），给 'solid' 占位。
+				const startArrowStyle: CesiumGroundArrowStyle =
+					start === 'unfilledArrow' ? 'open' : 'solid';
+				const endArrowStyle: CesiumGroundArrowStyle =
+					end === 'unfilledArrow' ? 'open' : 'solid';
 				const isDash = o.strokeStyle === 'dashed';
 				const dashLengthMeters = isDash ? 60 : undefined;
 				const gapLengthMeters = isDash ? 40 : undefined;
@@ -473,7 +521,8 @@ export class PlotPrimitiveBridge {
 					widthMeters,
 					visible,
 					arrowMode,
-					arrowStyle,
+					startArrowStyle,
+					endArrowStyle,
 					arrowWidthMode: 'world',
 					arrowLengthMeters: lengthMeters,
 					arrowWidthMeters: widthMetersArrow,

@@ -92,9 +92,11 @@ function createFineArrowLocal(
 	p2: LonLatPoint,
 	options: FineArrowOptions = {},
 ): ArrowPolygon {
-	const tailWidthFactor = options.tailWidthFactor ?? DEFAULT_TAIL_WIDTH_FACTOR;
-	const neckWidthFactor = options.neckWidthFactor ?? DEFAULT_NECK_WIDTH_FACTOR;
-	const headWidthFactor = options.headWidthFactor ?? DEFAULT_HEAD_WIDTH_FACTOR;
+	// widthScale:整体宽度倍率(调整箭头大小),clamp 到正数。
+	const widthScale = Math.max( options.widthScale ?? 1.0, 1e-3 );
+	const tailWidthFactor = ( options.tailWidthFactor ?? DEFAULT_TAIL_WIDTH_FACTOR ) * widthScale;
+	const neckWidthFactor = ( options.neckWidthFactor ?? DEFAULT_NECK_WIDTH_FACTOR ) * widthScale;
+	const headWidthFactor = ( options.headWidthFactor ?? DEFAULT_HEAD_WIDTH_FACTOR ) * widthScale;
 	const headAngleRadians = options.headAngleRadians ?? DEFAULT_HEAD_ANGLE_RADIANS;
 	const neckAngleRadians = options.neckAngleRadians ?? DEFAULT_NECK_ANGLE_RADIANS;
 
