@@ -151,6 +151,15 @@ export class GroundDecalManager {
 		return this._ellipsoidDepth;
 	}
 
+	/** 控制已构建标绘图元是否直接挂载在 Three scene 上。 */
+	public setSceneAttached( attached: boolean ): void {
+		this._bridge.setSceneAttached( attached );
+	}
+
+	public get sceneAttached(): boolean {
+		return this._bridge.sceneAttached;
+	}
+
 	/**
 	 * 兼容参考项目签名：c2t 桥接器已在构造时内置，无需外部注入。
 	 * 调用仅触发一次重绘，便于旧业务无感升级。

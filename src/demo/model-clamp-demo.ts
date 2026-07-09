@@ -29,6 +29,7 @@
 import GUI from 'lil-gui';
 import {
 	AmbientLight,
+	Box3,
 	BoxGeometry,
 	Color,
 	DirectionalLight,
@@ -43,6 +44,8 @@ import {
 	Vector3,
 	WebGLRenderer,
 } from 'three';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { GlobeControls, TilesRenderer } from 'um-3d-tiles-renderer';
 import { CesiumIonAuthPlugin } from 'um-3d-tiles-renderer/core/plugins';
 
@@ -63,12 +66,36 @@ import {
 import { GroundDecalManager } from '../lib/plot';
 
 import { createInfoPanel, installPageStyle } from './dom';
-import { readStringEnv } from './env';
+import { readNumberEnv, readStringEnv } from './env';
 import { configureLoadedTileScene, createCesiumTilesRenderer } from './tiles';
 
 /** 默认倾斜摄影 tileset（用户提供，直连，CORS=*，无需 token）。 */
 const DEFAULT_OBLIQUE_URL =
 	'https://sooncps.xwbuilders.com/api/ugis-dataprocess/v1/model/taz4Wo8Q5/tileset.json';
+
+const PLOT_RECTANGLE_CENTER_EAST_UNITS = 3.2;
+const PLOT_RECTANGLE_CENTER_NORTH_UNITS = 2.0;
+const PLOT_RECTANGLE_HALF_WIDTH_UNITS = 1.0;
+const PLOT_RECTANGLE_HALF_HEIGHT_UNITS = 0.7;
+
+const RECTANGLE_GLB_MODEL_URL = encodeURI(
+	readStringEnv( 'VITE_RECTANGLE_GLB_MODEL_URL', '/Untitle.glb' ),
+);
+
+// const RECTANGLE_GLB_MODEL_URL = encodeURI(
+// 	readStringEnv( 'VITE_RECTANGLE_GLB_MODEL_URL', '/model_2026-06-24 (11).glb' ),
+// );
+
+const RECTANGLE_GLB_DRACO_DECODER_PATH = '/draco/gltf/';
+const RECTANGLE_GLB_MODEL_SCALE = Math.max(
+	readNumberEnv( 'VITE_RECTANGLE_GLB_MODEL_SCALE', 1.0 ),
+	1.0e-6,
+);
+const RECTANGLE_GLB_MODEL_HEIGHT_OFFSET_METERS =
+	readNumberEnv( 'VITE_RECTANGLE_GLB_MODEL_HEIGHT_OFFSET_METERS', 0.0 );
+const RECTANGLE_GLB_MODEL_HEADING_DEGREES =
+	readNumberEnv( 'VITE_RECTANGLE_GLB_MODEL_HEADING_DEGREES', 0.0 );
+const RECTANGLE_GLB_RENDER_LAYER = 2;
 
 /**
  * 首帧相机的"位置提示"——仅在倾斜瓦片包围球就绪前给一个合理的初始视角，
@@ -95,6 +122,10 @@ type ModelSource = 'oblique' | 'ion' | 'buildings';
 /** 数值钳位。 */
 function clamp( value: number, min: number, max: number ): number {
 	return Math.min( max, Math.max( min, value ) );
+}
+
+function setObjectLayerRecursive( object: Object3D, layer: number ): void {
+	object.traverse( child => child.layers.set( layer ) );
 }
 
 /**
@@ -247,6 +278,22 @@ function regularPolygonOffsets(
  * @param u 基准长度（米）：整组标绘大致铺在 ±6u 的范围内。
  * @param classificationType 入册时的分类目标。
  */
+function rectangleCenterFromPlotCenter(
+	centerLon: number,
+	centerLat: number,
+	u: number,
+): { longitude: number; latitude: number } {
+	const point = longitudeLatitudeFromCenterOffsetsMeters(
+		centerLon,
+		centerLat,
+		[ {
+			eastMeters: PLOT_RECTANGLE_CENTER_EAST_UNITS * u,
+			northMeters: PLOT_RECTANGLE_CENTER_NORTH_UNITS * u,
+		} ],
+	)[ 0 ];
+	return { longitude: point.longitude, latitude: point.latitude };
+}
+
 function buildPlotsAround(
 	decals: GroundDecalManager,
 	centerLon: number,
@@ -324,13 +371,17 @@ function buildPlotsAround(
 	} );
 
 	// 矩形
+	const rectangleCenterEast = PLOT_RECTANGLE_CENTER_EAST_UNITS * u;
+	const rectangleCenterNorth = PLOT_RECTANGLE_CENTER_NORTH_UNITS * u;
+	const rectangleHalfWidth = PLOT_RECTANGLE_HALF_WIDTH_UNITS * u;
+	const rectangleHalfHeight = PLOT_RECTANGLE_HALF_HEIGHT_UNITS * u;
 	decals.addPlot( {
 		type: 'rectangle',
 		points: pts( [
-			{ eastMeters: 3.2 * u - 1.0 * u, northMeters: 2.0 * u - 0.7 * u },
-			{ eastMeters: 3.2 * u + 1.0 * u, northMeters: 2.0 * u - 0.7 * u },
-			{ eastMeters: 3.2 * u + 1.0 * u, northMeters: 2.0 * u + 0.7 * u },
-			{ eastMeters: 3.2 * u - 1.0 * u, northMeters: 2.0 * u + 0.7 * u },
+			{ eastMeters: rectangleCenterEast - rectangleHalfWidth, northMeters: rectangleCenterNorth - rectangleHalfHeight },
+			{ eastMeters: rectangleCenterEast + rectangleHalfWidth, northMeters: rectangleCenterNorth - rectangleHalfHeight },
+			{ eastMeters: rectangleCenterEast + rectangleHalfWidth, northMeters: rectangleCenterNorth + rectangleHalfHeight },
+			{ eastMeters: rectangleCenterEast - rectangleHalfWidth, northMeters: rectangleCenterNorth + rectangleHalfHeight },
 		] ),
 		strokeColor: '#ffffff',
 		strokeWidth: sw,
@@ -458,9 +509,12 @@ export function runModelClampDemo(): void {
 	// ── 场景 / 灯光 ──
 	const scene = new Scene();
 	scene.background = new Color( 0x05070a );
-	scene.add( new AmbientLight( 0xffffff, 0.65 ) );
+	const ambient = new AmbientLight( 0xffffff, 0.65 );
+	ambient.layers.enable( RECTANGLE_GLB_RENDER_LAYER );
+	scene.add( ambient );
 	const sun = new DirectionalLight( 0xffffff, 1.4 );
 	sun.position.set( 0.35, -0.45, 0.82 ).normalize();
+	sun.layers.enable( RECTANGLE_GLB_RENDER_LAYER );
 	scene.add( sun );
 
 	// ── 渲染器（stencil 必开——shadow volume Z-fail 依赖它）──
@@ -547,9 +601,26 @@ export function runModelClampDemo(): void {
 	// ── 标绘管理器：不传 globeDepth，兜底唯一归 depthManager（避免双重兜底）──
 	const decals = new GroundDecalManager( { scene } );
 
+	const rectangleGlbAnchor = new Group();
+	rectangleGlbAnchor.name = 'ModelClampRectangleGlbAnchor';
+	rectangleGlbAnchor.matrixAutoUpdate = false;
+	rectangleGlbAnchor.visible = false;
+	setObjectLayerRecursive( rectangleGlbAnchor, RECTANGLE_GLB_RENDER_LAYER );
+	scene.add( rectangleGlbAnchor );
+
+	const rectangleGlbLocalSize = new Vector3();
+	let rectangleGlbScene: Object3D | null = null;
+	let rectangleGlbStatus = 'waiting for rectangle';
+	let rectangleGlbError = '';
+	let rectangleGlbVisible = true;
+	let rectangleGlbLon = Number.NaN;
+	let rectangleGlbLat = Number.NaN;
+	let rectangleGlbHeight = 0.0;
+
 	// 贴倾斜 / 贴模型默认用 BOTH：模型表面贴模型、模型外贴椭球面兜底，标绘始终可见；
 	// 想看"纯贴模型（无模型处掩掉）"切到 CESIUM_3D_TILE。
 	let currentType: ClassificationType = ClassificationType.BOTH;
+	let plotsVisible = true;
 
 	// ── 模型来源装配 ──
 	const ionToken = readStringEnv( 'VITE_CESIUM_ION_TOKEN' );
@@ -608,6 +679,128 @@ export function runModelClampDemo(): void {
 		camera.updateMatrixWorld();
 	}
 
+	function applyPlotsVisibility(): void {
+		decals.setSceneAttached( plotsVisible );
+	}
+
+	function updateRectangleGlbAnchorTransform(): void {
+		if ( ! Number.isFinite( rectangleGlbLon ) || ! Number.isFinite( rectangleGlbLat ) ) {
+			rectangleGlbAnchor.visible = false;
+			return;
+		}
+
+		const origin = wgs84PositionFromDegrees(
+			rectangleGlbLon,
+			rectangleGlbLat,
+			rectangleGlbHeight + RECTANGLE_GLB_MODEL_HEIGHT_OFFSET_METERS,
+		);
+		const enu = eastNorthUpToFixedFrame( origin, new Matrix4() );
+		if ( RECTANGLE_GLB_MODEL_HEADING_DEGREES !== 0.0 ) {
+			enu.multiply( new Matrix4().makeRotationZ(
+				RECTANGLE_GLB_MODEL_HEADING_DEGREES * Math.PI / 180.0,
+			) );
+		}
+		rectangleGlbAnchor.matrix.copy( enu );
+		rectangleGlbAnchor.matrixWorldNeedsUpdate = true;
+		rectangleGlbAnchor.visible = rectangleGlbVisible && rectangleGlbScene !== null;
+	}
+
+	function flyToRectangleGlb(): void {
+		if ( ! Number.isFinite( rectangleGlbLon ) || ! Number.isFinite( rectangleGlbLat ) ) {
+			return;
+		}
+
+		const modelHeight = rectangleGlbLocalSize.z > 0.0 ? rectangleGlbLocalSize.z : 40.0;
+		const focus = wgs84PositionFromDegrees(
+			rectangleGlbLon,
+			rectangleGlbLat,
+			rectangleGlbHeight + RECTANGLE_GLB_MODEL_HEIGHT_OFFSET_METERS + modelHeight * 0.35,
+		);
+		const glbUp = wgs84NormalFromDegrees( rectangleGlbLon, rectangleGlbLat );
+		const glbEast = new Vector3( - glbUp.y, glbUp.x, 0.0 ).normalize();
+		const span = Math.max(
+			rectangleGlbLocalSize.x,
+			rectangleGlbLocalSize.y,
+			rectangleGlbLocalSize.z,
+			120.0,
+		);
+		const distance = clamp( span * 2.2, 240.0, 4500.0 );
+
+		camera.position
+			.copy( focus )
+			.addScaledVector( glbUp, distance )
+			.addScaledVector( glbEast, distance * 0.28 );
+		camera.lookAt( focus );
+		camera.updateMatrixWorld();
+	}
+
+	function prepareRectangleGlbModel( modelScene: Object3D ): void {
+		modelScene.name = modelScene.name || 'ModelClampRectangleGlbModel';
+		setObjectLayerRecursive( modelScene, RECTANGLE_GLB_RENDER_LAYER );
+		modelScene.scale.multiplyScalar( RECTANGLE_GLB_MODEL_SCALE );
+		modelScene.updateMatrixWorld( true );
+
+		const bounds = new Box3().setFromObject( modelScene );
+		if ( bounds.isEmpty() ) {
+			rectangleGlbLocalSize.set( 0.0, 0.0, 0.0 );
+			return;
+		}
+
+		bounds.getSize( rectangleGlbLocalSize );
+	}
+
+	function loadRectangleGlbModel(): void {
+		rectangleGlbStatus = 'loading';
+		const dracoLoader = new DRACOLoader();
+		dracoLoader.setDecoderPath( RECTANGLE_GLB_DRACO_DECODER_PATH );
+
+		const gltfLoader = new GLTFLoader();
+		gltfLoader.setDRACOLoader( dracoLoader );
+		gltfLoader.load(
+			RECTANGLE_GLB_MODEL_URL,
+			gltf => {
+				const modelScene = gltf.scene;
+				prepareRectangleGlbModel( modelScene );
+				modelScene.visible = true;
+				rectangleGlbAnchor.add( modelScene );
+				rectangleGlbScene = modelScene;
+				rectangleGlbStatus = 'loaded';
+				updateRectangleGlbAnchorTransform();
+				dracoLoader.dispose();
+			},
+			event => {
+				if ( event.lengthComputable && event.total > 0 ) {
+					const progress = Math.round( event.loaded / event.total * 100.0 );
+					rectangleGlbStatus = `loading ${ progress }%`;
+				}
+			},
+			error => {
+				rectangleGlbStatus = 'error';
+				rectangleGlbError =
+					error instanceof ErrorEvent
+						? error.message
+						: error instanceof Error
+							? error.message
+							: String( error );
+				console.error( '[model-clamp] Failed to load rectangle GLB model:', error );
+				dracoLoader.dispose();
+			},
+		);
+	}
+
+	function placeRectangleGlbAtPlotRectangle(
+		centerLon: number,
+		centerLat: number,
+		centerHeight: number,
+		unit: number,
+	): void {
+		const rectangleCenter = rectangleCenterFromPlotCenter( centerLon, centerLat, unit );
+		rectangleGlbLon = rectangleCenter.longitude;
+		rectangleGlbLat = rectangleCenter.latitude;
+		rectangleGlbHeight = centerHeight;
+		updateRectangleGlbAnchorTransform();
+	}
+
 	function onModelReady(
 		centerLon: number,
 		centerLat: number,
@@ -619,12 +812,16 @@ export function runModelClampDemo(): void {
 		plotsBuilt = true;
 
 		buildPlotsAround( decals, centerLon, centerLat, unit, currentType );
+		applyPlotsVisibility();
+		placeRectangleGlbAtPlotRectangle( centerLon, centerLat, centerHeight, unit );
 
 		modelCenterEcef = wgs84PositionFromDegrees( centerLon, centerLat, centerHeight );
 		modelUp = wgs84NormalFromDegrees( centerLon, centerLat );
 		flyDistance = dist;
 		flyToModel();
 	}
+
+	loadRectangleGlbModel();
 
 	// buildings 源：中心固定、无需等包围球，立即摆标绘 + 飞。
 	if ( resolvedSource === 'buildings' ) {
@@ -637,9 +834,16 @@ export function runModelClampDemo(): void {
 		buildingsVisible: true,
 		modelVisible: true,
 		baseMapVisible: true,
+		plotsVisible: true,
+		rectangleGlbVisible: true,
 		flyToModel,
+		flyToRectangleGlb,
 	};
 	const gui = new GUI( { title: '标绘贴倾斜 / 贴模型 Demo' } );
+	gui.add( params, 'plotsVisible' ).name( '显示标绘图形' ).onChange( ( v: boolean ) => {
+		plotsVisible = v;
+		applyPlotsVisibility();
+	} );
 	gui.add( params, 'classificationType', [ 'TERRAIN', 'CESIUM_3D_TILE', 'BOTH' ] )
 		.name( '分类目标' )
 		.onChange( ( v: string ) => {
@@ -667,6 +871,11 @@ export function runModelClampDemo(): void {
 			}
 		} );
 	}
+	gui.add( params, 'rectangleGlbVisible' ).name( '显示矩形 GLB' ).onChange( ( v: boolean ) => {
+		rectangleGlbVisible = v;
+		updateRectangleGlbAnchorTransform();
+	} );
+	gui.add( params, 'flyToRectangleGlb' ).name( '定位矩形 GLB' );
 	gui.add( params, 'flyToModel' ).name( '回到模型' );
 
 	// ── resize ──
@@ -715,38 +924,61 @@ export function runModelClampDemo(): void {
 		depthManager.update( camera );
 
 		// B. 本帧需要哪些分类目标纹理。
-		const requestedTypes = decals.collectActiveClassificationTypes();
-		if ( requestedTypes.size === 0 ) {
-			requestedTypes.add( ClassificationType.BOTH );
-		}
+		if ( plotsVisible ) {
+			const requestedTypes = decals.collectActiveClassificationTypes();
+			if ( requestedTypes.size === 0 ) {
+				requestedTypes.add( ClassificationType.BOTH );
+			}
 
-		// C. 渲染所需深度纹理（懒创建，只渲请求目标）。
-		depthManager.renderDepth( renderer, camera, scene, requestedTypes );
+			// C. 渲染所需深度纹理（懒创建，只渲请求目标）。
+			depthManager.renderDepth( renderer, camera, scene, requestedTypes );
 
-		// D. 选默认 depthTexture + 附多纹理集，透传给标绘。
-		const defaultTex =
-			depthManager.getTexture( currentType ) ??
-			depthManager.getTexture( ClassificationType.BOTH ) ??
-			depthManager.getTexture( ClassificationType.TERRAIN ) ??
-			depthManager.getTexture( ClassificationType.CESIUM_3D_TILE );
+			// D. 选默认 depthTexture + 附多纹理集，透传给标绘。
+			const defaultTex =
+				depthManager.getTexture( currentType ) ??
+				depthManager.getTexture( ClassificationType.BOTH ) ??
+				depthManager.getTexture( ClassificationType.TERRAIN ) ??
+				depthManager.getTexture( ClassificationType.CESIUM_3D_TILE );
 
-		if ( defaultTex ) {
-			decals.update( depthManager.buildFrameState( {
-				depthTexture: defaultTex,
-				width: renderer.domElement.width,
-				height: renderer.domElement.height,
-				camera,
-				pixelRatio: renderer.getPixelRatio(),
-			} ) );
+			if ( defaultTex ) {
+				decals.update( depthManager.buildFrameState( {
+					depthTexture: defaultTex,
+					width: renderer.domElement.width,
+					height: renderer.domElement.height,
+					camera,
+					pixelRatio: renderer.getPixelRatio(),
+				} ) );
+			}
 		}
 
 		// E. 主场景渲染。
+		const previousCameraLayerMask = camera.layers.mask;
+		camera.layers.disable( RECTANGLE_GLB_RENDER_LAYER );
 		renderer.render( scene, camera );
+		if ( rectangleGlbAnchor.visible && rectangleGlbAnchor.children.length > 0 ) {
+			const previousAutoClear = renderer.autoClear;
+			const previousBackground = scene.background;
+			renderer.autoClear = false;
+			scene.background = null;
+			try {
+				renderer.clearDepth();
+				camera.layers.set( RECTANGLE_GLB_RENDER_LAYER );
+				renderer.render( scene, camera );
+			} finally {
+				scene.background = previousBackground;
+				renderer.autoClear = previousAutoClear;
+			}
+		}
+		camera.layers.mask = previousCameraLayerMask;
 
 		const centerLine = modelCenterEcef
 			? `中心: ${ ( ( cartesianToCartographic( modelCenterEcef, scratchCarto )?.longitude ?? 0 ) * 180 / Math.PI ).toFixed( 4 ) }, ` +
 				`${ ( ( cartesianToCartographic( modelCenterEcef, scratchCarto )?.latitude ?? 0 ) * 180 / Math.PI ).toFixed( 4 ) }`
 			: '中心: 等待模型包围球…';
+		const rectangleGlbLine =
+			Number.isFinite( rectangleGlbLon ) && Number.isFinite( rectangleGlbLat )
+				? `Rectangle GLB: ${ rectangleGlbStatus } / center ${ rectangleGlbLon.toFixed( 4 ) }, ${ rectangleGlbLat.toFixed( 4 ) } / size ${ rectangleGlbLocalSize.x.toFixed( 1 ) } x ${ rectangleGlbLocalSize.y.toFixed( 1 ) } x ${ rectangleGlbLocalSize.z.toFixed( 1 ) } m`
+				: `Rectangle GLB: ${ rectangleGlbStatus } / waiting for rectangle center`;
 
 		infoBody.textContent =
 			`贴倾斜 / 贴模型 Demo（ClassificationDepthManager）\n` +
@@ -754,6 +986,8 @@ export function runModelClampDemo(): void {
 			`当前分类目标: ${ params.classificationType }（切 CESIUM_3D_TILE 看纯贴模型）\n` +
 			`标绘已就位: ${ plotsBuilt ? '是' : '否（等待模型加载）' }\n` +
 			`${ centerLine }\n` +
+			`${ rectangleGlbLine }\n` +
+			( rectangleGlbError ? `Rectangle GLB error: ${ rectangleGlbError }\n` : '' ) +
 			( tileLoadError ? `瓦片加载错误: ${ tileLoadError }\n` : '' ) +
 			`Drawing buffer: ${ renderer.domElement.width } x ${ renderer.domElement.height }`;
 	}
@@ -773,9 +1007,19 @@ export function runModelClampDemo(): void {
 		modelTiles,
 		baseTiles,
 		hasBaseMap,
+		rectangleGlbAnchor,
 		step,
 		get buildingCluster() {
 			return buildingCluster;
+		},
+		get rectangleGlbScene() {
+			return rectangleGlbScene;
+		},
+		get rectangleGlbStatus() {
+			return rectangleGlbStatus;
+		},
+		get rectangleGlbLocalSize() {
+			return rectangleGlbLocalSize;
 		},
 	};
 

@@ -193,6 +193,9 @@ export class PlotPrimitiveBridge {
 	/** 宸查噴鏀炬爣璁般€?*/
 	private _disposed = false;
 
+	/** 标绘图元是否挂载在目标 scene 上；关闭时保留数据与 primitive，但从 scene 移除。 */
+	private _sceneAttached = true;
+
 	/**
 	 * @param options 妗ユ帴鍣ㄦ瀯閫犻€夐」銆?	 */
 	public constructor( options: PlotPrimitiveBridgeOptions ) {
@@ -222,6 +225,27 @@ export class PlotPrimitiveBridge {
 
 	public get opacity(): number {
 		return this._opacity;
+	}
+
+	/** 控制所有已构建标绘图元是否直接挂载到 Three scene。 */
+	public setSceneAttached( attached: boolean ): void {
+		if ( this._disposed || this._sceneAttached === attached ) {
+			return;
+		}
+		this._sceneAttached = attached;
+		for ( const entry of this._entries.values() ) {
+			if ( attached ) {
+				if ( entry.group.parent !== this._scene ) {
+					this._scene.add( entry.group );
+				}
+			} else {
+				this._scene.remove( entry.group );
+			}
+		}
+	}
+
+	public get sceneAttached(): boolean {
+		return this._sceneAttached;
 	}
 
 	/**
@@ -271,7 +295,9 @@ export class PlotPrimitiveBridge {
 			}
 			const group = resolveGroup( primitive );
 			group.visible = plot.options.visible !== false;
-			this._scene.add( group );
+			if ( this._sceneAttached ) {
+				this._scene.add( group );
+			}
 			const entry: PlotEntry = {
 				plot,
 				primitive,
@@ -291,7 +317,7 @@ export class PlotPrimitiveBridge {
 	 * 瀹夸富姣忓抚璋冪敤锛氭妸 frameState 閫忎紶缁欐墍鏈夊浘鍏冿紙娣卞害 + 瑙嗗彛 + 鐩告満 + pixelRatio锛夈€?	 *
 	 * @param frameState 褰撳墠甯х姸鎬併€?	 */
 	public update( frameState: CesiumGroundFrameState ): void {
-		if ( this._disposed ) {
+		if ( this._disposed || ! this._sceneAttached ) {
 			return;
 		}
 		for ( const entry of this._entries.values() ) {
