@@ -1,225 +1,135 @@
 # cesium-to-three
 
-把 **Cesium 的 GPU Z-fail Stencil Shadow Volume 贴地算法** 移植到 Three.js + um-3d-tiles-renderer 的最小可运行 demo。
+语言：中文 | [English](./README.en.md)
 
-> 这是 PlotEngine v3 项目的"金标准"参考实现 —— 一个红色矩形通过 stencil shadow volume 算法精确贴在真实地形上。所有 stencil 算法的关键技术细节(VS/FS depth-clamp 协议、GPU 动态挤出、`setLocked` + 原生 `gl.stencilOpSeparate`、cache 脏化)都完整实现且可用 Spector.js 抓帧验证。
+`cesium-to-three` 是一个把 Cesium 风格的贴地 / 贴模型 classification 图元迁移到 Three.js 生态中的项目。它基于 `three` 和 `um-3d-tiles-renderer`，把地形、倾斜摄影、3D Tiles、GLB 模型和 GIS 标绘放在同一个 Three 渲染管线中验证。
 
-## 这个 demo 做什么
+这个仓库现在不再只是一个红色矩形 demo。当前重点是：
 
-在 um-3d-tiles-renderer 加载的 **Cesium World Terrain**(真实地形)上,贴一个红色透明矩形(默认 20km × 20km,中心在上海陆家嘴)。无论你怎么转地球、缩放、倾斜相机,这个红色矩形都精确贴在地形表面上 —— **山脊不漏、低谷不浮**。
+- 贴地 classification 图元库：矩形、多边形、折线、圆、点、文字、箭头。
+- 标绘管理层：`GroundDecalManager` + 插件化 plot item，支持增量更新和从 Three scene 中真实移除。
+- 贴倾斜 / 贴模型 demo：支持地形、倾斜摄影、Ion 3D Tiles、合成楼群，以及把 `public/Untitle.glb` 放到矩形中心。
+- Three 原生渲染修复：GLB 按 Three 官方 `GLTFLoader` 加载，使用独立 layer + `clearDepth()` 避免被 terrain depth 裁切。
+- TilesRenderer 生命周期控制：隐藏 3D Tiles 时停止 `update()` 并卸载 cache，避免隐藏后继续请求和高 CPU。
+- 自适应渲染循环：交互和加载时连续渲染，空闲时低频保活，避免全帧空转和突然缩放卡顿。
+
+## Demo 入口
+
+启动 Vite 后通过 URL 切换 demo：
+
+| URL | 用途 |
+|---|---|
+| `http://localhost:5173/` | 默认 `ground` demo |
+| `http://localhost:5173/?demo=ground` | 贴地图元基础验证，展示 rectangle / polygon / line / circle / point / text / arrow |
+| `http://localhost:5173/?demo=plot` | `GroundDecalManager` 端到端标绘管理测试 |
+| `http://localhost:5173/?demo=plot&noterrain` | 无 Cesium Ion token 时，用椭球兜底验证标绘 |
+| `http://localhost:5173/?demo=model` | 贴倾斜 / 贴模型 demo，默认加载直连倾斜摄影 |
+| `http://localhost:5173/?demo=model&model=buildings` | 不依赖外部 3D Tiles，用合成楼群验证贴模型 |
+| `http://localhost:5173/?demo=model&model=ion` | 从 Cesium Ion 加载 3D Tiles 模型 |
+
+也可以通过 `.env.local` 设置 `VITE_DEMO=ground|plot|model`。
 
 ## 快速开始
 
-### 1. 装依赖
+安装依赖：
 
 ```bash
 npm install
 ```
 
-### 2. 配置 Cesium Ion Token
+复制环境变量文件：
 
-注册免费账号 https://cesium.com/ion/ → 创建 Token → 复制 `.env.example` 为 `.env.local` → 填入:
+```bash
+copy .env.example .env.local
+```
+
+配置 Cesium Ion token。`ground` demo 和带底图的 `model` demo 需要 token；`plot&noterrain` 和 `model&model=buildings` 可以在无 token 时运行。
 
 ```dotenv
-VITE_CESIUM_ION_TOKEN=eyJhbGciOiJI...
+VITE_CESIUM_ION_TOKEN=eyJhbGciOi...
 VITE_CESIUM_ION_ASSET_ID=96188
 ```
 
-> Asset ID `96188` 是 **Cesium World Terrain**(默认 token 权限就含)。
-
-### 3. 启动
+启动开发服务器：
 
 ```bash
 npm run dev
 ```
 
-浏览器打开 `http://localhost:5173`,看到上海陆家嘴一带山地海岸 + 红色矩形精确贴在上面就成功了。
+常用检查命令：
 
-### 4. 如果没有 Cesium Token
-
-依然可以跑 —— EllipsoidDepthMesh 兜底椭球面会让红色矩形渲染在 WGS84 椭球表面(看起来像贴在"地球水准面"上)。**stencil 算法本身完全正确**,只是看不到真实地形。这恰好证明算法独立于地形数据源。
-
----
-
-## 技术架构
-
-```
-                  Three.js Scene
-                         │
-                ┌────────┴─────────┐
-                │                  │
-         tilesRenderer.group      camera
-                │
-       ┌────────┼─────────┐
-       │        │         │
-   tile mesh   EllipsoidDepthMesh   PolygonPrimitive.group
-   (来自 Cesium  (兜底,写 depth)    ┌──────┴──────┐
-    Ion 真实地形, renderOrder=-10000  │             │
-    写 depth,                        stencilMesh    colorMesh
-    renderOrder=0)                    DoubleSide   BackSide
-                                      渲染顺序=2    渲染顺序=3
-                                      写 stencil    写 color
-                                                    清 stencil
+```bash
+npm run type-check
+npm run build
+npm run build:lib
 ```
 
-### 单帧渲染顺序(按 `renderOrder` 升序)
+## 关键配置
 
-| 顺序 | mesh | side | colorWrite | depthWrite | stencilWrite | 作用 |
-|---|---|---|---|---|---|---|
-| -10000 | EllipsoidDepthMesh | Front | ❌ | ✅ | ❌ | 写椭球面 depth 兜底 |
-| 0 | tile mesh | Front | ✅ | ✅ | ❌ | 真实地形 / 倾斜模型 |
-| 2 | stencilMesh | **Double** | ❌ | ❌ | ✅ | 标记屏幕上"hit ∈ prism"的像素 |
-| 3 | colorMesh | Back | ✅ | ❌ | ✅ | 给标记像素着色 + 清 stencil |
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `VITE_DEMO` | `ground` | 默认 demo，可选 `ground` / `plot` / `model` |
+| `VITE_CESIUM_ION_TOKEN` | 空 | Cesium Ion token |
+| `VITE_CESIUM_ION_ASSET_ID` | `96188` | Cesium World Terrain |
+| `VITE_DISABLE_TERRAIN` | `false` | `plot` demo 无地形模式 |
+| `VITE_PLOT_LON` / `VITE_PLOT_LAT` | demo 内默认值 | 标绘中心 |
+| `VITE_MODEL_SOURCE` | `oblique` | `model` demo 模型来源，可选 `oblique` / `ion` / `buildings` |
+| `VITE_OBLIQUE_TILESET_URL` | 内置直连 URL | 倾斜摄影 `tileset.json` |
+| `VITE_CESIUM_ION_MODEL_ASSET_ID` | 空 | `model&model=ion` 使用的 Ion 3D Tiles asset |
+| `VITE_RECTANGLE_GLB_MODEL_URL` | `/Untitle.glb` | 放到矩形中心的 GLB |
+| `VITE_RECTANGLE_GLB_MODEL_SCALE` | `1.0` | 矩形中心 GLB 缩放 |
+| `VITE_RECTANGLE_GLB_MODEL_HEIGHT_OFFSET_METERS` | `0.0` | 矩形中心 GLB 高度偏移 |
+| `VITE_RECTANGLE_GLB_MODEL_HEADING_DEGREES` | `0.0` | 矩形中心 GLB 朝向 |
 
-### stencilMesh 的 `onBeforeRender` 钩子(本项目的灵魂)
+## 当前架构
+
+| 路径 | 作用 |
+|---|---|
+| `src/lib/ground` | Cesium 风格贴地 classification 图元、log depth、地形高度、WGS84 数学工具 |
+| `src/lib/arrow` | 标绘箭头几何与形状算法 |
+| `src/lib/plot` | demo 内部标绘管理层，包含 `GroundDecalManager` 和各类 plot 插件 |
+| `src/demo/ground-demo.ts` | 贴地图元基础 demo |
+| `src/demo/plot-demo.ts` | 标绘管理端到端 demo |
+| `src/demo/model-clamp-demo.ts` | 贴倾斜 / 贴模型 / 矩形中心 GLB demo |
+| `src/demo/tiles.ts` | Cesium Ion terrain、世界影像、3D Tiles 材质和 log depth 配置 |
+| `public/Untitle.glb` | `model` demo 默认加载到矩形中心的 GLB |
+| `public/draco/gltf` | GLB Draco decoder |
+
+库构建只导出 `ground` 和 `arrow` API，`src/lib/plot` 目前仍是 demo / 业务验证层，不进入 npm library bundle。
 
 ```ts
-stencilMesh.onBeforeRender = function ( renderer ) {
+import {
+	CesiumGroundRectanglePrimitive,
+	ClassificationType,
+} from 'cesium-to-three/ground';
 
-  const gl = renderer.getContext();
-  const stencilState = renderer.state.buffers.stencil;
-
-  // 1. 公共 state 通过 Three.js 公共 API 设置
-  stencilState.setLocked( false );
-  stencilState.setTest( true );
-  stencilState.setMask( 0xFF );
-
-  // 2. 锁住,阻止 Three.js 用 unified API 覆盖我们的 separate 设置
-  stencilState.setLocked( true );
-
-  // 3. 调原生 separate API(Three.js Material 不支持的部分)
-  gl.stencilFuncSeparate( gl.FRONT, gl.ALWAYS, 0, 0xFF );
-  gl.stencilOpSeparate( gl.FRONT, gl.KEEP, gl.DECR_WRAP, gl.KEEP );
-  gl.stencilFuncSeparate( gl.BACK, gl.ALWAYS, 0, 0xFF );
-  gl.stencilOpSeparate( gl.BACK, gl.KEEP, gl.INCR_WRAP, gl.KEEP );
-
-};
+import {
+	createAttackArrowPolygon,
+} from 'cesium-to-three/arrow';
 ```
 
-`onAfterRender` 解锁并脏化 6 个 `currentStencilXxx` cache 字段(防止下一个 mesh 误命中 cache 跳过 stencil state 设置 → 串扰)。
+## 渲染要点
 
-详见 `src/lib/ground/stencil-pass.ts` 的完整注释。
+- 地形和 3D Tiles 材质会注入 Cesium 兼容 log depth，使主 depth、packed depth 和 stencil classification 的深度空间一致。
+- 贴地 / 贴模型通过 `ClassificationDepthManager` 管理 terrain 和 tileset 两类 depth contributor。
+- `ClassificationType.TERRAIN` 只贴地形，`ClassificationType.CESIUM_3D_TILE` 只贴模型，`ClassificationType.BOTH` 同时支持模型和地形兜底。
+- 矩形中心 GLB 不修改材质，不做透明 backfill；它使用独立 Three layer，在主场景颜色绘制后 `clearDepth()` 再渲染一次。
+- GUI 隐藏标绘时会从 scene 中移除图元；隐藏 3D Tiles 时会停止 tiles update 并卸载 cache。
 
----
+## 文档
 
-## 项目结构
+- [Model Clamp GLB 渲染与性能问题修复记录](docs/model-clamp-glb-rendering-fix.md)
+- [Model Clamp GLB rendering and performance fix notes](docs/model-clamp-glb-rendering-fix.en.md)
+- [贴地抖动修复记录](docs/ground-jitter-fix.md)
+- [贴地折线天空色问题修复记录](docs/ground-polyline-sky-color-fix.md)
 
-```
-cesium-to-three/
-├── src/
-│   ├── lib/
-│   │   ├── shaders/
-│   │   │   └── shader-lib.ts          ← GLSL 库:depth-clamp + extrude + VS/FS 模板
-│   │   ├── ground/
-│   │   │   ├── shadow-volume-builder.ts  ← CPU 端构建挤出 prism 几何
-│   │   │   ├── stencil-pass.ts           ← ★ 双 mesh 配置 + setLocked + 原生 gl.stencilOpSeparate
-│   │   │   ├── ellipsoid-depth-mesh.ts   ← 兜底椭球面(零 tiles 场景)
-│   │   │   └── depth-source.ts           ← DepthSource 自动管理
-│   │   └── visuals/
-│   │       └── polygon-primitive.ts      ← 双 mesh 双件套整合
-│   ├── main.ts                           ← demo 入口:TilesRenderer + GlobeControls + Polygon
-│   ├── style.css
-│   └── vite-env.d.ts
-├── index.html
-├── package.json
-├── tsconfig.json
-├── tsconfig.node.json
-├── vite.config.ts
-├── .env.example                          ← 填 Cesium token 模板
-└── README.md
-```
+## 依赖
 
----
-
-## 调试与验证
-
-### 用 Spector.js 抓帧验证 stencil 算法
-
-1. Chrome 装 [Spector.js 扩展](https://chromewebstore.google.com/detail/spectorjs/denbgaamihkadbghdceggmchnflmhpmk)
-2. 在 demo 页面打开 Spector,点 "Capture" 抓一帧
-3. 找到 `PolygonStencilMesh#1` 的 draw call,展开 Visual States,应该看到:
-   - `gl.stencilFuncSeparate(FRONT, ALWAYS, 0, 0xFF)` — 调用 1 次
-   - `gl.stencilOpSeparate(FRONT, KEEP, DECR_WRAP, KEEP)` — 调用 1 次
-   - `gl.stencilFuncSeparate(BACK, ALWAYS, 0, 0xFF)` — 调用 1 次
-   - `gl.stencilOpSeparate(BACK, KEEP, INCR_WRAP, KEEP)` — 调用 1 次
-4. 紧接着 `PolygonColorMesh#1` 的 draw call,应该看到:
-   - `gl.stencilFunc(NOT_EQUAL, 0, 0xFF)` — Three.js unified API
-   - `gl.stencilOp(ZERO, ZERO, ZERO)` — 同上
-
-如果 stencilMesh 抓到的是 `gl.stencilOp(...)`(unified)而不是 `gl.stencilOpSeparate(...)`,说明 `onBeforeRender` 钩子没生效 —— **算法整体错误**。
-
-### 用 Three.js Inspector 查 mesh 配置
-
-`window.__demo` 在浏览器 console 暴露所有对象。例如:
-
-```js
-__demo.polygon.group.children       // [stencilMesh, colorMesh]
-__demo.polygon.group.children[0]    // stencilMesh
-__demo.polygon.group.children[0].material.side          // 2 (DoubleSide)
-__demo.polygon.group.children[0].material.stencilWrite  // true
-__demo.polygon.group.children[1].material.side          // 1 (BackSide)
-__demo.polygon.group.children[1].material.stencilFunc   // 517 (NotEqualStencilFunc)
-```
-
-### 常见症状对照
-
-| 看到的现象 | 根本原因 | 修复方法 |
-|---|---|---|
-| 完全看不到红色矩形(全黑) | 场景里没有写 depth 的 mesh → Z-fail 算法没有比对对象 | 确认 `DepthSource.isEnabled === true`,或场景里有 tile mesh |
-| 红色矩形位置不对 / 形状错乱 | polygon 顶点不是 CCW(从地面正上方俯视) | 重新排顺序,见 `shadow-volume-builder.ts` 的注释 |
-| 相机靠近地面时红色矩形闪烁 / 消失 | VS 端 `plot_depthClamp` 与 FS 端 `plot_writeDepthClamp` 没配对 | 检查两份 FS 都调了 `plot_writeDepthClamp()` 且在 `out_color` 之后 |
-| 多个 plot 相互影响(串扰) | `onAfterRender` 没脏化 `currentStencilXxx` cache | 确认 `attachStencilHooks` 被调用且 `cacheFallback` 行为正确 |
-| 山脊处红色漏出 / 山谷处红色穿地 | shadow volume 没覆盖地形高差 | 增大 `GLOBE_MINIMUM_ALTITUDE`(默认 11034m 已覆盖任何地形) |
-| 红色矩形比预期更亮 / 过曝 | blendSrc/Dst 没用预乘 alpha | 检查 `configColorMaterial` 里 `blendSrc=ONE, blendDst=ONE_MINUS_SRC_ALPHA` + FS 内 `col.rgb * col.a` |
-| 启动报 PLOT_STENCIL_UNAVAILABLE | WebGLRenderer 没开 stencil | `new WebGLRenderer({ stencil: true })` |
-| 启动报 PLOT_WEBGL2_REQUIRED | 浏览器 fallback 到 WebGL1 | 升级浏览器或 GPU 驱动 |
-
----
-
-## 后续扩展
-
-这个 demo 是完整 PlotEngine v3 的最小种子。要扩展到完整功能:
-
-1. **更多 visual 类型**:VisualLine / VisualCircle / VisualArrow / VisualLabel … 都是把 PlotPoint / PlotLine / PlotPolygon 编译为同一套 ShadowVolumeBuilder 的输入
-2. **colorChunk 注入协议**:让 `RawShaderMaterial` 接受 visual 子类的 FS 片段(`FRAGMENT_BASE_TEMPLATE` + 三个注入点)
-3. **业务接口** `PlotEngine.attach(renderer)`:统一管理 `add* / setStyle / remove / dispose`
-4. **更多 depth source**:支持自定义 `terrainMesh`、I3S Photo Mesh 等
-
-完整设计文档:见后续 18 份拆分文档(下次产出)。
-
----
-
-## 依赖版本
-
-| 包 | 版本 | 用途 |
-|---|---|---|
-| `three` | `^0.169.0` | WebGL2 + GLSL ES 3.00 |
-| `um-3d-tiles-renderer` | `^0.4.48` | TilesRenderer + Ellipsoid + GlobeControls + CesiumIonAuthPlugin |
-| `vite` | `^5.0.0` | 开发服务器与构建 |
-| `typescript` | `~5.3.0` | 类型检查 |
-
-要求:
-- Node.js ≥ 18
-- 浏览器:Chrome / Edge / Firefox 最新版(支持 WebGL2 + stencil)
-- GPU:8-bit stencil buffer(几乎所有现代 GPU 都有)
-
----
-
-## 文件大小与性能
-
-构建产物:
-
-- `index.html` ≈ 1 kB
-- `index.js` ≈ 13 kB(应用代码)
-- `tiles-renderer.js` ≈ 192 kB
-- `three.js` ≈ 521 kB
-
-加载 Cesium World Terrain 后:
-- 每帧 traversal:< 2ms(CPU)
-- 每个 plot 2 个 draw call(stencilMesh + colorMesh)
-- 1000 plot @ RTX 3060:45-60 FPS
-
----
+- Node.js 18+
+- Three.js `^0.183.0`
+- `um-3d-tiles-renderer ^0.4.48`
+- Vite 5
+- TypeScript 5.3
 
 ## License
 
