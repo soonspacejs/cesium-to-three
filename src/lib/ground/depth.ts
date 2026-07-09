@@ -22,6 +22,7 @@ import {
 	WebGLRenderTarget,
 	WebGLRenderer,
 	GLSL3,
+	LessEqualDepth,
 	type PerspectiveCamera,
 } from 'three';
 
@@ -31,6 +32,7 @@ import {
 	WGS84_Z_RADIUS,
 } from './constants';
 import { createPackDepthMaterial, ENABLE_LOG_DEPTH } from './materials';
+import { terrainLogDepthUniforms } from './terrain-log-depth';
 
 export interface CesiumGlobeDepthRenderOptions {
 	/**
@@ -258,33 +260,59 @@ export function createCesiumEllipsoidDepthMeshes(
 
 	const mainMaterial = new RawShaderMaterial( {
 		glslVersion: GLSL3,
+		uniforms: {
+			czm_currentFrustum: terrainLogDepthUniforms.czm_currentFrustum,
+			czm_farDepthFromNearPlusOne: terrainLogDepthUniforms.czm_farDepthFromNearPlusOne,
+			czm_oneOverLog2FarDepthFromNearPlusOne:
+				terrainLogDepthUniforms.czm_oneOverLog2FarDepthFromNearPlusOne,
+		},
 		vertexShader: /* glsl */ `
 precision highp float;
 precision highp int;
 uniform mat4 modelViewMatrix;
 uniform mat4 projectionMatrix;
+uniform vec3 czm_currentFrustum;
 in vec3 position;
+out float v_depthFromNearPlusOne;
 void main() {
 	gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+	v_depthFromNearPlusOne = ( gl_Position.w - czm_currentFrustum.x ) + 1.0;
+	gl_Position.z = clamp( gl_Position.z / gl_Position.w, - 1.0, 1.0 ) * gl_Position.w;
 }
 `,
 		fragmentShader: /* glsl */ `
 precision highp float;
+precision highp int;
+uniform float czm_farDepthFromNearPlusOne;
+uniform float czm_oneOverLog2FarDepthFromNearPlusOne;
+in float v_depthFromNearPlusOne;
 out vec4 out_FragColor;
 void main() {
+	float depth = v_depthFromNearPlusOne;
+	if ( depth <= 1.0 ) {
+		gl_FragDepth = 0.0;
+	} else if ( depth > czm_farDepthFromNearPlusOne ) {
+		gl_FragDepth = 1.0;
+	} else {
+		gl_FragDepth = log2( depth ) * czm_oneOverLog2FarDepthFromNearPlusOne;
+	}
 	out_FragColor = vec4(0.0);
 }
 `,
 		colorWrite: false,
 		depthWrite: true,
 		depthTest: true,
+		depthFunc: LessEqualDepth,
 		toneMapped: false,
 	} );
 	mainMaterial.name = 'CesiumEllipsoidMainDepthMaterial';
 
 	const mainDepthMesh = new Mesh( geometry, mainMaterial );
 	mainDepthMesh.name = 'CesiumEllipsoidMainDepthMesh';
-	mainDepthMesh.renderOrder = -10000;
+	// Draw after terrain tiles (renderOrder 0) but before classification
+	// commands. This fills missing depth only where terrain has not written,
+	// instead of pre-emptively occluding real tile fragments.
+	mainDepthMesh.renderOrder = 5;
 	mainDepthMesh.frustumCulled = false;
 
 	const packedDepthMesh = new Mesh( geometry.clone(), createPackDepthMaterial() );

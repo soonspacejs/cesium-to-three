@@ -9,14 +9,20 @@
 
 import {
 	AmbientLight,
+	Box3,
 	Color,
 	DirectionalLight,
+	Group,
+	Matrix4,
 	PerspectiveCamera,
 	Scene,
 	Vector3,
 	WebGLRenderer,
 	type Material,
+	type Object3D,
 } from 'three';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { GlobeControls, TilesRenderer } from 'um-3d-tiles-renderer';
 import GUI from 'lil-gui';
 
@@ -34,6 +40,7 @@ import {
 	LINE_DEFAULT_GRANULARITY,
 	MAX_CIRCLE_GRANULARITY_RADIANS,
 	MIN_CIRCLE_GRANULARITY_RADIANS,
+	eastNorthUpToFixedFrame,
 	initializeApproximateTerrainHeights,
 	longitudeLatitudeFromCenterOffsetsMeters,
 	rectangleMeterSizeFromDegrees,
@@ -72,6 +79,14 @@ const RECTANGLE_CENTER_LAT = readNumberEnv( 'VITE_PLOT_LAT', 27.9881 );
 const RECTANGLE_HALF_WIDTH_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_WIDTH_DEGREES', 5.0e-5 );
 const RECTANGLE_HALF_HEIGHT_DEGREES = readNumberEnv( 'VITE_PLOT_HALF_HEIGHT_DEGREES', 5.0e-5 );
 const DEBUG_GROUND_SURFACE = readStringEnv( 'VITE_DEBUG_GROUND_SURFACE', 'false' ).toLowerCase() === 'true';
+const DEMO_GLB_MODEL_URL = encodeURI( '/\u95e8\u7a97\u8bbe\u7f6e\u7b49\u6d4b\u8bd5\u5e26fds.glb' );
+const DEMO_GLB_DRACO_DECODER_PATH = '/draco/gltf/';
+const DEMO_GLB_MODEL_LON = readNumberEnv( 'VITE_GLB_MODEL_LON', RECTANGLE_CENTER_LON );
+const DEMO_GLB_MODEL_LAT = readNumberEnv( 'VITE_GLB_MODEL_LAT', RECTANGLE_CENTER_LAT );
+const DEMO_GLB_MODEL_HEIGHT_METERS = readNumberEnv( 'VITE_GLB_MODEL_HEIGHT_METERS', 50.0 );
+const DEMO_GLB_MODEL_SCALE = Math.max( readNumberEnv( 'VITE_GLB_MODEL_SCALE', 1.0 ), 1.0e-6 );
+const DEMO_GLB_MODEL_HEADING_DEGREES = readNumberEnv( 'VITE_GLB_MODEL_HEADING_DEGREES', 0.0 );
+const DEMO_GLB_MODEL_RENDER_ORDER = 100000;
 
 // 箭头子系统开关。保留为常量，便于调试时快速隔离。
 // 最初用于定位曲线填充被切断的问题:关闭箭头后仍可复现，说明问题来自贴地
@@ -315,6 +330,142 @@ export function runGroundDemo(): void {
 		camera.updateMatrixWorld();
 	}
 
+	const glbModelAnchor = new Group();
+	glbModelAnchor.name = 'GroundDemoGlbAnchor';
+	glbModelAnchor.matrixAutoUpdate = false;
+
+	const glbModelRenderScene = new Scene();
+	glbModelRenderScene.add( new AmbientLight( 0xffffff, 0.48 ) );
+	const glbModelSun = new DirectionalLight( 0xffffff, 1.8 );
+	glbModelSun.position.copy( sun.position );
+	glbModelRenderScene.add( glbModelSun );
+	glbModelRenderScene.add( glbModelAnchor );
+
+	const glbModelLocalBounds = new Box3();
+	const glbModelLocalSize = new Vector3();
+	let glbModelScene: Object3D | null = null;
+	let glbModelStatus = 'loading';
+	let glbModelError = '';
+
+	const glbModelGuiModel = {
+		visible: true,
+		flyToModel: () => flyToGlbModel(),
+	};
+
+	function updateGlbModelAnchorTransform(): void {
+		const modelOrigin = wgs84PositionFromDegrees(
+			DEMO_GLB_MODEL_LON,
+			DEMO_GLB_MODEL_LAT,
+			DEMO_GLB_MODEL_HEIGHT_METERS,
+		);
+		const enu = eastNorthUpToFixedFrame( modelOrigin, new Matrix4() );
+		if ( DEMO_GLB_MODEL_HEADING_DEGREES !== 0.0 ) {
+			enu.multiply( new Matrix4().makeRotationZ(
+				DEMO_GLB_MODEL_HEADING_DEGREES * Math.PI / 180.0,
+			) );
+		}
+		glbModelAnchor.matrix.copy( enu );
+		glbModelAnchor.matrixWorldNeedsUpdate = true;
+	}
+
+	function flyToGlbModel(): void {
+		const modelHeight = glbModelLocalSize.z > 0.0 ? glbModelLocalSize.z : 40.0;
+		const focus = wgs84PositionFromDegrees(
+			DEMO_GLB_MODEL_LON,
+			DEMO_GLB_MODEL_LAT,
+			DEMO_GLB_MODEL_HEIGHT_METERS + modelHeight * 0.35,
+		);
+		const modelUp = wgs84NormalFromDegrees( DEMO_GLB_MODEL_LON, DEMO_GLB_MODEL_LAT );
+		const modelEast = new Vector3( - modelUp.y, modelUp.x, 0.0 ).normalize();
+		const span = Math.max(
+			glbModelLocalSize.x,
+			glbModelLocalSize.y,
+			glbModelLocalSize.z,
+			80.0,
+		);
+		const distance = clampNumber( span * 1.8, 140.0, 2500.0 );
+
+		camera.position
+			.copy( focus )
+			.addScaledVector( modelUp, distance )
+			.addScaledVector( modelEast, distance * 0.28 );
+		camera.lookAt( focus );
+		camera.updateMatrixWorld();
+	}
+
+	function prepareGroundDemoGlbModel( modelScene: Object3D ): void {
+		modelScene.name = modelScene.name || 'GroundDemoPublicGlbModel';
+		configureLoadedTileScene( modelScene, { recolor: false } );
+		// Cesium draws terrain classification before 3D Tiles / normal models.
+		// Rendering this GLB after the ground commands lets the opaque model
+		// cover terrain decals instead of letting decal stencil tests classify it.
+		modelScene.traverse( object => {
+			object.renderOrder = DEMO_GLB_MODEL_RENDER_ORDER;
+		} );
+
+		// GLB files are Y-up. The ground demo's local ENU frame uses Z-up.
+		modelScene.rotation.x = Math.PI * 0.5;
+		modelScene.scale.multiplyScalar( DEMO_GLB_MODEL_SCALE );
+		modelScene.updateMatrixWorld( true );
+
+		const initialBounds = new Box3().setFromObject( modelScene );
+		if ( initialBounds.isEmpty() ) {
+			glbModelLocalBounds.makeEmpty();
+			glbModelLocalSize.set( 0.0, 0.0, 0.0 );
+			return;
+		}
+
+		const initialCenter = initialBounds.getCenter( new Vector3() );
+		modelScene.position.x -= initialCenter.x;
+		modelScene.position.y -= initialCenter.y;
+		modelScene.position.z -= initialBounds.min.z;
+		modelScene.updateMatrixWorld( true );
+
+		glbModelLocalBounds.copy( new Box3().setFromObject( modelScene ) );
+		glbModelLocalBounds.getSize( glbModelLocalSize );
+	}
+
+	function loadGroundDemoGlbModel(): void {
+		const dracoLoader = new DRACOLoader();
+		dracoLoader.setDecoderPath( DEMO_GLB_DRACO_DECODER_PATH );
+
+		const gltfLoader = new GLTFLoader();
+		gltfLoader.setDRACOLoader( dracoLoader );
+		gltfLoader.load(
+			DEMO_GLB_MODEL_URL,
+			gltf => {
+				const modelScene = gltf.scene;
+				prepareGroundDemoGlbModel( modelScene );
+				modelScene.visible = true;
+				glbModelAnchor.visible = glbModelGuiModel.visible;
+				glbModelAnchor.add( modelScene );
+				glbModelScene = modelScene;
+				glbModelStatus = 'loaded';
+				dracoLoader.dispose();
+			},
+			event => {
+				if ( event.lengthComputable && event.total > 0 ) {
+					const progress = Math.round( event.loaded / event.total * 100.0 );
+					glbModelStatus = `loading ${ progress }%`;
+				}
+			},
+			error => {
+				glbModelStatus = 'error';
+				glbModelError =
+					error instanceof ErrorEvent
+						? error.message
+						: error instanceof Error
+							? error.message
+							: String( error );
+				console.error( '[ground-demo] Failed to load GLB model:', error );
+				dracoLoader.dispose();
+			},
+		);
+	}
+
+	updateGlbModelAnchorTransform();
+	loadGroundDemoGlbModel();
+
 	const tilesRenderer = createCesiumTilesRenderer( renderer );
 	const tileCounters: TileRuntimeCounters = {
 		modelsLoaded: 0,
@@ -343,8 +494,8 @@ export function runGroundDemo(): void {
 	// 加载到瓦片(放大超过最深层级 / 瓦片仍在下载)，主深度缓冲与 packed 深度纹理
 	// 在该区域都为空，stencil Z-fail 记不到值、CULL_FRAGMENTS 又读到空深度，标绘
 	// 整体消失。加入 WGS84 椭球面后：
-	//   - mainDepthMesh(renderOrder -10000，只写深度不写色)给主缓冲兜底，供 stencil
-	//     Z-fail 比对；有真实地形处地形更近，凭 LESS_EQUAL 覆盖椭球面，不影响既有效果。
+	//   - mainDepthMesh(renderOrder 5, depth-only) draws after tiles and before
+	//     classification. Drawing it before tiles would occlude real terrain.
 	//   - packedDepthMesh 注入 globeDepth 自有场景，给 packed 深度纹理兜底，供 color
 	//     pass 重建 EC + CULL_FRAGMENTS。
 	// 两者都在椭球面(海平面)高度，海平面场景下与真实地形几乎重合；高海拔山区若瓦片
@@ -2219,6 +2370,14 @@ export function runGroundDemo(): void {
 		cameraFolder.add( {
 			flyToPlot: () => flyToPlot(),
 		}, 'flyToPlot' ).name( 'fly to plot (1:1)' );
+		cameraFolder.add( glbModelGuiModel, 'flyToModel' ).name( 'fly to GLB model' );
+
+		const glbModelFolder = gui.addFolder( 'GLB Model' );
+		glbModelFolder.add( glbModelGuiModel, 'visible' ).name( 'visible' ).onChange( ( visible: boolean ) => {
+			glbModelAnchor.visible = visible;
+		} );
+		glbModelFolder.add( glbModelGuiModel, 'flyToModel' ).name( 'fly to model' );
+		glbModelFolder.close();
 
 		const rectangleFolder = gui.addFolder( 'Rectangle' );
 		rectangleFolder.add( rectangleGuiModel, 'points' ).name( 'points' ).onFinishChange( rebuildRectangleFromPointsText ).listen();
@@ -2631,6 +2790,10 @@ export function runGroundDemo(): void {
 		updateTerrainLogDepthUniforms( camera.near, camera.far );
 
 		tilesRenderer.group.visible = debugSettings.useTilesDepth;
+		// Match Cesium's terrain-classification order: globe/terrain depth is
+		// copied before 3D Tiles / models are drawn. The public GLB is a normal
+		// model here, not a CESIUM_3D_TILE classification target, so it must not
+		// be mixed into czm_globeDepthTexture.
 		globeDepth.render( renderer, camera, scene, tilesRenderer.group, {
 			// 使用真实瓦片深度时关闭 packed 椭球兜底，防止低视角地平线附近的
 			// 不可见椭球面被贴地线当成天空中的有效地面。无瓦片测试时再打开兜底。
@@ -2737,6 +2900,16 @@ export function runGroundDemo(): void {
 		} );
 
 		renderer.render( scene, camera );
+		if ( glbModelAnchor.visible && glbModelAnchor.children.length > 0 ) {
+			const previousAutoClear = renderer.autoClear;
+			renderer.autoClear = false;
+			// Cesium clears/rebuilds globe depth before the 3D Tiles pass, so
+			// terrain classification does not leave globe depth in the main
+			// framebuffer to reject later model fragments.
+			renderer.clearDepth();
+			renderer.render( glbModelRenderScene, camera );
+			renderer.autoClear = previousAutoClear;
+		}
 
 		const stats = ( tilesRenderer as TilesRenderer & { stats: TilesRuntimeStats } ).stats;
 		debugStatus.root = tileCounters.rootLoaded ? 'loaded' : 'loading';
@@ -2757,6 +2930,7 @@ export function runGroundDemo(): void {
 			`Ground adapter: Cesium-free rectangle + polygon (math/ + rectangle/ + polygon/)\n` +
 			`Tiles: um-3d-tiles-renderer + Cesium Ion asset ${ assetIdLabel }\n` +
 			`Terrain plugin: QuantizedMeshPlugin for TERRAIN assets\n` +
+			`GLB model: ${ glbModelStatus } / visible ${ glbModelAnchor.visible ? 'on' : 'off' } / scale ${ DEMO_GLB_MODEL_SCALE.toFixed( 2 ) } / size ${ glbModelLocalSize.x.toFixed( 1 ) } x ${ glbModelLocalSize.y.toFixed( 1 ) } x ${ glbModelLocalSize.z.toFixed( 1 ) } m\n` +
 			`Geometry: buildRectangleShadowVolumeGeometry / buildPolygonShadowVolumeGeometry\n` +
 			`Rectangle: ${ debugSettings.visible ? 'on' : 'off' } / order ${ debugSettings.rectanglePlotOrder } / ${ debugSettings.widthDegrees.toFixed( 4 ) } deg x ${ debugSettings.heightDegrees.toFixed( 4 ) } deg\n` +
 			`Rectangle meters: ${ debugSettings.widthMeters.toFixed( 1 ) } m x ${ debugSettings.heightMeters.toFixed( 1 ) } m\n` +
@@ -2782,6 +2956,7 @@ export function runGroundDemo(): void {
 			`Queue download parse failed: ${ stats.queued } / ${ stats.downloading } / ${ stats.parsing } / ${ stats.failed }\n` +
 			`Loaded model events: ${ tileCounters.modelsLoaded }\n` +
 			`Drawing buffer: ${ renderer.domElement.width } x ${ renderer.domElement.height }` +
+			( glbModelError ? `\nGLB load error: ${ glbModelError }` : '' ) +
 			( tileLoadError ? `\nTile load error: ${ tileLoadError }` : '' );
 
 		requestAnimationFrame( renderFrame );
@@ -2796,6 +2971,18 @@ export function runGroundDemo(): void {
 		globeDepth,
 		debugGui,
 		debugSettings,
+		glbModelAnchor,
+		glbModelRenderScene,
+		glbModelGuiModel,
+		get glbModelScene() {
+			return glbModelScene;
+		},
+		get glbModelStatus() {
+			return glbModelStatus;
+		},
+		get glbModelLocalSize() {
+			return glbModelLocalSize;
+		},
 		get groundRectangle() {
 			return groundRectangle;
 		},
