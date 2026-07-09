@@ -96,6 +96,8 @@ const RECTANGLE_GLB_MODEL_HEIGHT_OFFSET_METERS =
 const RECTANGLE_GLB_MODEL_HEADING_DEGREES =
 	readNumberEnv( 'VITE_RECTANGLE_GLB_MODEL_HEADING_DEGREES', 0.0 );
 const RECTANGLE_GLB_RENDER_LAYER = 2;
+const ACTIVE_RENDER_GRACE_MS = 1200;
+const IDLE_RENDER_INTERVAL_MS = 250;
 
 /**
  * 首帧相机的"位置提示"——仅在倾斜瓦片包围球就绪前给一个合理的初始视角，
@@ -126,6 +128,32 @@ function clamp( value: number, min: number, max: number ): number {
 
 function setObjectLayerRecursive( object: Object3D, layer: number ): void {
 	object.traverse( child => child.layers.set( layer ) );
+}
+
+type RuntimeTilesRenderer = TilesRenderer & {
+	lruCache?: {
+		itemSet?: Map<unknown, unknown>;
+		remove?: ( item: unknown ) => boolean;
+		markAllUnused?: () => void;
+		scheduleUnload?: () => void;
+	};
+};
+
+function unloadTilesRendererContent( tiles: TilesRenderer | null ): void {
+	if ( ! tiles ) return;
+
+	const lruCache = ( tiles as RuntimeTilesRenderer ).lruCache;
+	if ( ! lruCache ) return;
+
+	if ( lruCache.itemSet && lruCache.remove ) {
+		for ( const tile of Array.from( lruCache.itemSet.keys() ) ) {
+			lruCache.remove( tile );
+		}
+		return;
+	}
+
+	lruCache.markAllUnused?.();
+	lruCache.scheduleUnload?.();
 }
 
 /**
@@ -576,6 +604,7 @@ export function runModelClampDemo(): void {
 	}
 	baseTiles.setCamera( camera );
 	baseTiles.setResolutionFromRenderer( camera, renderer );
+	requestRenderOnTileEvents( baseTiles );
 	scene.add( baseTiles.group );
 
 	const controls = new GlobeControls( scene, camera, renderer.domElement );
@@ -585,6 +614,47 @@ export function runModelClampDemo(): void {
 	controls.minDistance = 0.1;
 	controls.maxDistance = 30000000.0;
 	controls.adjustHeight = true;
+
+	let renderQueued = false;
+	let renderRequested = true;
+	let continuousRenderUntil = performance.now() + ACTIVE_RENDER_GRACE_MS;
+	let lastRenderAt = - Infinity;
+
+	function requestRender(): void {
+		renderRequested = true;
+		if ( renderQueued ) return;
+		renderQueued = true;
+		requestAnimationFrame( renderFrame );
+	}
+
+	function requestActiveRender(): void {
+		continuousRenderUntil = Math.max(
+			continuousRenderUntil,
+			performance.now() + ACTIVE_RENDER_GRACE_MS,
+		);
+		requestRender();
+	}
+
+	function requestRenderOnTileEvents( tiles: TilesRenderer ): void {
+		for ( const type of [
+			'needs-update',
+			'load-content',
+			'load-tileset',
+			'load-root-tileset',
+			'load-model',
+			'dispose-model',
+			'tile-visibility-change',
+			'tiles-load-start',
+			'tiles-load-end',
+			'load-error',
+		] ) {
+			tiles.addEventListener( type, requestActiveRender );
+		}
+	}
+
+	controls.addEventListener( 'start', requestActiveRender );
+	controls.addEventListener( 'change', requestActiveRender );
+	controls.addEventListener( 'end', requestActiveRender );
 
 	// ── 深度管理器（兜底默认开启）+ 椭球兜底主网格接入主场景 ──
 	const depthManager = new ClassificationDepthManager(
@@ -629,6 +699,8 @@ export function runModelClampDemo(): void {
 	let modelSourceLabel = '';
 	let resolvedSource: ModelSource = source;
 	let tileLoadError = '';
+	let modelTilesActive = true;
+	let baseTilesActive = true;
 
 	if ( source === 'ion' ) {
 		modelTiles = createIonModelTiles( ionToken );
@@ -646,6 +718,7 @@ export function runModelClampDemo(): void {
 	if ( modelTiles ) {
 		modelTiles.setCamera( camera );
 		modelTiles.setResolutionFromRenderer( camera, renderer );
+		requestRenderOnTileEvents( modelTiles );
 		scene.add( modelTiles.group );
 		depthManager.addContributor( modelTiles.group, 'tileset' );
 		modelTiles.addEventListener( 'load-error', ( event ) => {
@@ -677,6 +750,7 @@ export function runModelClampDemo(): void {
 			.addScaledVector( modelUp, flyDistance );
 		camera.lookAt( modelCenterEcef );
 		camera.updateMatrixWorld();
+		requestRender();
 	}
 
 	function applyPlotsVisibility(): void {
@@ -732,6 +806,7 @@ export function runModelClampDemo(): void {
 			.addScaledVector( glbEast, distance * 0.28 );
 		camera.lookAt( focus );
 		camera.updateMatrixWorld();
+		requestRender();
 	}
 
 	function prepareRectangleGlbModel( modelScene: Object3D ): void {
@@ -767,11 +842,13 @@ export function runModelClampDemo(): void {
 				rectangleGlbStatus = 'loaded';
 				updateRectangleGlbAnchorTransform();
 				dracoLoader.dispose();
+				requestRender();
 			},
 			event => {
 				if ( event.lengthComputable && event.total > 0 ) {
 					const progress = Math.round( event.loaded / event.total * 100.0 );
 					rectangleGlbStatus = `loading ${ progress }%`;
+					requestRender();
 				}
 			},
 			error => {
@@ -784,6 +861,7 @@ export function runModelClampDemo(): void {
 							: String( error );
 				console.error( '[model-clamp] Failed to load rectangle GLB model:', error );
 				dracoLoader.dispose();
+				requestRender();
 			},
 		);
 	}
@@ -843,6 +921,7 @@ export function runModelClampDemo(): void {
 	gui.add( params, 'plotsVisible' ).name( '显示标绘图形' ).onChange( ( v: boolean ) => {
 		plotsVisible = v;
 		applyPlotsVisibility();
+		requestRender();
 	} );
 	gui.add( params, 'classificationType', [ 'TERRAIN', 'CESIUM_3D_TILE', 'BOTH' ] )
 		.name( '分类目标' )
@@ -851,29 +930,42 @@ export function runModelClampDemo(): void {
 			for ( const id of decals.getAllIds() ) {
 				decals.setStyle( id, { classificationType: currentType } );
 			}
+			requestRender();
 		} );
 	if ( modelTiles ) {
 		gui.add( params, 'modelVisible' ).name( '显示倾斜模型' ).onChange( ( v: boolean ) => {
 			if ( modelTiles ) {
+				modelTilesActive = v;
 				modelTiles.group.visible = v;
+				if ( ! v ) {
+					unloadTilesRendererContent( modelTiles );
+				}
+				requestRender();
 			}
 		} );
 	}
 	if ( hasBaseMap ) {
 		gui.add( params, 'baseMapVisible' ).name( '显示底图' ).onChange( ( v: boolean ) => {
+			baseTilesActive = v;
 			baseTiles.group.visible = v;
+			if ( ! v ) {
+				unloadTilesRendererContent( baseTiles );
+			}
+			requestRender();
 		} );
 	}
 	if ( resolvedSource === 'buildings' ) {
 		gui.add( params, 'buildingsVisible' ).name( '显示楼群' ).onChange( ( v: boolean ) => {
 			if ( buildingCluster ) {
 				buildingCluster.visible = v;
+				requestRender();
 			}
 		} );
 	}
 	gui.add( params, 'rectangleGlbVisible' ).name( '显示矩形 GLB' ).onChange( ( v: boolean ) => {
 		rectangleGlbVisible = v;
 		updateRectangleGlbAnchorTransform();
+		requestRender();
 	} );
 	gui.add( params, 'flyToRectangleGlb' ).name( '定位矩形 GLB' );
 	gui.add( params, 'flyToModel' ).name( '回到模型' );
@@ -886,9 +978,14 @@ export function runModelClampDemo(): void {
 		camera.aspect = width / height;
 		camera.updateProjectionMatrix();
 		camera.updateMatrixWorld();
-		baseTiles.setResolutionFromRenderer( camera, renderer );
-		modelTiles?.setResolutionFromRenderer( camera, renderer );
+		if ( baseTilesActive ) {
+			baseTiles.setResolutionFromRenderer( camera, renderer );
+		}
+		if ( modelTiles && modelTilesActive ) {
+			modelTiles.setResolutionFromRenderer( camera, renderer );
+		}
 		depthManager.resize( renderer.domElement.width, renderer.domElement.height );
+		requestRender();
 	}
 	window.addEventListener( 'resize', resize );
 
@@ -899,13 +996,17 @@ export function runModelClampDemo(): void {
 		controls.update();
 		camera.updateMatrixWorld();
 
-		baseTiles.setResolutionFromRenderer( camera, renderer );
-		baseTiles.update();
-		modelTiles?.setResolutionFromRenderer( camera, renderer );
-		modelTiles?.update();
+		if ( baseTilesActive ) {
+			baseTiles.setResolutionFromRenderer( camera, renderer );
+			baseTiles.update();
+		}
+		if ( modelTiles && modelTilesActive ) {
+			modelTiles.setResolutionFromRenderer( camera, renderer );
+			modelTiles.update();
+		}
 
 		// tileset 源（oblique / ion）：等包围球就绪 → 反算中心 → 摆标绘 + 飞过去。
-		if ( modelTiles && ! plotsBuilt && modelTiles.getBoundingSphere( scratchSphere ) ) {
+		if ( modelTiles && modelTilesActive && ! plotsBuilt && modelTiles.getBoundingSphere( scratchSphere ) ) {
 			const carto = cartesianToCartographic( scratchSphere.center, scratchCarto );
 			if ( carto ) {
 				const lon = ( carto.longitude * 180.0 ) / Math.PI;
@@ -992,9 +1093,23 @@ export function runModelClampDemo(): void {
 			`Drawing buffer: ${ renderer.domElement.width } x ${ renderer.domElement.height }`;
 	}
 
-	function renderFrame(): void {
-		step();
-		requestAnimationFrame( renderFrame );
+	function renderFrame( now: number ): void {
+		renderQueued = false;
+		const shouldRender =
+			renderRequested ||
+			now <= continuousRenderUntil ||
+			now - lastRenderAt >= IDLE_RENDER_INTERVAL_MS;
+
+		if ( shouldRender ) {
+			renderRequested = false;
+			lastRenderAt = now;
+			step();
+		}
+
+		if ( ! renderQueued ) {
+			renderQueued = true;
+			requestAnimationFrame( renderFrame );
+		}
 	}
 
 	( window as unknown as { __demo?: unknown } ).__demo = {
@@ -1023,5 +1138,5 @@ export function runModelClampDemo(): void {
 		},
 	};
 
-	renderFrame();
+	requestRender();
 }
