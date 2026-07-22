@@ -6,7 +6,7 @@ Language: [中文](./README.md) | English
 
 This repository is no longer just a single red rectangle demo. The current focus is:
 
-- Ground classification primitives: rectangle, polygon, polyline, circle, point, text, and arrows.
+- Ground classification primitives: rectangle, polygon, polyline, circle, circle/square/image points, text, and arrows.
 - Plot management: `GroundDecalManager` plus plugin-based plot items, incremental updates, and real detach from the Three scene.
 - Model clamp demo: terrain, oblique 3D Tiles, Cesium Ion 3D Tiles, synthetic buildings, and `public/Untitle.glb` placed at the rectangle center.
 - Native Three rendering fix: the GLB is loaded through the official Three `GLTFLoader` path and rendered on an isolated layer after `clearDepth()` so terrain depth does not clip it.
@@ -21,7 +21,7 @@ After starting Vite, switch demos through the URL:
 |---|---|
 | `http://localhost:5173/` | Default `ground` demo |
 | `http://localhost:5173/?demo=ground` | Ground primitive validation for rectangle / polygon / line / circle / point / text / arrow |
-| `http://localhost:5173/?demo=plot` | End-to-end `GroundDecalManager` plot management test |
+| `http://localhost:5173/?demo=plot` | End-to-end plot management, including one-click hydrant image points |
 | `http://localhost:5173/?demo=plot&noterrain` | Ellipsoid fallback test without a Cesium Ion token |
 | `http://localhost:5173/?demo=model` | Model / oblique photogrammetry clamp demo, defaulting to a direct oblique tileset URL |
 | `http://localhost:5173/?demo=model&model=buildings` | Synthetic building fallback with no external 3D Tiles dependency |

@@ -207,7 +207,10 @@ export class CesiumGroundTextPrimitive {
 			true, // fragmentCull：裁足迹 + 丢弃无地形 fragment
 			{
 				colorMaterialFactory: createTextColorMaterial,
-				extraUniforms: { u_textTexture: { value: this.texture } },
+				extraUniforms: {
+					u_decalTexture: { value: this.texture },
+					u_decalOpacity: { value: 1.0 },
+				},
 			},
 		);
 		// 文字也支持贴地形 / 贴模型 / 二者：把解析出的分类目标传给 classification。

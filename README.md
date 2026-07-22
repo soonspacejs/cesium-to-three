@@ -6,7 +6,7 @@
 
 这个仓库现在不再只是一个红色矩形 demo。当前重点是：
 
-- 贴地 classification 图元库：矩形、多边形、折线、圆、点、文字、箭头。
+- 贴地 classification 图元库：矩形、多边形、折线、圆、圆/方/图片点、文字、箭头。
 - 标绘管理层：`GroundDecalManager` + 插件化 plot item，支持增量更新和从 Three scene 中真实移除。
 - 贴倾斜 / 贴模型 demo：支持地形、倾斜摄影、Ion 3D Tiles、合成楼群，以及把 `public/Untitle.glb` 放到矩形中心。
 - Three 原生渲染修复：GLB 按 Three 官方 `GLTFLoader` 加载，使用独立 layer + `clearDepth()` 避免被 terrain depth 裁切。
@@ -21,7 +21,7 @@
 |---|---|
 | `http://localhost:5173/` | 默认 `ground` demo |
 | `http://localhost:5173/?demo=ground` | 贴地图元基础验证，展示 rectangle / polygon / line / circle / point / text / arrow |
-| `http://localhost:5173/?demo=plot` | `GroundDecalManager` 端到端标绘管理测试 |
+| `http://localhost:5173/?demo=plot` | `GroundDecalManager` 端到端标绘管理测试，含消防栓图片点单击标绘 |
 | `http://localhost:5173/?demo=plot&noterrain` | 无 Cesium Ion token 时，用椭球兜底验证标绘 |
 | `http://localhost:5173/?demo=model` | 贴倾斜 / 贴模型 demo，默认加载直连倾斜摄影 |
 | `http://localhost:5173/?demo=model&model=buildings` | 不依赖外部 3D Tiles，用合成楼群验证贴模型 |

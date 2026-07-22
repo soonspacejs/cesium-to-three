@@ -1,13 +1,20 @@
-﻿// ============================================================
-// PlotPrimitiveBridge.ts 鈥?鏍囩粯鏁版嵁妯″瀷 鈫?Stencil Shadow Volume 鍥惧厓妗ユ帴鍣?// 灞傜骇锛歱lot 娓叉煋妗ユ帴锛坈esium-to-three 绉佹湁锛岀瓑浠蜂簬鍙傝€冮」鐩殑 PlotSdfPlugin锛?// 鑱岃矗锛氭秷璐?GroundDecalManager 浜や粯鐨?Map<id, GisPlot*>锛?//       涓烘瘡涓爣缁樼淮鎶や竴涓?CesiumGround*Primitive 骞舵寕鍒?scene锛?//       鍑犱綍鍙樻洿閲嶅缓銆佷粎鏍峰紡 / 鍙鎬у彉鏇磋蛋杞婚噺鍒锋柊锛?//       姣忓抚鎶?frameState 閫忎紶缁欐墍鏈夊浘鍏冦€?// 渚濊禆锛?//   - src/lib/ground 鍚?Primitive + 绫诲瀷锛?//   - src/lib/ground/text 鏂囧瓧鍥惧厓锛?//   - src/lib/plot/plugins 鏁版嵁妯″瀷锛?//   - ./plot-order plotOrderToRenderOrder銆?// 琚秷璐癸細GroundDecalManager锛堟敞鍏ワ紝绛変环 PlotSdfPlugin锛夈€佸涓绘覆鏌撳惊鐜紙update锛夈€?//
-// 鍗忚锛堜笌鍙傝€冮」鐩?PlotSdfPlugin 涓€鑷达級锛?//   - set shapes( Map<string, GisPlotBase> ) / get shapes()
-//   - get / set opacity( number )锛?..1 閽充綅锛?//   - redraw(): void
+// ============================================================
+// PlotPrimitiveBridge.ts — 标绘数据模型 → Three/Cesium 风格图元桥接器
+// 层级：plot 渲染桥接层，由 GroundDecalManager 持有。
+// 职责：把 Map<id, GisPlotBase> 同步为场景图元；几何变化时重建，样式变化时
+//       尽量热更新；每帧把 frameState 转发给全部图元。
+// 依赖：ground 图元、text 图元、plot 数据模型、plot-order。
+// 被消费：GroundDecalManager 与宿主渲染循环。
+//
+// 与 PlotSdfPlugin 对齐的协议：
+//   - set/get shapes( Map<string, GisPlotBase> )
+//   - get/set opacity（钳制到 0..1）
+//   - redraw(): void
 //   - dispose(): void
 //
-// 棰濆锛坈2t 澧為噺锛夛細
-//   - update( frameState ): void 鈥斺€?姣忓抚鎶?frameState 閫忎紶缁欐墍鏈夊浘鍏冦€?//
-// 鍚屾绛栫暐锛坮edraw锛夛細
-//   鈶?鍒犻櫎锛歘shapes 涓凡涓嶅瓨鍦ㄧ殑 entry 鈫?绉婚櫎骞?dispose锛?//   鈶?鏂板/鏇存柊锛氶亶鍘?_shapes锛堜繚鎸佹彃鍏ュ簭锛夛紝鎸夊簭鍒嗛厤 plotOrder 鈫?renderOrder锛?//       - 鍑犱綍 + 鏍峰紡绛惧悕閮芥湭鍙?鈫?杞婚噺鍒锋柊锛堝彲瑙佹€?/ renderOrder + 鎶樼嚎/鏂囧瓧鐑洿鏂帮級锛?//       - 鍚﹀垯閿€姣佹棫鍥惧厓銆侀噸寤烘柊鍥惧厓銆佹寕鍥炲満鏅€?// ============================================================
+// c2t 扩展：update(frameState) 每帧刷新深度、视口和相机 uniform。
+// redraw 同步策略：删除消失项；对签名未变项热更新；其余项释放旧图元后重建。
+// ============================================================
 
 import type { Group, Scene } from 'three';
 
@@ -42,13 +49,14 @@ import { plotOrderToRenderOrder } from './plot-order';
 import { createPlainPlotPrimitive, PlainPlotPrimitive } from './PlainPlotPrimitive';
 
 /**
- * 妗ユ帴鍣ㄦ瀯閫犻€夐」銆? */
+ * 桥接器构造选项。
+ */
 export interface PlotPrimitiveBridgeOptions {
-	/** 鏍囩粯鍥惧厓鎸傝浇鐨勭洰鏍囧満鏅€?*/
+	/** 标绘图元挂载的目标场景。 */
 	scene: Scene;
 }
 
-/** 妗ユ帴鍣ㄦ敮鎸佺殑鍏ㄩ儴 c2t 娓叉煋鍥惧厓鑱斿悎銆?*/
+/** 桥接器支持的全部贴地渲染图元联合。 */
 type AnyGroundPrimitive =
 	| CesiumGroundPointPrimitive
 	| CesiumGroundPolylinePrimitive
@@ -64,9 +72,10 @@ type AnyGroundPrimitive =
 type AnyPlotPrimitive = AnyGroundPrimitive | PlainPlotPrimitive;
 
 /**
- * 鍗曟潯鏍囩粯鍦ㄦˉ鎺ュ櫒鍐呴儴鐨勮褰曘€? *   - signature      鍑犱綍绛惧悕锛岀敤浜庡垽瀹氬嚑浣曟槸鍚﹀彉鍖栥€佹槸鍚﹂渶瑕侀噸寤哄浘鍏冦€? *   - styleSignature 鏍峰紡绛惧悕锛堥鑹?/ 涓嶉€忔槑搴?/ strokeWidth + 鍏ㄥ眬 opacity锛夛紝
- *                    闈㈢被鏃?setColor 鈫?棰滆壊鍙樺寲绾冲叆绛惧悕璧伴噸寤猴紱鎶樼嚎 / 鏂囧瓧
- *                    璧扮儹鏇存柊锛堜粛绾冲叆绛惧悕锛屼究浜庡悗缁瓥鐣ヤ竴鑷村寲锛夈€? */
+ * 单条标绘在桥接器中的渲染记录。
+ * signature 判断几何是否需要重建；styleSignature 判断样式能否保持原图元。
+ * 折线、文字和图片点支持部分样式热更新，其余面图元在样式变化时重建。
+ */
 interface PlotEntry {
 	plot: GisPlotBase;
 	primitive: AnyPlotPrimitive;
@@ -76,8 +85,12 @@ interface PlotEntry {
 }
 
 /**
- * 鍙栧嚭鍥惧厓搴旀寕鍒板満鏅殑 Group銆? * 鎶樼嚎涓庢枃瀛楀浘鍏冭嚜韬毚闇?group锛涘叾浣欙紙鐐?/ 澶氳竟褰?/ 鍦?/ 鎵?/ 鐭╁舰 / 绠ご锛? * 缁?classification 璐村湴锛屾寕 primitive.classification.group銆? *
- * @param primitive 浠绘剰 c2t 璐村湴鍥惧厓銆? * @returns         搴旇 scene.add 鐨?THREE.Group銆? */
+ * 解析应挂载到场景的 Group。折线、文字和普通图元直接暴露 group；
+ * 其它贴地图元通过 classification.group 挂载。
+ *
+ * @param primitive 任意桥接器支持的图元。
+ * @returns 应传给 scene.add 的 THREE.Group。
+ */
 function resolveGroup( primitive: AnyPlotPrimitive ): Group {
 	// 不贴地图元自身就是一个 Group 持有者，直接取其 group。
 	if ( primitive instanceof PlainPlotPrimitive ) {
@@ -93,10 +106,11 @@ function resolveGroup( primitive: AnyPlotPrimitive ): Group {
 }
 
 /**
- * 璁＄畻鏍囩粯鐨勫嚑浣曠鍚嶃€傚彧鍖呭惈褰卞搷鍑犱綍閲嶅缓鐨勫瓧娈碉紙椤剁偣 / 鍗婂緞 / 瑙掑害 / arrowType /
- * 鏂囧瓧鎺掔増绛夛級锛屼笉鍚函鏍峰紡瀛楁锛堥鑹?/ 涓嶉€忔槑搴?/ renderOrder锛夛紝渚夸簬鏍峰紡 /
- * 鍙鎬у彉鏇磋蛋杞婚噺鍒锋柊銆佸嚑浣曞彉鏇存墠閲嶅缓銆? *
- * @param plot 鏁版嵁妯″瀷銆? * @returns    绋冲畾瀛楃涓茬鍚嶃€? */
+ * 计算几何签名。只纳入影响几何或纹理足迹的字段，不包含纯颜色、透明度和顺序。
+ *
+ * @param plot 标绘数据模型。
+ * @returns 稳定的字符串签名。
+ */
 function geometrySignature( plot: GisPlotBase ): string {
 	const o = plot.options as Record<string, unknown>;
 	const pts = JSON.stringify( o.points ?? [] );
@@ -109,7 +123,8 @@ function geometrySignature( plot: GisPlotBase ): string {
 			return `sector|${ pts }|${ o.radius }|${ o.startAngle }|${ o.sectorAngle }`;
 
 		case 'point':
-			return `point|${ pts }|${ o.pointStyle }|${ o.size }`;
+			return `point|${ pts }|${ o.pointStyle }|${ o.size }|${ o.imageUrl }`
+				+ `|${ o.imageWidthMeters }|${ o.imageHeightMeters }|${ o.rotation }`;
 
 		case 'arrow':
 			// 箭头体型(sizeScale 对全类型生效 + 曲线专属体型字段)影响几何 →
@@ -149,12 +164,12 @@ function clampModeSignature( plot: GisPlotBase ): string {
 }
 
 /**
- * 璁＄畻鏍囩粯鐨勬牱寮忕鍚嶃€傚寘鍚鑹?/ 涓嶉€忔槑搴?/ strokeWidth 涓庡叏灞€ opacity銆? * 闈㈢被锛坮ectangle / polygon / circle / sector / point / arrow锛夋棤 setColor 鈫? * 鏍峰紡鍙樺寲绾冲叆绛惧悕璧伴噸寤猴紱鎶樼嚎 / 鏂囧瓧绛惧悕鍙樺寲鏃惰蛋鐑洿鏂帮紙浠嶇撼鍏ョ鍚嶈
- * 姣旇緝閫昏緫绠€鍗曚竴鑷达級銆? *
- * @param plot          鏁版嵁妯″瀷銆? * @param globalOpacity 鍏ㄥ眬 opacity锛?..1锛夈€? * @returns             绋冲畾瀛楃涓茬鍚嶃€? */
-/**
- * 鐢辨姌绾?strokeWidth锛堢背锛夋寜姣斾緥绠楀嚭 c2t 鎶樼嚎绔偣绠ご鐨勭背绾у昂瀵搞€? * 缁忛獙姣斾緥锛氱澶撮暱搴?= 绾垮 脳 4锛岀澶村簳瀹?= 绾垮 脳 3锛涘苟璁炬渶灏忓€奸伩鍏嶆瀬缁嗙嚎涓嬬澶存秷澶便€? *
- * @param strokeWidthMeters 鎶樼嚎瀹藉害锛堢背锛夈€? * @returns                 绠ご lengthMeters / widthMetersArrow锛堢背锛夈€? */
+ * 按折线米制宽度计算端点箭头尺寸。箭头长为线宽的 4 倍、底宽为 3 倍，
+ * 并设置最小值，避免极细线下箭头完全消失。
+ *
+ * @param strokeWidthMeters 折线宽度，单位米。
+ * @returns 箭头长度与宽度，单位米。
+ */
 function arrowSizeFromStrokeMeters( strokeWidthMeters: number ): {
 	lengthMeters: number;
 	widthMetersArrow: number;
@@ -164,6 +179,13 @@ function arrowSizeFromStrokeMeters( strokeWidthMeters: number ): {
 	return { lengthMeters, widthMetersArrow };
 }
 
+/**
+ * 计算样式签名，包含颜色、透明度、描边宽度及全局透明度。
+ *
+ * @param plot 标绘数据模型。
+ * @param globalOpacity 全局透明度，范围 0..1。
+ * @returns 稳定的字符串签名。
+ */
 function styleSignature( plot: GisPlotBase, globalOpacity: number ): string {
 	const o = plot.options as Record<string, unknown>;
 	return (
@@ -175,46 +197,48 @@ function styleSignature( plot: GisPlotBase, globalOpacity: number ): string {
 }
 
 /**
- * 鏍囩粯鍥惧厓妗ユ帴鍣細鎶?Map<id, GisPlot*> 鍚屾涓轰竴缁?CesiumGround*Primitive銆? */
+ * 标绘图元桥接器：把 Map<id, GisPlotBase> 同步为场景图元集合。
+ */
 export class PlotPrimitiveBridge {
 
-	/** 鏍囩粯 id 鈫?娓叉煋璁板綍銆?*/
+	/** 标绘 id → 渲染记录。 */
 	private readonly _entries = new Map<string, PlotEntry>();
 
-	/** 鐢?GroundDecalManager 鍐欏叆鐨勬爣缁橀泦鍚堬紙寮曠敤鍏变韩锛夈€?*/
+	/** GroundDecalManager 写入的标绘集合，保持引用共享。 */
 	private _shapes: Map<string, GisPlotBase> = new Map();
 
-	/** 鍏ㄥ眬涓嶉€忔槑搴︼紙0..1锛夛紱鍐欏叆鍚庝笅娆?redraw 鐢熸晥銆?*/
+	/** 全局透明度 0..1；写入后在下一次 redraw 生效。 */
 	private _opacity = 1;
 
-	/** 鎸傝浇鍦烘櫙銆?*/
+	/** 图元挂载的 Three 场景。 */
 	private readonly _scene: Scene;
 
-	/** 宸查噴鏀炬爣璁般€?*/
+	/** 是否已经释放。 */
 	private _disposed = false;
 
 	/** 标绘图元是否挂载在目标 scene 上；关闭时保留数据与 primitive，但从 scene 移除。 */
 	private _sceneAttached = true;
 
 	/**
-	 * @param options 妗ユ帴鍣ㄦ瀯閫犻€夐」銆?	 */
+	 * @param options 桥接器构造选项。
+	 */
 	public constructor( options: PlotPrimitiveBridgeOptions ) {
 		this._scene = options.scene;
 	}
 
-	// 鈹€鈹€ 涓?PlotSdfPlugin 涓€鑷寸殑鍗忚 鈹€鈹€
+	// ── 与 PlotSdfPlugin 对齐的协议 ──
 
-	/** 鎺ユ敹 GroundDecalManager 浜や粯鐨?Map锛堜笌 PlotSdfPlugin.shapes 鍗忚涓€鑷达級銆?*/
+	/** 接收 GroundDecalManager 交付的共享 Map。 */
 	public set shapes( value: Map<string, GisPlotBase> ) {
 		this._shapes = value;
 	}
 
-	/** 褰撳墠鎸佹湁鐨勬爣缁橀泦鍚堬紙寮曠敤锛屼笌 GroundDecalManager._items 鍚屼竴锛夈€?*/
+	/** 当前持有的标绘集合引用。 */
 	public get shapes(): Map<string, GisPlotBase> {
 		return this._shapes;
 	}
 
-	/** 鍏ㄥ眬涓嶉€忔槑搴︼紙涓?PlotSdfPlugin.opacity 鍗忚涓€鑷达級锛屽啓鍏ユ椂閽冲埌 [0, 1]銆?*/
+	/** 全局透明度；赋值时钳制到 [0, 1]。 */
 	public set opacity( value: number ) {
 		if ( ! Number.isFinite( value ) ) {
 			this._opacity = 1;
@@ -249,7 +273,9 @@ export class PlotPrimitiveBridge {
 	}
 
 	/**
-	 * 鎶?_shapes 鍚屾鎴愬浘鍏冮泦鍚堬細鍒犻櫎娑堝け鐨勩€佹柊澧炴病鏈夌殑銆佸嚑浣?/ 鏍峰紡鍙樺寲鐨勯噸寤恒€?	 * 浠呭彲瑙佹€?/ renderOrder 鍙樺寲鐨勮交閲忓埛鏂般€備笌 PlotSdfPlugin.redraw 鍗忚涓€鑷淬€?	 */
+	 * 把 _shapes 同步为图元集合：删除已消失项，创建新增项，按签名决定热更新或重建。
+	 * 仅显隐、顺序或受支持的样式变化走轻量刷新。
+	 */
 	public redraw(): void {
 		if ( this._disposed ) {
 			return;
@@ -314,8 +340,10 @@ export class PlotPrimitiveBridge {
 	}
 
 	/**
-	 * 瀹夸富姣忓抚璋冪敤锛氭妸 frameState 閫忎紶缁欐墍鏈夊浘鍏冿紙娣卞害 + 瑙嗗彛 + 鐩告満 + pixelRatio锛夈€?	 *
-	 * @param frameState 褰撳墠甯х姸鎬併€?	 */
+	 * 宿主每帧调用，把深度、视口、相机和像素比传给全部图元。
+	 *
+	 * @param frameState 当前帧状态。
+	 */
 	public update( frameState: CesiumGroundFrameState ): void {
 		if ( this._disposed || ! this._sceneAttached ) {
 			return;
@@ -325,7 +353,7 @@ export class PlotPrimitiveBridge {
 		}
 	}
 
-	/** 閲婃斁鍏ㄩ儴鍥惧厓涓庡満鏅寕杞姐€備笌 PlotSdfPlugin.dispose 鍗忚涓€鑷淬€?*/
+	/** 释放全部图元并从场景移除。 */
 	public dispose(): void {
 		if ( this._disposed ) {
 			return;
@@ -338,21 +366,29 @@ export class PlotPrimitiveBridge {
 		this._disposed = true;
 	}
 
-	// 鈹€鈹€ 鍐呴儴锛氳交閲忓埛鏂?/ 鏍峰紡鐑洿鏂版敮鎸佸垽瀹?鈹€鈹€
+	// ── 内部：轻量刷新与样式热更新判定 ──
 
 	/**
-	 * 褰撳墠鍥惧厓鏄惁鏀寔鏍峰紡鐑洿鏂帮紙棰滆壊 / 鎻忚竟绛夛級銆?	 * 鎶樼嚎锛坰etColor / setWidth锛変笌鏂囧瓧锛坰etText锛夋敮鎸侊紱闈㈢被涓嶆敮鎸侊紝闇€閲嶅缓銆?	 *
-	 * @param primitive 娓叉煋鍥惧厓銆?	 * @returns         true 琛ㄧず鏍峰紡鍙樺寲涔熷彲浠ヨ蛋杞婚噺鍒锋柊銆?	 */
+	 * 判断图元是否支持样式热更新。折线、文字和图片点支持；其它面图元需要重建。
+	 *
+	 * @param primitive 渲染图元。
+	 * @returns 样式变化是否可走轻量刷新。
+	 */
 	private _supportsStyleHotUpdate( primitive: AnyPlotPrimitive ): boolean {
 		return (
 			primitive instanceof CesiumGroundPolylinePrimitive ||
-			primitive instanceof CesiumGroundTextPrimitive
+			primitive instanceof CesiumGroundTextPrimitive ||
+			( primitive instanceof CesiumGroundPointPrimitive && primitive.shape === 'image' )
 		);
 	}
 
 	/**
-	 * 鍑犱綍鏈彉鏃剁殑杞婚噺鍒锋柊锛?	 *   - 鎵€鏈夊浘鍏冿細group.visible + setRenderOrder銆?	 *   - 鎶樼嚎锛歴etColor / setWidth / setVisible锛堜笉閲嶅缓鍑犱綍锛夈€?	 *   - 鏂囧瓧锛歴etText锛堝唴瀹?+ 棰滆壊 + 涓嶉€忔槑搴︼級/ setVisible锛堜笉閲嶅缓鍥惧厓锛夈€?	 *
-	 * @param entry       鐜版湁娓叉煋璁板綍銆?	 * @param renderOrder 鐢辨彃鍏ュ簭鎹㈢畻鐨勬覆鏌撻『搴忋€?	 */
+	 * 几何未变时进行轻量刷新：统一更新显隐和顺序，并按图元能力更新样式。
+	 * 图片点只改透明度 uniform，不重新请求图片或重建足迹。
+	 *
+	 * @param entry 现有渲染记录。
+	 * @param renderOrder 由插入顺序换算的渲染顺序。
+	 */
 	private _refreshLightweight( entry: PlotEntry, renderOrder: number ): void {
 		entry.group.visible = entry.plot.options.visible !== false;
 
@@ -412,14 +448,23 @@ export class PlotPrimitiveBridge {
 			entry.group = resolveGroup( entry.primitive );
 			entry.group.visible = t.visible !== false;
 		}
+
+		if ( entry.primitive instanceof CesiumGroundPointPrimitive &&
+			entry.primitive.shape === 'image' ) {
+			const point = entry.plot.options as PlotPointOptions;
+			entry.primitive.setImageOpacity( ( point.fillOpacity ?? 100 ) * this._opacity );
+		}
 	}
 
-	// 鈹€鈹€ 鍐呴儴锛氭寜 category 鏋勫缓鍥惧厓 鈹€鈹€
+	// ── 内部：按 category 构建图元 ──
 
 	/**
-	 * 鎸?category 瀹炰緥鍖栧搴?c2t 鍥惧厓銆傜粺涓€閫忎紶 stroke/fill 棰滆壊涓?0..100 涓嶉€忔槑搴︼紝
-	 * 骞舵寜鍏ㄥ眬 opacity 鎶樼畻锛堝湪 0..100 鍙ｅ緞涓婁箻 this._opacity锛夈€?	 *
-	 * @param plot        鏁版嵁妯″瀷銆?	 * @param renderOrder 鐢辨彃鍏ュ簭鎹㈢畻鐨勬覆鏌撻『搴忋€?	 * @returns           娓叉煋鍥惧厓锛涙湭鐭ョ被鍨?/ 閫€鍖栨儏鍐佃繑鍥?null銆?	 */
+	 * 按 category 实例化对应图元，统一把 0..100 样式透明度与全局透明度相乘。
+	 *
+	 * @param plot 标绘数据模型。
+	 * @param renderOrder 由插入顺序换算的渲染顺序。
+	 * @returns 渲染图元；未知或退化数据返回 null。
+	 */
 	private _buildPrimitive(
 		plot: GisPlotBase,
 		renderOrder: number,
@@ -444,11 +489,29 @@ export class PlotPrimitiveBridge {
 			case 'point': {
 				if ( pts.length === 0 ) return null;
 				const o = base as PlotPointOptions;
+				if ( o.pointStyle === 'image' ) {
+					return new CesiumGroundPointPrimitive( {
+						classificationType: base.classificationType,
+						position: pts[ 0 ],
+						shape: 'image',
+						imageUrl: o.imageUrl,
+						imageWidthMeters: o.imageWidthMeters,
+						imageHeightMeters: o.imageHeightMeters,
+						rotation: o.rotation,
+						strokeColor: o.strokeColor,
+						strokeWidth: o.strokeWidth ?? 0,
+						strokeOpacity,
+						fillColor: o.fillColor,
+						fillOpacity,
+						visible,
+						renderOrder,
+					} );
+				}
 				return new CesiumGroundPointPrimitive( {
 					classificationType: base.classificationType,
 					position: pts[ 0 ],
-					shape: o.pointStyle ?? 'circle',
-					size: o.size ?? 100,
+					shape: o.pointStyle,
+					size: o.size,
 					strokeColor: o.strokeColor,
 					strokeWidth: o.strokeWidth ?? 0,
 					strokeOpacity,
@@ -600,9 +663,11 @@ export class PlotPrimitiveBridge {
 					showBorder: t.showBorder,
 					visible,
 					renderOrder,
-					// 鍙傝€冧晶 offsetX / offsetY 鈫?c2t ENU 绫冲亸绉?					offsetEastMeters: t.offsetX,
+					// 参考侧 offsetX / offsetY 映射为 c2t ENU 米制偏移。
+					offsetEastMeters: t.offsetX,
 					offsetNorthMeters: t.offsetY,
-					// 鍙傝€冧晶 scale 鈫?c2t metersPerPixel锛堟棤 scale 鏃朵笉浼狅紝c2t 鐢ㄩ粯璁?1.0锛?					metersPerPixel: t.scale,
+					// 参考侧 scale 映射为 c2t metersPerPixel；缺省时由文字图元使用 1.0。
+					metersPerPixel: t.scale,
 				} );
 			}
 

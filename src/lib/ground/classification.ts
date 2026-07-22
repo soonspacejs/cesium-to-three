@@ -462,7 +462,7 @@ export function updateFrameStateUniforms( frameState: CesiumGroundFrameState, un
 
 /**
  * 可选注入点，供需要非默认 color material 的调用方使用。
- * 例如贴地文字需要用纹理 sampler 替代 per-instance 填充色。
+ * 例如贴地文字和图片点需要用纹理 sampler 替代 per-instance 填充色。
  * 其它调用方省略该参数时，图元回退到 `createColorMaterial`，
  * 圆形/矩形/多边形行为保持不变。
  */
@@ -562,12 +562,15 @@ export class CesiumClassificationPrimitive {
 			czm_farDepthFromNearPlusOne: { value: 1.0 },
 			czm_log2FarDepthFromNearPlusOne: { value: 1.0 },
 			czm_oneOverLog2FarDepthFromNearPlusOne: { value: 1.0 },
-			// 贴地文字纹理槽。默认 null；调用方传入 `extraUniforms.u_textTexture` 时覆盖。
-			// GLSL 声明由 `#ifdef CESIUM_THREE_TEXT` 保护，非文字材质不会读取它。
+			// 历史贴地文字纹理槽，保留在 SharedUniforms 中兼容旧扩展；新文字和图片点
+			// 统一使用下方 u_decalTexture/u_decalOpacity。
 			u_textTexture: { value: null },
+			// 通用透明纹理贴花槽。文字与图片点都通过 extraUniforms 覆盖。
+			u_decalTexture: { value: null },
+			u_decalOpacity: { value: 1.0 },
 		};
 
-		// 在任何材质构建前合并调用方提供的 uniform(例如 `u_textTexture`)，
+		// 在任何材质构建前合并调用方提供的 uniform（例如 `u_decalTexture`），
 		// 使三个命令共享同一张 map。
 		if ( injection !== undefined && injection.extraUniforms !== undefined ) {
 			for ( const key in injection.extraUniforms ) {
@@ -578,7 +581,7 @@ export class CesiumClassificationPrimitive {
 		}
 
 		// 保存 color material 工厂，使 `setFragmentCulling` 后续重建 color mesh 时
-		// 不会丢失 text-color 注入。
+		// 不会丢失 textured-decal color 注入。
 		this.colorMaterialFactory =
 			injection !== undefined && injection.colorMaterialFactory !== undefined
 				? injection.colorMaterialFactory

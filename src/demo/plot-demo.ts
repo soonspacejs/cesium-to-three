@@ -1,6 +1,6 @@
-﻿// ============================================================
+// ============================================================
 // plot-demo.ts
-//         - rAF 甯у悎骞?+ 姣忓抚 update(frameState)
+//         - rAF 帧合并 + 每帧 update(frameState)
 //
 
 import {
@@ -60,7 +60,7 @@ import {
 const PLOT_CENTER_LON = readNumberEnv( 'VITE_PLOT_LON', 86.9250 );
 const PLOT_CENTER_LAT = readNumberEnv( 'VITE_PLOT_LAT', 27.9881 );
 
-// ENU 鈫?lon/lat 杈呭姪
+// ENU → lon/lat 辅助函数。
 
 function lonLatPointsFromMeters(
 	centerLon: number,
@@ -123,6 +123,16 @@ interface BaseState {
 interface PointState extends BaseState {
 	pointStyle: 'circle' | 'square';
 	size: number;
+	centerLon: number;
+	centerLat: number;
+}
+
+/** 图片点使用显式米制宽高，避免等待图片解码后再改变地面足迹。 */
+interface ImagePointState extends BaseState {
+	imageUrl: string;
+	imageWidthMeters: number;
+	imageHeightMeters: number;
+	rotation: number;
 	centerLon: number;
 	centerLat: number;
 }
@@ -224,6 +234,27 @@ function pointStateToOptions(
 		points: [ [ state.centerLon, state.centerLat ] ],
 		pointStyle: state.pointStyle,
 		size: state.size,
+		strokeColor: state.strokeColor,
+		strokeWidth: state.strokeWidth,
+		strokeOpacity: state.strokeOpacity,
+		fillColor: state.fillColor,
+		fillOpacity: state.fillOpacity,
+		visible: state.visible,
+	};
+}
+
+function imagePointStateToOptions(
+	state: ImagePointState,
+): PlotPointOptions & { type: 'point' } {
+	return {
+		type: 'point',
+		points: [ [ state.centerLon, state.centerLat ] ],
+		pointStyle: 'image',
+		imageUrl: state.imageUrl,
+		imageWidthMeters: state.imageWidthMeters,
+		imageHeightMeters: state.imageHeightMeters,
+		rotation: state.rotation,
+		// 图片点不画矩形背景和描边；保留这些字段仅满足统一标绘基础契约。
 		strokeColor: state.strokeColor,
 		strokeWidth: state.strokeWidth,
 		strokeOpacity: state.strokeOpacity,
@@ -561,6 +592,30 @@ export function runPlotDemo(): void {
 	};
 	allStates.push( { state: smallPointSquareState, handle: smallPointSquareHandle } );
 
+	// point/image：120 × 137 PNG 按原始宽高比映射为 10 × 11.416 米贴地足迹。
+	const smallImagePointAnchor = lonLatFromMeters( PLOT_CENTER_LON, PLOT_CENTER_LAT, 0, - 65 );
+	const smallImagePointState: ImagePointState = {
+		visible: true,
+		imageUrl: '/xiaohuoshuan.png',
+		imageWidthMeters: 10,
+		imageHeightMeters: 10 * 137 / 120,
+		rotation: 0,
+		centerLon: smallImagePointAnchor[ 0 ],
+		centerLat: smallImagePointAnchor[ 1 ],
+		strokeColor: '#ffffff',
+		strokeWidth: 0,
+		strokeOpacity: 0,
+		fillColor: '#ffffff',
+		fillOpacity: 100,
+	};
+	const smallImagePointHandle: PlotHandle = {
+		key: 'small-point-image',
+		label: '[small] point/image  xiaohuoshuan 10m × 11.416m',
+		id: decals.addPlot( imagePointStateToOptions( smallImagePointState ) ),
+		initialPoints: [ [ smallImagePointState.centerLon, smallImagePointState.centerLat ] ],
+	};
+	allStates.push( { state: smallImagePointState, handle: smallImagePointHandle } );
+
 	// circle
 	const smallCircleAnchor = lonLatFromMeters( PLOT_CENTER_LON, PLOT_CENTER_LAT, - 65, - 10 );
 	const smallCircleState: CircleState = {
@@ -599,7 +654,7 @@ export function runPlotDemo(): void {
 	};
 	const smallSectorHandle: PlotHandle = {
 		key: 'small-sector',
-		label: '[small] sector  r=8m  start=30掳 sweep=120掳',
+		label: '[small] sector  r=8m  start=30° sweep=120°',
 		id: decals.addPlot( sectorStateToOptions( smallSectorState ) ),
 		initialPoints: [ [ smallSectorState.centerLon, smallSectorState.centerLat ] ],
 	};
@@ -1008,7 +1063,7 @@ export function runPlotDemo(): void {
 	};
 	const largeSectorHandle: PlotHandle = {
 		key: 'large-sector',
-		label: '[large] sector  r=3km start=20掳 sweep=200掳',
+		label: '[large] sector  r=3km start=20° sweep=200°',
 		id: decals.addPlot( sectorStateToOptions( largeSectorState ) ),
 		initialPoints: [ [ largeSectorState.centerLon, largeSectorState.centerLat ] ],
 	};
@@ -1175,7 +1230,7 @@ export function runPlotDemo(): void {
 	};
 	allStates.push( { state: largeTextState, handle: largeTextHandle } );
 
-	// 鐩告満棰勮
+	// 相机预设。
 
 	function flyToSmall(): void {
 		camera.position
@@ -1251,6 +1306,7 @@ export function runPlotDemo(): void {
 			};
 			refresh( smallPointCircleState, smallPointCircleHandle, pointStateToOptions( smallPointCircleState ) );
 			refresh( smallPointSquareState, smallPointSquareHandle, pointStateToOptions( smallPointSquareState ) );
+			refresh( smallImagePointState, smallImagePointHandle, imagePointStateToOptions( smallImagePointState ) );
 			refresh( smallCircleState, smallCircleHandle, circleStateToOptions( smallCircleState ) );
 			refresh( smallSectorState, smallSectorHandle, sectorStateToOptions( smallSectorState ) );
 			refresh( smallRectangleState, smallRectangleHandle, rectangleStateToOptions( smallRectangleState, smallRectangleHandle.initialPoints ) );
@@ -1418,6 +1474,27 @@ export function runPlotDemo(): void {
 		bindCenterControls( folder, state, handle, lonStep, latStep );
 		bindBaseStyleControls( folder, state, handle,
 			pointStateToOptions, 0, strokeWidthMax, strokeWidthMax / 40 );
+	}
+
+	function buildImagePointFolder(
+		parent: GUI,
+		state: ImagePointState,
+		handle: PlotHandle,
+	): void {
+		const folder = parent.addFolder( 'point/image 消防栓' );
+		folder.add( state, 'imageUrl' ).name( 'image URL' )
+			.onFinishChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
+		folder.add( state, 'imageWidthMeters', 1, 100, 0.1 ).name( 'width (m)' )
+			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
+		folder.add( state, 'imageHeightMeters', 1, 100, 0.1 ).name( 'height (m)' )
+			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
+		folder.add( state, 'rotation', - 180, 180, 1 ).name( 'rotation clockwise (°)' )
+			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
+		bindCenterControls( folder, state, handle, 0.000001, 0.000001 );
+		folder.add( state, 'fillOpacity', 0, 100, 1 ).name( 'image opacity (%)' )
+			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
+		folder.add( state, 'visible' ).name( 'visible' )
+			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
 	}
 
 	function buildCircleFolder(
@@ -1599,7 +1676,7 @@ export function runPlotDemo(): void {
 			.name( 'fontSize (px)' )
 			.onChange( () => { decals.setStyle( handle.id, textStateToOptions( state ) ); } );
 		folder.add( state, 'scale', scaleMin, scaleMax, ( scaleMax - scaleMin ) / 100 )
-			.name( 'scale 鈫?metersPerPixel' )
+			.name( 'scale → metersPerPixel' )
 			.onChange( () => { decals.setStyle( handle.id, textStateToOptions( state ) ); } );
 		folder.add( state, 'textAlign', [ 'left', 'center', 'right' ] )
 			.name( 'textAlign' )
@@ -1646,6 +1723,7 @@ export function runPlotDemo(): void {
 	smallGroup.close();
 	buildPointFolder( smallGroup, 'point/circle', smallPointCircleState, smallPointCircleHandle, 1, 40, 0.5, 4, 0.000001, 0.000001 );
 	buildPointFolder( smallGroup, 'point/square', smallPointSquareState, smallPointSquareHandle, 1, 40, 0.5, 4, 0.000001, 0.000001 );
+	buildImagePointFolder( smallGroup, smallImagePointState, smallImagePointHandle );
 	buildCircleFolder( smallGroup, 'circle', smallCircleState, smallCircleHandle, 1, 40, 0.5, 4, 0.000001, 0.000001 );
 	buildSectorFolder( smallGroup, 'sector', smallSectorState, smallSectorHandle, 1, 40, 0.5, 4, 0.000001, 0.000001 );
 	buildRectangleFolder( smallGroup, 'rectangle', smallRectangleState, smallRectangleHandle, 4, 200 );
@@ -1712,6 +1790,21 @@ export function runPlotDemo(): void {
 			};
 			allStates.push( { state, handle } );
 		},
+		onImagePoint: ( point: LonLatPoint ): void => {
+			const state: ImagePointState = {
+				...smallImagePointState,
+				centerLon: point[ 0 ],
+				centerLat: point[ 1 ],
+			};
+			const id = decals.addPlot( imagePointStateToOptions( state ) );
+			const handle: PlotHandle = {
+				key: `drawn-image-point-${ id }`,
+				label: `[drawn] point/image xiaohuoshuan @ ${ point[ 0 ].toFixed( 6 ) }, ${ point[ 1 ].toFixed( 6 ) }`,
+				id,
+				initialPoints: [ [ point[ 0 ], point[ 1 ] ] ],
+			};
+			allStates.push( { state, handle } );
+		},
 	} );
 
 	function resize(): void {
@@ -1756,7 +1849,7 @@ export function runPlotDemo(): void {
 
 		const lines: string[] = [];
 		lines.push( `Plot demo @ (${ PLOT_CENTER_LON.toFixed( 4 ) }, ${ PLOT_CENTER_LAT.toFixed( 4 ) })` );
-		lines.push( `Plots: ${ allStates.length } (8 categories x 2 scales + arrow variants)` );
+		lines.push( `Plots: ${ allStates.length } (8 categories x 2 scales + image point + arrow variants)` );
 		lines.push( `Global opacity: ${ ( globalState.globalOpacity * 100 ).toFixed( 0 ) }%` );
 		lines.push(
 			tilesRenderer.group.visible

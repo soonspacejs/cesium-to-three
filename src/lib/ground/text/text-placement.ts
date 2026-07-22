@@ -11,10 +11,7 @@
 
 import { Matrix4, Vector3 } from 'three';
 
-import { createCartographic } from '../math/cartographic';
-import { cartographicToCartesian } from '../math/ellipsoid';
-import { eastNorthUpToFixedFrame } from '../math/enu-frame';
-import { matrix4MultiplyByPoint } from '../math/matrix4-helpers';
+import { computeTexturedDecalFootprint } from '../textured-decal';
 import type { ResolvedPlotTextOptions, TextLayoutResult } from './text-types';
 
 /** 足迹结果：4 个 ECEF 角点(文字空间) + 米尺寸 + ENU 矩阵(供复用)。 */
@@ -34,14 +31,6 @@ export interface TextFootprint {
 	/** 锚点 ENU→ECEF 4×4（下游若需可复用）。 */
 	enuToEcef: Matrix4;
 }
-
-// 模块级 scratch：每次 compute 复用，避免堆分配（高频 setText 友好）。
-const _anchorCarto = createCartographic();
-const _anchorEcef = new Vector3();
-const _enuToEcef = new Matrix4();
-const _scratchEnu = new Vector3();
-
-const DEG_TO_RAD = Math.PI / 180.0;
 
 /**
  * 计算贴地文本的地面足迹 4 角点（ECEF）。
@@ -70,70 +59,20 @@ export function computeTextFootprint(
 	const cx = anchorXToCenterOffset( options.anchorX, hw );
 	const cy = anchorYToCenterOffset( options.anchorY, hh );
 
-	// ── §5 锚点 → ECEF → ENU 矩阵 ──
-	_anchorCarto.longitude = options.anchorLonDegrees * DEG_TO_RAD;
-	_anchorCarto.latitude = options.anchorLatDegrees * DEG_TO_RAD;
-	_anchorCarto.height = 0.0;
-	cartographicToCartesian( _anchorCarto, _anchorEcef );
-	eastNorthUpToFixedFrame( _anchorEcef, _enuToEcef );
-
-	// ── §4 旋转角(弧度) ──
-	const alpha = options.rotationRadians; // 已是弧度，北向顺时针
-	const cosA = Math.cos( alpha );
-	const sinA = Math.sin( alpha );
-
-	// ── §2 + §4 + §5 逐角点:box-local 角点 → 旋转 → +ENU 偏移 → ECEF ──
-	// 4 角的 box-local（相对盒子中心）符号表，顺序固定 SW/SE/NW/NE。
-	const swEcef = cornerToEcef( cx - hw, cy - hh, cosA, sinA, options );
-	const seEcef = cornerToEcef( cx + hw, cy - hh, cosA, sinA, options );
-	const nwEcef = cornerToEcef( cx - hw, cy + hh, cosA, sinA, options );
-	const neEcef = cornerToEcef( cx + hw, cy + hh, cosA, sinA, options );
-
-	return {
-		swEcef,
-		seEcef,
-		nwEcef,
-		neEcef,
-		footprintWidthMeters: footprintWidth,
-		footprintHeightMeters: footprintHeight,
-		enuToEcef: _enuToEcef.clone(),
-	};
-}
-
-/**
- * 单个 box-local 角点 → ECEF。
- *
- * 步骤：俯视顺时针旋转 rotateCW → 叠加 ENU 全局米偏移 → enuToEcef 变换。
- * 使用模块级 _enuToEcef 与 _scratchEnu，但返回**新建** Vector3（下游持有）。
- *
- * @param localX   box-local x（相对锚点，含对齐偏移），单位米。
- * @param localY   box-local y，单位米。
- * @param cosA     cos(rotation)。
- * @param sinA     sin(rotation)。
- * @param options  提供 ENU 全局米偏移。
- * @returns        新建 ECEF Vector3。
- */
-function cornerToEcef(
-	localX: number,
-	localY: number,
-	cosA: number,
-	sinA: number,
-	options: ResolvedPlotTextOptions,
-): Vector3 {
-	// rotateCW(vx,vy,α) = ( vx·cosα + vy·sinα, −vx·sinα + vy·cosα )
-	const rotatedEast = localX * cosA + localY * sinA;
-	const rotatedNorth = -localX * sinA + localY * cosA;
-
-	// 全局米偏移在 ENU 系（不随旋转），z=0 落在切平面
-	_scratchEnu.set(
-		rotatedEast + options.offsetEastMeters,
-		rotatedNorth + options.offsetNorthMeters,
-		0.0,
-	);
-
-	const out = new Vector3();
-	matrix4MultiplyByPoint( _enuToEcef, _scratchEnu, out );
-	return out;
+	// ── §2 + §4 + §5 ──
+	// 通用贴花能力按 SW/SE/NW/NE 顺序执行：box-local 角点 → 俯视顺时针旋转
+	// → 叠加 ENU 全局米偏移 → ECEF。文字只保留布局和 anchor 对齐职责。
+	return computeTexturedDecalFootprint( {
+		anchorLonDegrees: options.anchorLonDegrees,
+		anchorLatDegrees: options.anchorLatDegrees,
+		widthMeters: footprintWidth,
+		heightMeters: footprintHeight,
+		rotationRadians: options.rotationRadians,
+		centerLocalEastMeters: cx,
+		centerLocalNorthMeters: cy,
+		offsetEastMeters: options.offsetEastMeters,
+		offsetNorthMeters: options.offsetNorthMeters,
+	} );
 }
 
 /**

@@ -41,6 +41,7 @@ export type {
 	CesiumGroundFrameState,
 	CesiumGroundLineWidthMode,
 	CesiumGroundPointOptions,
+	CesiumGroundImagePrimitiveOptions,
 	CesiumGroundPointPrimitiveOptions,
 	CesiumGroundPointShape,
 	CesiumGroundPolygonOptions,

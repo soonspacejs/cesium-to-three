@@ -102,19 +102,31 @@ export type GisPlotArrowSnapshot = GisPlotSnapshot<PlotArrowOptions> & {
 
 // ── 点 ──
 
-/** 点标绘形状：'circle' = 圆点，'square' = 方点。 */
-export type PlotPointStyle = 'circle' | 'square';
+/** 点标绘形状：圆点、方点或透明图片贴花。 */
+export type PlotPointStyle = 'circle' | 'square' | 'image';
 
 /**
- * 点标绘选项。points[0] 为点中心；size 在 c2t 侧：
- * circle 解释为直径、square 解释为边长。
+ * 点标绘选项。points[0] 始终是中心锚点：circle/square 使用单一 size；
+ * image 使用显式米制宽高和可选俯视旋转角。
  */
-export type PlotPointOptions = GisPlotBaseOptions & {
-	/** 点形状：'circle' / 'square'。 */
-	pointStyle: PlotPointStyle;
-	/** 尺寸（米）：circle 为直径、square 为边长。 */
-	size: number;
-};
+export type PlotPointOptions = GisPlotBaseOptions & (
+	| {
+		/** 基础点形状。 */
+		pointStyle: 'circle' | 'square';
+		/** 尺寸（米）：circle 为直径、square 为边长。 */
+		size: number;
+	}
+	| {
+		/** 透明图片贴地点。 */
+		pointStyle: 'image';
+		/** 浏览器可加载的图片 URL，例如 `/xiaohuoshuan.png`。 */
+		imageUrl: string;
+		imageWidthMeters: number;
+		imageHeightMeters: number;
+		/** 俯视顺时针角度；0 表示图片顶部朝北。 */
+		rotation?: number;
+	}
+);
 
 // ── 折线 ──
 

@@ -40,6 +40,7 @@ import { buildWallArrays } from '../ground/line/line-geometry-normals';
 import { preprocessLine } from '../ground/line/line-preprocess';
 import { ArcType, type DensifiedLine } from '../ground/line/line-types';
 import { encodeScalarRTE } from '../ground/math/rte-encoding';
+import { acquireImageTexture } from '../ground/image';
 
 import type { GisPlotBase } from './plugins/base';
 import type {
@@ -114,6 +115,42 @@ void main() {
 }
 `;
 
+const PLAIN_RTE_TEXTURE_VERTEX_SHADER = /* glsl */ `
+precision highp float;
+precision highp int;
+in vec3 position3DHigh;
+in vec3 position3DLow;
+in vec2 uv;
+uniform vec3 u_encodedCameraPositionHigh;
+uniform vec3 u_encodedCameraPositionLow;
+uniform mat4 u_modelViewProjectionRelativeToEye;
+out vec2 v_uv;
+void main() {
+	vec3 highDifference = position3DHigh - u_encodedCameraPositionHigh;
+	vec3 lowDifference = position3DLow - u_encodedCameraPositionLow;
+	v_uv = uv;
+	gl_Position = u_modelViewProjectionRelativeToEye *
+		vec4(highDifference + lowDifference, 1.0);
+}
+`;
+
+const PLAIN_RTE_TEXTURE_FRAGMENT_SHADER = /* glsl */ `
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+uniform sampler2D u_decalTexture;
+uniform float u_decalOpacity;
+in vec2 v_uv;
+out vec4 out_FragColor;
+void main() {
+	vec4 texel = texture(u_decalTexture, vec2(v_uv.x, 1.0 - v_uv.y));
+	texel.a *= clamp(u_decalOpacity, 0.0, 1.0);
+	if (texel.a <= 0.0) discard;
+	texel.rgb *= texel.a;
+	out_FragColor = texel;
+}
+`;
+
 const _plainViewRotation = new Matrix4();
 
 export class PlainPlotPrimitive {
@@ -121,10 +158,16 @@ export class PlainPlotPrimitive {
 	public readonly group: Group;
 
 	private readonly frameUniforms: PlainRteFrameUniforms;
+	private readonly cleanup: (() => void) | null;
 
-	public constructor( group: Group, frameUniforms: PlainRteFrameUniforms ) {
+	public constructor(
+		group: Group,
+		frameUniforms: PlainRteFrameUniforms,
+		cleanup: (() => void) | null = null,
+	) {
 		this.group = group;
 		this.frameUniforms = frameUniforms;
+		this.cleanup = cleanup;
 	}
 
 	public update( frameState: CesiumGroundFrameState ): void {
@@ -173,6 +216,7 @@ export class PlainPlotPrimitive {
 		for ( const geometry of geometries ) geometry.dispose();
 		for ( const texture of textures ) texture.dispose();
 		for ( const material of materials ) material.dispose();
+		this.cleanup?.();
 		this.group.clear();
 	}
 }
@@ -187,11 +231,18 @@ export function createPlainPlotPrimitive(
 	const style = normalizeStyle( base, globalOpacity );
 	const frameUniforms = createPlainRteFrameUniforms();
 	let group: Group | null = null;
+	let cleanup: (() => void) | null = null;
 
 	switch ( plot.category ) {
 		case 'point': {
 			const options = base as PlotPointOptions;
-			group = buildPointGroup( options, style, frameUniforms );
+			if ( options.pointStyle === 'image' ) {
+				const image = buildImagePointGroup( options, style, frameUniforms );
+				group = image?.group ?? null;
+				cleanup = image?.release ?? null;
+			} else {
+				group = buildPointGroup( options, style, frameUniforms );
+			}
 			break;
 		}
 
@@ -253,7 +304,7 @@ export function createPlainPlotPrimitive(
 		return null;
 	}
 
-	const primitive = new PlainPlotPrimitive( group, frameUniforms );
+	const primitive = new PlainPlotPrimitive( group, frameUniforms, cleanup );
 	primitive.setRenderOrder( renderOrder );
 	primitive.setVisible( base.visible !== false );
 	return primitive;
@@ -1017,7 +1068,7 @@ function buildCircleGroup(
 }
 
 function buildPointGroup(
-	options: PlotPointOptions,
+	options: Extract<PlotPointOptions, { pointStyle: 'circle' | 'square' }>,
 	style: PlainStyle,
 	frameUniforms: PlainRteFrameUniforms,
 ): Group | null {
@@ -1055,6 +1106,74 @@ function buildPointGroup(
 		style,
 		frameUniforms,
 	);
+}
+
+function buildImagePointGroup(
+	options: Extract<PlotPointOptions, { pointStyle: 'image' }>,
+	style: PlainStyle,
+	frameUniforms: PlainRteFrameUniforms,
+): { group: Group; release: () => void } | null {
+	if ( options.points.length === 0 ) return null;
+	if ( ! Number.isFinite( options.imageWidthMeters ) || options.imageWidthMeters <= 0.0 ||
+		! Number.isFinite( options.imageHeightMeters ) || options.imageHeightMeters <= 0.0 ) {
+		return null;
+	}
+
+	const frame = createFrame(
+		options.points[ 0 ][ 0 ],
+		options.points[ 0 ][ 1 ],
+		resolveHeightMeters( style ),
+	);
+	const halfWidth = options.imageWidthMeters * 0.5;
+	const halfHeight = options.imageHeightMeters * 0.5;
+	const rotation = ( Number.isFinite( options.rotation ) ? options.rotation ?? 0.0 : 0.0 ) * DEG_TO_RAD;
+	const cos = Math.cos( rotation );
+	const sin = Math.sin( rotation );
+	const offset = ( x: number, y: number ): Vector3 => tangentOffset(
+		frame,
+		x * cos + y * sin,
+		- x * sin + y * cos,
+	);
+	const geometry = createGeometry(
+		[
+			offset( - halfWidth, - halfHeight ),
+			offset( halfWidth, - halfHeight ),
+			offset( halfWidth, halfHeight ),
+			offset( - halfWidth, halfHeight ),
+		],
+		frame,
+		[ 0, 1, 2, 0, 2, 3 ],
+	);
+	geometry.setAttribute(
+		'uv',
+		new BufferAttribute( new Float32Array( [ 0, 0, 1, 0, 1, 1, 0, 1 ] ), 2 ),
+	);
+
+	const textureHandle = acquireImageTexture( options.imageUrl );
+	const material = new RawShaderMaterial( {
+		glslVersion: GLSL3,
+		uniforms: {
+			u_encodedCameraPositionHigh: frameUniforms.u_encodedCameraPositionHigh,
+			u_encodedCameraPositionLow: frameUniforms.u_encodedCameraPositionLow,
+			u_modelViewProjectionRelativeToEye: frameUniforms.u_modelViewProjectionRelativeToEye,
+			u_decalTexture: { value: textureHandle.texture },
+			u_decalOpacity: { value: alphaFromPercent( style.fillOpacity ) },
+		},
+		vertexShader: PLAIN_RTE_TEXTURE_VERTEX_SHADER,
+		fragmentShader: PLAIN_RTE_TEXTURE_FRAGMENT_SHADER,
+		transparent: true,
+		premultipliedAlpha: true,
+		side: DoubleSide,
+		depthTest: false,
+		depthWrite: false,
+		toneMapped: false,
+	} );
+	material.name = 'PlainPlotRteImageMaterial';
+	const mesh = createPlainMesh( geometry, material );
+	const group = new Group();
+	group.name = 'PlainPlotImagePoint';
+	group.add( mesh );
+	return { group, release: textureHandle.release };
 }
 
 function buildLineGroup(

@@ -9,11 +9,9 @@
 // 被消费：text-primitive。
 // ============================================================
 
-import { BufferAttribute, BufferGeometry } from 'three';
+import type { BufferGeometry } from 'three';
 
-import { encodePositionsToHighLowArrays } from '../math/rte-encoding';
-
-import { constructExtrudedTextShadowVolume } from './text-construct-extruded';
+import { buildTexturedDecalShadowVolumeGeometry } from '../textured-decal';
 import type { TextShadowVolumeOptions } from './text-options';
 
 /**
@@ -30,36 +28,14 @@ import type { TextShadowVolumeOptions } from './text-options';
  * 不调用 computeBoundingSphere：几何无 'position' attribute（只有 3DHigh/Low），
  * 与 rectangle/circle 一致；classification 自行处理视锥（frustumCulled=false）。
  *
+ * 上述装配流程现由 textured-decal 统一实现；本函数保留文字模块的公开兼容入口，
+ * 图片点也走完全相同的 shadow-volume 属性契约。
+ *
  * @param options 4 角点 + 可选顶/底高度。
  * @returns       可直接喂给 classification stencil/color mesh 的 BufferGeometry。
  */
 export function buildTextShadowVolumeGeometry(
 	options: TextShadowVolumeOptions,
 ): BufferGeometry {
-	// 步骤 1 · 棱柱顶点 / 挤出方向 / 索引
-	const result = constructExtrudedTextShadowVolume( options );
-
-	// 步骤 2 · RTE split-double：Float64 ECEF → high/low Float32
-	const { high, low } = encodePositionsToHighLowArrays( result.positions );
-
-	// 步骤 3 · 装配 BufferGeometry
-	const geometry = new BufferGeometry();
-	const vertexCount = result.positions.length / 3;
-
-	// 这些名是 ShadowVolumeAppearanceVS.glsl 的 `in vec3 ...` 名，不可改名。
-	geometry.setAttribute( 'position3DHigh', new BufferAttribute( high, 3 ) );
-	geometry.setAttribute( 'position3DLow', new BufferAttribute( low, 3 ) );
-	geometry.setAttribute(
-		'extrudeDirection',
-		new BufferAttribute( result.extrudeDirection, 3 ),
-	);
-
-	// batchId：单标牌作为一个 batch，固定全 0（与 rectangle/circle 一致）
-	const batchId = new Float32Array( vertexCount );
-	geometry.setAttribute( 'batchId', new BufferAttribute( batchId, 1 ) );
-
-	// 合并索引（top cap + bottom cap + 4 墙）
-	geometry.setIndex( new BufferAttribute( result.indices, 1 ) );
-
-	return geometry;
+	return buildTexturedDecalShadowVolumeGeometry( options );
 }

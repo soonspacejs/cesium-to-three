@@ -40,6 +40,7 @@ export {
 	CesiumGroundPolylinePrimitive,
 	CesiumGroundRectanglePrimitive,
 } from './primitives';
+export { CesiumGroundImagePrimitive } from './image';
 
 // 矩形辅助函数，历史上曾从 geometry.ts 重新导出。
 export {

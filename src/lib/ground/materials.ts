@@ -315,8 +315,9 @@ uniform float u_circleRingCount;
 uniform float u_circleRingGapMeters;
 uniform float u_circleSectorStartRadians;
 uniform float u_circleSectorAngleRadians;
-#ifdef CESIUM_THREE_TEXT
-uniform sampler2D u_textTexture;
+#ifdef CESIUM_THREE_TEXTURED_DECAL
+uniform sampler2D u_decalTexture;
+uniform float u_decalOpacity;
 #endif
 
 const float czm_pi = 3.141592653589793;
@@ -932,7 +933,7 @@ export function createColorMaterial( uniforms: SharedUniforms, fragmentCull: boo
  * 锚点,因此矩形/圆填充与文字之间只差内部片元分支。文字分支复用 CPU-plane
  * 的 `planarMeters` 路径(与边框路径同一套精度管线),使用 `u_innerMetersRect.zw`
  * 中存储的 footprint 米制尺寸归一化到 `[0,1]` uv,随后在翻转 V 轴后采样
- * `u_textTexture`(canvas 原点在左上,uv 原点在 SW)。
+ * `u_decalTexture`（图片原点在左上，uv 原点在 SW）。
  *
  * @returns 插入文字采样分支后的 ShadowVolumeAppearanceFS。
  * @throws  当 Cesium 锚点行缺失时抛出(上游 shader 发生变化)。
@@ -940,7 +941,7 @@ export function createColorMaterial( uniforms: SharedUniforms, fragmentCull: boo
 function createTextColorFragmentBody(): string {
 	const colorDeclaration = '    vec4 color = czm_gammaCorrect(v_color);';
 	const textInjection = /* glsl */ `    vec4 color = czm_gammaCorrect(v_color);
-#ifdef CESIUM_THREE_TEXT
+#ifdef CESIUM_THREE_TEXTURED_DECAL
 #ifdef TEXTURE_COORDINATES
 #ifndef SPHERICAL
     // CPU-plane 抖动免疫 planarMeters（与 border 路径同源，Float64 CPU 算出
@@ -961,7 +962,8 @@ function createTextColorFragmentBody(): string {
         return;
     }
     // canvas 原点左上、Y 向下；uv 原点 SW、Y 向上 → 翻转 V
-    vec4 texel = texture(u_textTexture, vec2(textUv.x, 1.0 - textUv.y));
+    vec4 texel = texture(u_decalTexture, vec2(textUv.x, 1.0 - textUv.y));
+    texel.a *= clamp(u_decalOpacity, 0.0, 1.0);
     // 透明纹素写透明色：预乘混合下不改变颜色缓冲，但会清掉 stencil。
     if (texel.a <= 0.0) {
         out_FragColor = vec4(0.0);
@@ -1002,15 +1004,26 @@ function buildTextColorFragmentShader(): string {
 /**
  * 创建贴地文字 color 材质。渲染状态逐字节匹配 `createColorMaterial`,让
  * front-stencil / back-stencil / color 命令块保持同一 render-order 契约;
- * 唯一差异是 `CESIUM_THREE_TEXT` define 与采样 `u_textTexture` 的片元分支。
+ * 唯一差异是 `CESIUM_THREE_TEXTURED_DECAL` define 与纹理采样片元分支。
  * 调用方应通过共享 `extraUniforms` 路径注入纹理 uniform,从而保持
  * LOG_DEPTH + CPU-plane + Float64-RTE 精度管线不变。
  *
- * @param uniforms     共享 uniforms(必须包含 `u_textTexture` 值)。
+ * @param uniforms     共享 uniforms（必须包含 u_decalTexture/u_decalOpacity）。
  * @param fragmentCull Cesium `CULL_FRAGMENTS` define 是否启用。
  * @returns            文字 color 命令使用的 RawShaderMaterial。
  */
 export function createTextColorMaterial(
+	uniforms: SharedUniforms,
+	fragmentCull: boolean,
+): RawShaderMaterial {
+	return createTexturedDecalColorMaterial( uniforms, fragmentCull );
+}
+
+/**
+ * 创建贴地文字与图片点共用的纹理贴花 color pass。
+ * 透明纹素仍输出透明色并完成 stencil 清理，避免同一区域后续图元被残留模板值影响。
+ */
+export function createTexturedDecalColorMaterial(
 	uniforms: SharedUniforms,
 	fragmentCull: boolean,
 ): RawShaderMaterial {
@@ -1021,7 +1034,7 @@ export function createTextColorMaterial(
 		'PER_INSTANCE_COLOR',
 		'FLAT',
 		'REQUIRES_EC',
-		'CESIUM_THREE_TEXT',
+		'CESIUM_THREE_TEXTURED_DECAL',
 	] );
 
 	const vertexShader = buildColorVertexShader();         // 复用 fill 的顶点包装

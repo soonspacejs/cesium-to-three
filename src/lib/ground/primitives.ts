@@ -37,6 +37,7 @@ import {
 import { computeCirclePlanarExtents } from './circle/circle-extents';
 import { buildCircleShadowVolumeGeometry } from './circle/circle-shadow-volume';
 import { encodeCesiumVector3 } from './geometry';
+import { CesiumGroundImagePrimitive } from './image';
 import {
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
 	CESIUM_GROUND_NON_PICKABLE_LAYER,
@@ -88,6 +89,7 @@ import type {
 	CesiumGroundArrowStyle,
 	CesiumGroundCirclePrimitiveOptions,
 	CesiumGroundFrameState,
+	CesiumGroundImagePrimitiveOptions,
 	CesiumGroundPointPrimitiveOptions,
 	CesiumGroundPointShape,
 	CesiumGroundPolygonOptions,
@@ -709,21 +711,28 @@ export class CesiumGroundCirclePrimitive {
  * 的圆形或矩形 shadow-volume 管线，而不是新增一套渲染路径：
  *   - shape='circle' → 委托给 CesiumGroundCirclePrimitive，center=position，
  *     radius=size/2。沿用圆形的扇区 / 环线 / 描边 shader 分支。
- *   - shape='square' → 委托给 CesiumGroundRectanglePrimitive，4 角点由 ENU 米
- *     偏移反算（±size/2 east/north），沿用矩形的轴对齐 fill + 描边路径。
+	 *   - shape='square' → 委托给 CesiumGroundRectanglePrimitive，4 角点由 ENU 米
+	 *     偏移反算（±size/2 east/north），沿用矩形的轴对齐 fill + 描边路径。
+	 *   - shape='image' → 委托给 CesiumGroundImagePrimitive；显式宽高构造 ENU 四角，
+	 *     透明纹理通过共享 textured-decal color pass 贴合地形或 3D Tiles。
  *
- * 这样描边 / 填充 / 命令 visibility / fragment culling / classification depth
- * 等所有精度修复都自动继承，不会引入任何新的着色器分支或几何路径。
+	 * 三种形状都继承统一的命令可见性、fragment culling 和 classification depth
+	 * 精度修复；图片点仅在最终 color pass 增加通用纹理采样分支。
  */
 export class CesiumGroundPointPrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
 	public readonly position: LonLatPoint;
 	public readonly shape: CesiumGroundPointShape;
-	public readonly size: number;
+	public readonly size: number | null;
+	public readonly imageWidthMeters: number | null;
+	public readonly imageHeightMeters: number | null;
+	public readonly imageUrl: string | null;
+	public readonly rotation: number;
 
 	private readonly delegate:
 		| CesiumGroundCirclePrimitive
-		| CesiumGroundRectanglePrimitive;
+		| CesiumGroundRectanglePrimitive
+		| CesiumGroundImagePrimitive;
 
 	public constructor( options: CesiumGroundPointPrimitiveOptions ) {
 		const longitude = options.position?.[ 0 ];
@@ -739,15 +748,18 @@ export class CesiumGroundPointPrimitive {
 			throw new Error( 'Ground point position must be a valid WGS84 [lon, lat] point.' );
 		}
 
-		const sizeMeters = Number.isFinite( options.size )
-			? Math.max( options.size, 1.0 )
-			: 1.0;
-
 		this.position = [ longitude, latitude ];
 		this.shape = options.shape;
-		this.size = sizeMeters;
+		this.size = options.shape === 'image'
+			? null
+			: ( Number.isFinite( options.size ) ? Math.max( options.size, 1.0 ) : 1.0 );
+		this.imageWidthMeters = options.shape === 'image' ? options.imageWidthMeters : null;
+		this.imageHeightMeters = options.shape === 'image' ? options.imageHeightMeters : null;
+		this.imageUrl = options.shape === 'image' ? options.imageUrl : null;
+		this.rotation = options.shape === 'image' ? options.rotation ?? 0.0 : 0.0;
 
 		if ( options.shape === 'circle' ) {
+			const sizeMeters = this.size as number;
 			this.delegate = new CesiumGroundCirclePrimitive( {
 				center: this.position,
 				radius: sizeMeters * 0.5,
@@ -764,7 +776,8 @@ export class CesiumGroundPointPrimitive {
 				fragmentCull: options.fragmentCull,
 				classificationType: options.classificationType,
 			} );
-		} else {
+		} else if ( options.shape === 'square' ) {
+			const sizeMeters = this.size as number;
 			const halfSize = sizeMeters * 0.5;
 			// 4 角由 ENU 米偏移反算，沿用矩形 helper 的 cartographic → ECEF
 			// 双精度路径，避免在高纬度退化为均匀 lon/lat 偏移。
@@ -791,6 +804,26 @@ export class CesiumGroundPointPrimitive {
 				fillOpacity: options.fillOpacity,
 				visible: options.visible,
 				granularityRadians: options.granularityRadians,
+				minimumHeight: options.minimumHeight,
+				maximumHeight: options.maximumHeight,
+				renderOrder: options.renderOrder,
+				fragmentCull: options.fragmentCull,
+				classificationType: options.classificationType,
+			} );
+		} else {
+			const imageOptions = options as CesiumGroundImagePrimitiveOptions & { shape: 'image' };
+			this.delegate = new CesiumGroundImagePrimitive( {
+				position: this.position,
+				imageUrl: imageOptions.imageUrl,
+				imageWidthMeters: imageOptions.imageWidthMeters,
+				imageHeightMeters: imageOptions.imageHeightMeters,
+				rotation: imageOptions.rotation,
+				strokeColor: options.strokeColor,
+				strokeWidth: options.strokeWidth,
+				strokeOpacity: options.strokeOpacity,
+				fillColor: options.fillColor,
+				fillOpacity: options.fillOpacity,
+				visible: options.visible,
 				minimumHeight: options.minimumHeight,
 				maximumHeight: options.maximumHeight,
 				renderOrder: options.renderOrder,
@@ -824,6 +857,13 @@ export class CesiumGroundPointPrimitive {
 	 */
 	public setClassificationType( classificationType?: ClassificationType ): void {
 		this.delegate.setClassificationType( classificationType );
+	}
+
+	/** 只更新图片点 alpha，不重建几何；圆点和方点调用时保持不变。 */
+	public setImageOpacity( fillOpacity: number ): void {
+		if ( this.delegate instanceof CesiumGroundImagePrimitive ) {
+			this.delegate.setOpacity( fillOpacity );
+		}
 	}
 
 	/**

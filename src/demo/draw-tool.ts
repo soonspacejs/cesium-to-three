@@ -59,6 +59,8 @@ export interface DrawArrowToolOptions {
 	 * @param points    已拾取的控制点(至少 minPoints 个)。
 	 */
 	onConfirm: ( arrowType: PlotArrowType, points: LonLatPoint[] ) => void;
+	/** 单击有效地图点后立即完成一幅图片点标绘。未传入时隐藏图片点按钮。 */
+	onImagePoint?: ( point: LonLatPoint ) => void;
 }
 
 /** {@link installDrawArrowTool} 返回的句柄,便于宿主在需要时拆除工具。 */
@@ -194,6 +196,7 @@ function installPanelStyle(): void {
 		}
 		#draw-tool-panel button.dt-primary:hover { background: #259159; }
 		#draw-tool-panel #dt-toggle { width: 100%; margin-bottom: 8px; }
+		#draw-tool-panel #dt-image-toggle { width: 100%; margin-bottom: 8px; }
 		#draw-tool-panel textarea {
 			width: 100%;
 			min-height: 88px;
@@ -232,7 +235,7 @@ function installPanelStyle(): void {
 export function installDrawArrowTool(
 	options: DrawArrowToolOptions,
 ): DrawArrowToolHandle {
-	const { renderer, camera, tilesRenderer, onConfirm } = options;
+	const { renderer, camera, tilesRenderer, onConfirm, onImagePoint } = options;
 
 	installPanelStyle();
 
@@ -252,6 +255,7 @@ export function installDrawArrowTool(
 			<select id="dt-type">${ optionsHtml }</select>
 		</label>
 		<button id="dt-toggle">开始拾取</button>
+		<button id="dt-image-toggle">单击标绘消防栓图片</button>
 		<div class="dt-hint" id="dt-hint"></div>
 		<textarea id="dt-coords" readonly placeholder="开启拾取后,左键单击地图采集 [lon, lat]"></textarea>
 		<div class="dt-actions">
@@ -265,6 +269,7 @@ export function installDrawArrowTool(
 
 	const typeSelect = panel.querySelector( '#dt-type' ) as HTMLSelectElement;
 	const toggleButton = panel.querySelector( '#dt-toggle' ) as HTMLButtonElement;
+	const imageToggleButton = panel.querySelector( '#dt-image-toggle' ) as HTMLButtonElement;
 	const hintEl = panel.querySelector( '#dt-hint' ) as HTMLElement;
 	const coordsArea = panel.querySelector( '#dt-coords' ) as HTMLTextAreaElement;
 	const undoButton = panel.querySelector( '#dt-undo' ) as HTMLButtonElement;
@@ -275,6 +280,8 @@ export function installDrawArrowTool(
 	// ── 状态 ──
 	const points: LonLatPoint[] = [];
 	let picking = false;
+	let imagePicking = false;
+	imageToggleButton.hidden = onImagePoint === undefined;
 
 	const raycaster = new Raycaster();
 	const scratch = {
@@ -320,22 +327,37 @@ export function installDrawArrowTool(
 
 	function setPicking( on: boolean ): void {
 		picking = on;
+		if ( on ) imagePicking = false;
 		toggleButton.textContent = on ? '停止拾取' : '开始拾取';
 		toggleButton.classList.toggle( 'dt-active', on );
-		renderer.domElement.style.cursor = on ? 'crosshair' : '';
+		imageToggleButton.classList.toggle( 'dt-active', imagePicking );
+		imageToggleButton.textContent = '单击标绘消防栓图片';
+		renderer.domElement.style.cursor = on || imagePicking ? 'crosshair' : '';
 		setStatus( on ? '拾取中:左键单击地图采点' : '' );
+	}
+
+	/** 图片点模式与箭头多点模式互斥；成功拾取后由事件处理器立即关闭。 */
+	function setImagePicking( on: boolean ): void {
+		imagePicking = on;
+		if ( on ) picking = false;
+		toggleButton.textContent = '开始拾取';
+		toggleButton.classList.toggle( 'dt-active', picking );
+		imageToggleButton.classList.toggle( 'dt-active', on );
+		imageToggleButton.textContent = on ? '取消消防栓图片拾取' : '单击标绘消防栓图片';
+		renderer.domElement.style.cursor = on || picking ? 'crosshair' : '';
+		setStatus( on ? '图片点拾取中:单击地图后立即完成' : '' );
 	}
 
 	// ── 事件处理 ──
 	function onPointerDown( event: PointerEvent ): void {
-		if ( ! picking ) return;
+		if ( ! picking && ! imagePicking ) return;
 		downX = event.clientX;
 		downY = event.clientY;
 		downButton = event.button;
 	}
 
 	function onPointerUp( event: PointerEvent ): void {
-		if ( ! picking || downButton !== 0 || event.button !== 0 ) return;
+		if ( ( ! picking && ! imagePicking ) || downButton !== 0 || event.button !== 0 ) return;
 		const moved = Math.hypot( event.clientX - downX, event.clientY - downY );
 		downButton = -1;
 		if ( moved > CLICK_MOVE_THRESHOLD_PX ) {
@@ -349,6 +371,15 @@ export function installDrawArrowTool(
 			setStatus( '未命中地球表面(指向天空),已忽略' );
 			return;
 		}
+		if ( imagePicking && onImagePoint ) {
+			onImagePoint( [ lonLat[ 0 ], lonLat[ 1 ] ] );
+			setImagePicking( false );
+			setStatus(
+				`已标绘消防栓图片:${ lonLat[ 0 ].toFixed( 6 ) }, ${ lonLat[ 1 ].toFixed( 6 ) }`,
+			);
+			return;
+		}
+
 		points.push( lonLat );
 		refreshCoords();
 		setStatus( `已采集点 ${ points.length }` );
@@ -359,6 +390,7 @@ export function installDrawArrowTool(
 	canvas.addEventListener( 'pointerup', onPointerUp );
 
 	toggleButton.addEventListener( 'click', () => setPicking( ! picking ) );
+	imageToggleButton.addEventListener( 'click', () => setImagePicking( ! imagePicking ) );
 
 	typeSelect.addEventListener( 'change', refreshHint );
 

@@ -7,16 +7,10 @@
 // 被消费：text-classification（作为 color command 的 uniform）。
 // ============================================================
 
-import { Vector3, Vector4 } from 'three';
-
-import { encodeVec3RTE } from '../math/rte-encoding';
 import type { PlanarExtents } from '../types';
+import { computeTexturedDecalPlanarExtents } from '../textured-decal';
 
 import type { TextFootprint } from './text-placement';
-
-// 模块级 scratch：SW 角点 RTE 编码用，避免堆分配。
-const _swHigh = new Vector3();
-const _swLow = new Vector3();
 
 /**
  * 用足迹 4 角点算旋转对齐的 PlanarExtents。
@@ -29,40 +23,13 @@ const _swLow = new Vector3();
  * 与 circle/rectangle 全填充语义一致。innerMetersRect 设为足迹宽高，
  * 下游 color 材质用其 zw 通道做归一化（见 C4）。
  *
+ * 通用计算已抽到 textured-decal，文字保留本兼容门面与完整语义说明，避免
+ * 文字和图片点分别维护两套精度敏感的 RTE/UV 逻辑。
+ *
  * @param footprint text-placement.computeTextFootprint 的产物。
  * @returns         PlanarExtents（southWestHigh/Low/eastward/northward 均新建
  *                  Vector3，下游 uniform 长期持有）。
  */
 export function computeTextPlanarExtents( footprint: TextFootprint ): PlanarExtents {
-	// eastward = SE − SW（沿旋转后的文字右方向）
-	const eastward = new Vector3(
-		footprint.seEcef.x - footprint.swEcef.x,
-		footprint.seEcef.y - footprint.swEcef.y,
-		footprint.seEcef.z - footprint.swEcef.z,
-	);
-	// northward = NW − SW（沿旋转后的文字上方向）
-	const northward = new Vector3(
-		footprint.nwEcef.x - footprint.swEcef.x,
-		footprint.nwEcef.y - footprint.swEcef.y,
-		footprint.nwEcef.z - footprint.swEcef.z,
-	);
-
-	// SW 角点 RTE 编码（high/low Float32）
-	encodeVec3RTE( footprint.swEcef, _swHigh, _swLow );
-
-	return {
-		southWestHigh: new Vector3( _swHigh.x, _swHigh.y, _swHigh.z ),
-		southWestLow: new Vector3( _swLow.x, _swLow.y, _swLow.z ),
-		eastward,
-		northward,
-		// 整张纹理铺满足迹
-		uvMinAndExtents: new Vector4( 0.0, 0.0, 1.0, 1.0 ),
-		uMaxVmax: new Vector4( 0.0, 1.0, 1.0, 0.0 ),
-		// 文字 color 材质用 zw 做 planarMeters → uv 归一化（见 C4）
-		innerMetersRect: new Vector4(
-			0.0, 0.0,
-			footprint.footprintWidthMeters,
-			footprint.footprintHeightMeters,
-		),
-	};
+	return computeTexturedDecalPlanarExtents( footprint );
 }

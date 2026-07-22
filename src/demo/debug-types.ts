@@ -20,6 +20,8 @@ import type {
 	PlotTextVerticalAlign,
 } from '../lib/ground';
 
+type CesiumGroundBasicPointShape = Exclude<CesiumGroundPointShape, 'image'>;
+
 export interface GroundDebugSettings {
 	// 矩形标绘
 	points: LonLatPoint[];
@@ -85,7 +87,7 @@ export interface GroundDebugSettings {
 	pointCirclePlotOrder: number;
 	pointCircleCenterLon: number;
 	pointCircleCenterLat: number;
-	pointCircleShape: CesiumGroundPointShape;
+	pointCircleShape: CesiumGroundBasicPointShape;
 	pointCircleSize: number;
 	pointCircleStrokeColor: string;
 	pointCircleStrokeOpacity: number;
@@ -96,7 +98,7 @@ export interface GroundDebugSettings {
 	pointSquarePlotOrder: number;
 	pointSquareCenterLon: number;
 	pointSquareCenterLat: number;
-	pointSquareShape: CesiumGroundPointShape;
+	pointSquareShape: CesiumGroundBasicPointShape;
 	pointSquareSize: number;
 	pointSquareStrokeColor: string;
 	pointSquareStrokeOpacity: number;
@@ -138,7 +140,7 @@ export interface GroundDebugSettings {
 	largePointCirclePlotOrder: number;
 	largePointCircleCenterLon: number;
 	largePointCircleCenterLat: number;
-	largePointCircleShape: CesiumGroundPointShape;
+	largePointCircleShape: CesiumGroundBasicPointShape;
 	largePointCircleSize: number;
 	largePointCircleStrokeColor: string;
 	largePointCircleStrokeOpacity: number;
@@ -149,7 +151,7 @@ export interface GroundDebugSettings {
 	largePointSquarePlotOrder: number;
 	largePointSquareCenterLon: number;
 	largePointSquareCenterLat: number;
-	largePointSquareShape: CesiumGroundPointShape;
+	largePointSquareShape: CesiumGroundBasicPointShape;
 	largePointSquareSize: number;
 	largePointSquareStrokeColor: string;
 	largePointSquareStrokeOpacity: number;

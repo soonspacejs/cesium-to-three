@@ -200,19 +200,18 @@ export interface CesiumGroundCirclePrimitiveOptions extends CesiumGroundCircleOp
 }
 
 /**
- * 点标绘的形状类型。圆形走圆形渲染管线（CesiumGroundCirclePrimitive），
- * 正方形走矩形渲染管线（CesiumGroundRectanglePrimitive）。
+ * 点标绘形状。圆形由 CesiumGroundCirclePrimitive 渲染，正方形由
+ * CesiumGroundRectanglePrimitive 渲染，图片由 CesiumGroundImagePrimitive
+ * 使用透明纹理贴花管线渲染。
  */
-export type CesiumGroundPointShape = 'circle' | 'square';
+export type CesiumGroundPointShape = 'circle' | 'square' | 'image';
 
 /**
- * 贴地点标绘的 plot-spec 契约：单个 lon/lat 锚点 + 形状 + 米尺寸 +
- * 描边/填充/可见性。size 在 circle 时解释为直径，square 时解释为边长。
+ * 贴地点标绘契约：单个 lon/lat 中心锚点 + 形状 + 米制尺寸 + 样式与可见性。
+ * circle/square 使用 size；image 使用 imageWidthMeters/imageHeightMeters。
  */
-export interface CesiumGroundPointOptions {
+interface CesiumGroundPointCommonOptions {
 	position: LonLatPoint;
-	shape: CesiumGroundPointShape;
-	size: number;
 	strokeColor: string;
 	strokeWidth: number;
 	strokeOpacity: number;
@@ -221,7 +220,41 @@ export interface CesiumGroundPointOptions {
 	visible: boolean;
 }
 
-export interface CesiumGroundPointPrimitiveOptions extends CesiumGroundPointOptions {
+export type CesiumGroundPointOptions = CesiumGroundPointCommonOptions & (
+	| {
+		shape: 'circle' | 'square';
+		size: number;
+	}
+	| {
+		shape: 'image';
+		imageUrl: string;
+		imageWidthMeters: number;
+		imageHeightMeters: number;
+		/** 俯视顺时针角度；0 表示图片顶部朝北。 */
+		rotation?: number;
+	}
+);
+
+/**
+ * 图片点底层图元选项。position 固定为图片中心，显式米制宽高决定 ENU 足迹；
+ * stroke/fillColor 字段为公共点契约兼容字段，图片着色只使用原始纹理 alpha 与
+ * fillOpacity，不绘制背景或描边。
+ */
+export type CesiumGroundImagePrimitiveOptions = CesiumGroundPointCommonOptions & {
+	imageUrl: string;
+	imageWidthMeters: number;
+	imageHeightMeters: number;
+	/** 俯视顺时针角度；0 表示图片顶部朝北。 */
+	rotation?: number;
+	granularityRadians?: number;
+	minimumHeight?: number;
+	maximumHeight?: number;
+	renderOrder?: number;
+	classificationType?: ClassificationType;
+	fragmentCull?: boolean;
+};
+
+export type CesiumGroundPointPrimitiveOptions = CesiumGroundPointOptions & {
 	granularityRadians?: number;
 	minimumHeight?: number;
 	maximumHeight?: number;
@@ -233,7 +266,7 @@ export interface CesiumGroundPointPrimitiveOptions extends CesiumGroundPointOpti
 	 */
 	classificationType?: ClassificationType;
 	fragmentCull?: boolean;
-}
+};
 
 export interface CesiumClassificationCommandVisibility {
 	frontStencil?: boolean;
@@ -477,11 +510,13 @@ export interface SharedUniforms {
 	czm_log2FarDepthFromNearPlusOne: { value: number };
 	czm_oneOverLog2FarDepthFromNearPlusOne: { value: number };
 	/**
-	 * 贴地文本内容纹理。CesiumGroundTextPrimitive 经 classification 的
-	 * extraUniforms 注入真实纹理；其它图元保持 `{ value: null }`。GLSL 端用
-	 * `#ifdef CESIUM_THREE_TEXT` 守住声明，不污染其它材质编译。
+	 * 历史贴地文本内容纹理槽。保留用于兼容；新代码使用通用 u_decalTexture。
 	 */
 	u_textTexture: { value: Texture | null };
+	/** 通用透明纹理贴花（贴地文字和图片点共享）。 */
+	u_decalTexture: { value: Texture | null };
+	/** 贴花整体透明度，0..1；与纹理自身 alpha 相乘。 */
+	u_decalOpacity: { value: number };
 	// ── 贴地线扩展（全部可选；面图元的 uniform map 不设这些键，
 	//    classification.ts 守卫式写入跳过它们）。GLSL 端用
 	//    `#ifdef CESIUM_THREE_POLYLINE` 守住声明，对 stencil/color 编译无影响。──
