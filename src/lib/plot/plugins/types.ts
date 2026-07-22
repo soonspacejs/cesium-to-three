@@ -121,8 +121,8 @@ export type PlotPointOptions = GisPlotBaseOptions & (
 		pointStyle: 'image';
 		/** 浏览器可加载的图片 URL，例如 `/xiaohuoshuan.png`。 */
 		imageUrl: string;
-		imageWidthMeters: number;
-		imageHeightMeters: number;
+		imageWidth: number;
+		imageHeight: number;
 		/** 俯视顺时针角度；0 表示图片顶部朝北。 */
 		rotation?: number;
 	}

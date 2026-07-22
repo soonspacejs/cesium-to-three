@@ -19,8 +19,8 @@ type PlotPointOptions = GisPlotBaseOptions & (
   | {
       pointStyle: 'image';
       imageUrl: string;
-      imageWidthMeters: number;
-      imageHeightMeters: number;
+      imageWidth: number;
+      imageHeight: number;
       rotation?: number;
     }
 );
@@ -43,8 +43,8 @@ decals.addPlot({
   pointStyle: 'image',
   points: [[lon, lat]],
   imageUrl: '/xiaohuoshuan.png',
-  imageWidthMeters: 10,
-  imageHeightMeters: 11.416,
+  imageWidth: 10,
+  imageHeight: 11.416,
   rotation: 0,
   fillOpacity: 100,
   visible: true,

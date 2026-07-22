@@ -130,8 +130,8 @@ interface PointState extends BaseState {
 /** 图片点使用显式米制宽高，避免等待图片解码后再改变地面足迹。 */
 interface ImagePointState extends BaseState {
 	imageUrl: string;
-	imageWidthMeters: number;
-	imageHeightMeters: number;
+	imageWidth: number;
+	imageHeight: number;
 	rotation: number;
 	centerLon: number;
 	centerLat: number;
@@ -251,8 +251,8 @@ function imagePointStateToOptions(
 		points: [ [ state.centerLon, state.centerLat ] ],
 		pointStyle: 'image',
 		imageUrl: state.imageUrl,
-		imageWidthMeters: state.imageWidthMeters,
-		imageHeightMeters: state.imageHeightMeters,
+		imageWidth: state.imageWidth,
+		imageHeight: state.imageHeight,
 		rotation: state.rotation,
 		// 图片点不画矩形背景和描边；保留这些字段仅满足统一标绘基础契约。
 		strokeColor: state.strokeColor,
@@ -597,8 +597,8 @@ export function runPlotDemo(): void {
 	const smallImagePointState: ImagePointState = {
 		visible: true,
 		imageUrl: '/xiaohuoshuan.png',
-		imageWidthMeters: 10,
-		imageHeightMeters: 10 * 137 / 120,
+		imageWidth: 10,
+		imageHeight: 10 * 137 / 120,
 		rotation: 0,
 		centerLon: smallImagePointAnchor[ 0 ],
 		centerLat: smallImagePointAnchor[ 1 ],
@@ -1484,9 +1484,9 @@ export function runPlotDemo(): void {
 		const folder = parent.addFolder( 'point/image 消防栓' );
 		folder.add( state, 'imageUrl' ).name( 'image URL' )
 			.onFinishChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
-		folder.add( state, 'imageWidthMeters', 1, 100, 0.1 ).name( 'width (m)' )
+		folder.add( state, 'imageWidth', 1, 100, 0.1 ).name( 'width (m)' )
 			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
-		folder.add( state, 'imageHeightMeters', 1, 100, 0.1 ).name( 'height (m)' )
+		folder.add( state, 'imageHeight', 1, 100, 0.1 ).name( 'height (m)' )
 			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
 		folder.add( state, 'rotation', - 180, 180, 1 ).name( 'rotation clockwise (°)' )
 			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );

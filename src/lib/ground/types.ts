@@ -208,7 +208,7 @@ export type CesiumGroundPointShape = 'circle' | 'square' | 'image';
 
 /**
  * 贴地点标绘契约：单个 lon/lat 中心锚点 + 形状 + 米制尺寸 + 样式与可见性。
- * circle/square 使用 size；image 使用 imageWidthMeters/imageHeightMeters。
+ * circle/square 使用 size；image 使用 imageWidth/imageHeight。
  */
 interface CesiumGroundPointCommonOptions {
 	position: LonLatPoint;
@@ -228,8 +228,8 @@ export type CesiumGroundPointOptions = CesiumGroundPointCommonOptions & (
 	| {
 		shape: 'image';
 		imageUrl: string;
-		imageWidthMeters: number;
-		imageHeightMeters: number;
+		imageWidth: number;
+		imageHeight: number;
 		/** 俯视顺时针角度；0 表示图片顶部朝北。 */
 		rotation?: number;
 	}
@@ -242,8 +242,8 @@ export type CesiumGroundPointOptions = CesiumGroundPointCommonOptions & (
  */
 export type CesiumGroundImagePrimitiveOptions = CesiumGroundPointCommonOptions & {
 	imageUrl: string;
-	imageWidthMeters: number;
-	imageHeightMeters: number;
+	imageWidth: number;
+	imageHeight: number;
 	/** 俯视顺时针角度；0 表示图片顶部朝北。 */
 	rotation?: number;
 	granularityRadians?: number;

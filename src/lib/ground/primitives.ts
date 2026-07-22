@@ -724,8 +724,8 @@ export class CesiumGroundPointPrimitive {
 	public readonly position: LonLatPoint;
 	public readonly shape: CesiumGroundPointShape;
 	public readonly size: number | null;
-	public readonly imageWidthMeters: number | null;
-	public readonly imageHeightMeters: number | null;
+	public readonly imageWidth: number | null;
+	public readonly imageHeight: number | null;
 	public readonly imageUrl: string | null;
 	public readonly rotation: number;
 
@@ -753,8 +753,8 @@ export class CesiumGroundPointPrimitive {
 		this.size = options.shape === 'image'
 			? null
 			: ( Number.isFinite( options.size ) ? Math.max( options.size, 1.0 ) : 1.0 );
-		this.imageWidthMeters = options.shape === 'image' ? options.imageWidthMeters : null;
-		this.imageHeightMeters = options.shape === 'image' ? options.imageHeightMeters : null;
+		this.imageWidth = options.shape === 'image' ? options.imageWidth : null;
+		this.imageHeight = options.shape === 'image' ? options.imageHeight : null;
 		this.imageUrl = options.shape === 'image' ? options.imageUrl : null;
 		this.rotation = options.shape === 'image' ? options.rotation ?? 0.0 : 0.0;
 
@@ -815,8 +815,8 @@ export class CesiumGroundPointPrimitive {
 			this.delegate = new CesiumGroundImagePrimitive( {
 				position: this.position,
 				imageUrl: imageOptions.imageUrl,
-				imageWidthMeters: imageOptions.imageWidthMeters,
-				imageHeightMeters: imageOptions.imageHeightMeters,
+				imageWidth: imageOptions.imageWidth,
+				imageHeight: imageOptions.imageHeight,
 				rotation: imageOptions.rotation,
 				strokeColor: options.strokeColor,
 				strokeWidth: options.strokeWidth,

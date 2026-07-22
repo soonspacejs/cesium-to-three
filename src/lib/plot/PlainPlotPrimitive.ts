@@ -1114,8 +1114,8 @@ function buildImagePointGroup(
 	frameUniforms: PlainRteFrameUniforms,
 ): { group: Group; release: () => void } | null {
 	if ( options.points.length === 0 ) return null;
-	if ( ! Number.isFinite( options.imageWidthMeters ) || options.imageWidthMeters <= 0.0 ||
-		! Number.isFinite( options.imageHeightMeters ) || options.imageHeightMeters <= 0.0 ) {
+	if ( ! Number.isFinite( options.imageWidth ) || options.imageWidth <= 0.0 ||
+		! Number.isFinite( options.imageHeight ) || options.imageHeight <= 0.0 ) {
 		return null;
 	}
 
@@ -1124,8 +1124,8 @@ function buildImagePointGroup(
 		options.points[ 0 ][ 1 ],
 		resolveHeightMeters( style ),
 	);
-	const halfWidth = options.imageWidthMeters * 0.5;
-	const halfHeight = options.imageHeightMeters * 0.5;
+	const halfWidth = options.imageWidth * 0.5;
+	const halfHeight = options.imageHeight * 0.5;
 	const rotation = ( Number.isFinite( options.rotation ) ? options.rotation ?? 0.0 : 0.0 ) * DEG_TO_RAD;
 	const cos = Math.cos( rotation );
 	const sin = Math.sin( rotation );

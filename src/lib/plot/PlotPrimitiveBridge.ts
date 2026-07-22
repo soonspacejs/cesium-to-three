@@ -124,7 +124,7 @@ function geometrySignature( plot: GisPlotBase ): string {
 
 		case 'point':
 			return `point|${ pts }|${ o.pointStyle }|${ o.size }|${ o.imageUrl }`
-				+ `|${ o.imageWidthMeters }|${ o.imageHeightMeters }|${ o.rotation }`;
+				+ `|${ o.imageWidth }|${ o.imageHeight }|${ o.rotation }`;
 
 		case 'arrow':
 			// 箭头体型(sizeScale 对全类型生效 + 曲线专属体型字段)影响几何 →
@@ -495,8 +495,8 @@ export class PlotPrimitiveBridge {
 						position: pts[ 0 ],
 						shape: 'image',
 						imageUrl: o.imageUrl,
-						imageWidthMeters: o.imageWidthMeters,
-						imageHeightMeters: o.imageHeightMeters,
+						imageWidth: o.imageWidth,
+						imageHeight: o.imageHeight,
 						rotation: o.rotation,
 						strokeColor: o.strokeColor,
 						strokeWidth: o.strokeWidth ?? 0,
