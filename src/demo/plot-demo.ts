@@ -131,6 +131,8 @@ interface PointState extends BaseState {
 
 /** 图片点使用显式米制宽高，避免等待图片解码后再改变地面足迹。 */
 interface ImagePointState extends BaseState {
+	/** Optional custom image URL; when non-empty it overrides ontologyId. */
+	imageUrl: string;
 	ontologyId: EmergencyResourceOntologyId;
 	imageWidth: number;
 	imageHeight: number;
@@ -252,6 +254,7 @@ function imagePointStateToOptions(
 		type: 'point',
 		points: [ [ state.centerLon, state.centerLat ] ],
 		pointStyle: 'image',
+		imageUrl: state.imageUrl,
 		ontologyId: state.ontologyId,
 		imageWidth: state.imageWidth,
 		imageHeight: state.imageHeight,
@@ -598,6 +601,7 @@ export function runPlotDemo(): void {
 	const smallImagePointAnchor = lonLatFromMeters( PLOT_CENTER_LON, PLOT_CENTER_LAT, 0, - 65 );
 	const smallImagePointState: ImagePointState = {
 		visible: true,
+		imageUrl: '',
 		ontologyId: 'OutdoorFireHydrant',
 		imageWidth: 10,
 		imageHeight: 10,
@@ -1484,6 +1488,8 @@ export function runPlotDemo(): void {
 		handle: PlotHandle,
 	): void {
 		const folder = parent.addFolder( 'point/image 消防栓' );
+		folder.add( state, 'imageUrl' ).name( 'custom image URL' )
+			.onFinishChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
 		folder.add( state, 'ontologyId', EMERGENCY_RESOURCE_ONTOLOGY_IDS ).name( 'ontology id' )
 			.onFinishChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
 		folder.add( state, 'imageWidth', 1, 100, 0.1 ).name( 'width (m)' )

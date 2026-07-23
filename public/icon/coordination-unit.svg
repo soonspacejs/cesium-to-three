@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
   <title id="title">联动单位</title>
-  <desc id="desc">GIS 点位图标；类别：联动；样式：badge</desc>
+  <desc id="desc">GIS 点位图标；类别：联动；样式：classified</desc>
   <defs>
     <symbol id="icon-linkage" viewBox="0 0 100 100">
       <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
@@ -11,9 +11,7 @@
       <path d="M44 50l4 4 9-10" fill="none" stroke="#F8FAFC" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
     </symbol>
   </defs>
-  <path d="M64 4C29 4 11 26 11 56c0 34 26 51 53 68 27-17 53-34 53-68C117 26 99 4 64 4Z" fill="#B67CFF" fill-opacity="0.16" stroke="#B67CFF" stroke-width="3" stroke-linejoin="round"/>
-  <circle cx="64" cy="56" r="40" fill="#0A141D" stroke="#B67CFF" stroke-opacity="0.55" stroke-width="2"/>
   <g color="#B67CFF">
-    <use href="#icon-linkage" x="32" y="24" width="64" height="64"/>
+    <use href="#icon-linkage" x="16" y="16" width="96" height="96"/>
   </g>
 </svg>

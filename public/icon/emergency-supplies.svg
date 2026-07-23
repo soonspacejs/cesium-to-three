@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
   <title id="title">保障物资点</title>
-  <desc id="desc">GIS 点位图标；类别：物资；样式：badge</desc>
+  <desc id="desc">GIS 点位图标；类别：物资；样式：classified</desc>
   <defs>
     <symbol id="icon-supplies" viewBox="0 0 100 100">
       <g stroke="currentColor" stroke-width="6" stroke-linejoin="round" fill="none">
@@ -10,9 +10,7 @@
       <path d="M41 58h18v8h-18zM46 53h8v18h-8z" fill="#F8FAFC"/>
     </symbol>
   </defs>
-  <path d="M64 4C29 4 11 26 11 56c0 34 26 51 53 68 27-17 53-34 53-68C117 26 99 4 64 4Z" fill="#FFAD33" fill-opacity="0.16" stroke="#FFAD33" stroke-width="3" stroke-linejoin="round"/>
-  <circle cx="64" cy="56" r="40" fill="#0A141D" stroke="#FFAD33" stroke-opacity="0.55" stroke-width="2"/>
   <g color="#FFAD33">
-    <use href="#icon-supplies" x="32" y="24" width="64" height="64"/>
+    <use href="#icon-supplies" x="16" y="16" width="96" height="96"/>
   </g>
 </svg>
