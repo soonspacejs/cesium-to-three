@@ -43,6 +43,7 @@ import { encodeScalarRTE } from '../ground/math/rte-encoding';
 import { acquireImageTexture } from '../ground/image';
 
 import type { GisPlotBase } from './plugins/base';
+import { resolvePlotPointImageUrl } from './emergency-resource-icons';
 import type {
 	PlotCircleOptions,
 	PlotLineOptions,
@@ -1118,6 +1119,8 @@ function buildImagePointGroup(
 		! Number.isFinite( options.imageHeight ) || options.imageHeight <= 0.0 ) {
 		return null;
 	}
+	const imageUrl = resolvePlotPointImageUrl( options );
+	if ( ! imageUrl ) return null;
 
 	const frame = createFrame(
 		options.points[ 0 ][ 0 ],
@@ -1125,7 +1128,6 @@ function buildImagePointGroup(
 		resolveHeightMeters( style ),
 	);
 	const halfWidth = options.imageWidth * 0.5;
-	const halfHeight = options.imageHeight * 0.5;
 	const rotation = ( Number.isFinite( options.rotation ) ? options.rotation ?? 0.0 : 0.0 ) * DEG_TO_RAD;
 	const cos = Math.cos( rotation );
 	const sin = Math.sin( rotation );
@@ -1136,10 +1138,10 @@ function buildImagePointGroup(
 	);
 	const geometry = createGeometry(
 		[
-			offset( - halfWidth, - halfHeight ),
-			offset( halfWidth, - halfHeight ),
-			offset( halfWidth, halfHeight ),
-			offset( - halfWidth, halfHeight ),
+			offset( - halfWidth, 0.0 ),
+			offset( halfWidth, 0.0 ),
+			offset( halfWidth, options.imageHeight ),
+			offset( - halfWidth, options.imageHeight ),
 		],
 		frame,
 		[ 0, 1, 2, 0, 2, 3 ],
@@ -1149,7 +1151,7 @@ function buildImagePointGroup(
 		new BufferAttribute( new Float32Array( [ 0, 0, 1, 0, 1, 1, 0, 1 ] ), 2 ),
 	);
 
-	const textureHandle = acquireImageTexture( options.imageUrl );
+	const textureHandle = acquireImageTexture( imageUrl );
 	const material = new RawShaderMaterial( {
 		glslVersion: GLSL3,
 		uniforms: {

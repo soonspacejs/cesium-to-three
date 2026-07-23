@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">消防水池</title>
+  <desc id="desc">GIS 点位图标；类别：水源；样式：badge</desc>
+  <defs>
+    <symbol id="icon-fire-pool" viewBox="0 0 100 100">
+      <g stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <path d="M16 39h68v43H16zM25 55c6-5 12-5 18 0s12 5 18 0 12-5 18 0M25 68c6-5 12-5 18 0s12 5 18 0 12-5 18 0"/>
+        <path d="M67 21v28M77 21v28M67 29h10M67 39h10"/>
+      </g>
+      <path d="M28 25h25l-6 7H28z" fill="currentColor"/>
+    </symbol>
+  </defs>
+  <path d="M64 4C29 4 11 26 11 56c0 34 26 51 53 68 27-17 53-34 53-68C117 26 99 4 64 4Z" fill="#38BDF8" fill-opacity="0.16" stroke="#38BDF8" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="64" cy="56" r="40" fill="#0A141D" stroke="#38BDF8" stroke-opacity="0.55" stroke-width="2"/>
+  <g color="#38BDF8">
+    <use href="#icon-fire-pool" x="32" y="24" width="64" height="64"/>
+  </g>
+</svg>

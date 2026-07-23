@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">公安资源点</title>
+  <desc id="desc">GIS 点位图标；类别：公安；样式：badge</desc>
+  <defs>
+    <symbol id="icon-police" viewBox="0 0 100 100">
+      <path d="M50 14l32 11v23c0 21-13 34-32 41-19-7-32-20-32-41V25z" fill="none" stroke="currentColor" stroke-width="7" stroke-linejoin="round"/>
+      <path d="M50 30l5.5 11.2 12.4 1.8-9 8.8 2.1 12.4L50 58.4l-11 5.8 2.1-12.4-9-8.8 12.4-1.8z" fill="#F8FAFC"/>
+      <path d="M35 73h30" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+    </symbol>
+  </defs>
+  <path d="M64 4C29 4 11 26 11 56c0 34 26 51 53 68 27-17 53-34 53-68C117 26 99 4 64 4Z" fill="#5B7CFF" fill-opacity="0.16" stroke="#5B7CFF" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="64" cy="56" r="40" fill="#0A141D" stroke="#5B7CFF" stroke-opacity="0.55" stroke-width="2"/>
+  <g color="#5B7CFF">
+    <use href="#icon-police" x="32" y="24" width="64" height="64"/>
+  </g>
+</svg>

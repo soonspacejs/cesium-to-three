@@ -17,6 +17,7 @@
 // ============================================================
 
 import type { ClassificationType } from '../../ground';
+import type { EmergencyResourceOntologyId } from '../emergency-resource-icons';
 
 /** 经纬度顶点：[经度°, 纬度°]，单位度。 */
 export type LonLatPoint = [ number, number ];
@@ -106,9 +107,21 @@ export type GisPlotArrowSnapshot = GisPlotSnapshot<PlotArrowOptions> & {
 export type PlotPointStyle = 'circle' | 'square' | 'image';
 
 /**
- * 点标绘选项。points[0] 始终是中心锚点：circle/square 使用单一 size；
- * image 使用显式米制宽高和可选俯视旋转角。
+ * 点标绘选项。circle/square 以 points[0] 为中心并使用单一 size；image 以
+ * points[0] 为底边中心，使用显式米制宽高和可选俯视旋转角。
  */
+type PlotPointImageSource =
+	| {
+		/** Explicit URL. It takes precedence when ontologyId is also present. */
+		imageUrl: string;
+		ontologyId?: EmergencyResourceOntologyId | ( string & {} );
+	}
+	| {
+		/** Emergency-resource ontology identifier resolved through public/icon. */
+		ontologyId: EmergencyResourceOntologyId | ( string & {} );
+		imageUrl?: string;
+	};
+
 export type PlotPointOptions = GisPlotBaseOptions & (
 	| {
 		/** 基础点形状。 */
@@ -116,16 +129,14 @@ export type PlotPointOptions = GisPlotBaseOptions & (
 		/** 尺寸（米）：circle 为直径、square 为边长。 */
 		size: number;
 	}
-	| {
+	| ( {
 		/** 透明图片贴地点。 */
 		pointStyle: 'image';
-		/** 浏览器可加载的图片 URL，例如 `/xiaohuoshuan.png`。 */
-		imageUrl: string;
 		imageWidth: number;
 		imageHeight: number;
 		/** 俯视顺时针角度；0 表示图片顶部朝北。 */
 		rotation?: number;
-	}
+	} & PlotPointImageSource )
 );
 
 // ── 折线 ──

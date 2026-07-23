@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">室外消火栓（地上式）</title>
+  <desc id="desc">GIS 点位图标；类别：消防；样式：badge</desc>
+  <defs>
+    <symbol id="icon-hydrant-ground" viewBox="0 0 100 100">
+      <g stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <path d="M12 84h76M38 84V45h24v39M38 57H24v16h14M62 57h14v16H62"/>
+        <path d="M33 45h34l-5-16H38zM44 29v-8h12v8"/>
+        <circle cx="24" cy="65" r="5" fill="currentColor"/><circle cx="76" cy="65" r="5" fill="currentColor"/>
+      </g>
+      <path d="M50 55l7 12H43z" fill="#F8FAFC"/>
+    </symbol>
+  </defs>
+  <path d="M64 4C29 4 11 26 11 56c0 34 26 51 53 68 27-17 53-34 53-68C117 26 99 4 64 4Z" fill="#FF4D3D" fill-opacity="0.16" stroke="#FF4D3D" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="64" cy="56" r="40" fill="#0A141D" stroke="#FF4D3D" stroke-opacity="0.55" stroke-width="2"/>
+  <g color="#FF4D3D">
+    <use href="#icon-hydrant-ground" x="32" y="24" width="64" height="64"/>
+  </g>
+</svg>

@@ -19,7 +19,7 @@ const DEG_TO_RAD = Math.PI / 180.0;
 /**
  * 贴地图片点图元。
  *
- * 图元以点击经纬度为中心，用显式米制宽高和顺时针角生成 ENU 足迹，再复用
+ * 图元以点击经纬度为图片底边中心，用显式米制宽高和顺时针角生成 ENU 足迹，再复用
  * classification 的 shadow-volume 管线投射到地形、3D Tiles 或二者表面。
  * PNG 原始 alpha 与 fillOpacity 在着色器中相乘，不生成背景矩形或描边。
  */
@@ -58,6 +58,7 @@ export class CesiumGroundImagePrimitive {
 				widthMeters: this.imageWidth,
 				heightMeters: this.imageHeight,
 				rotationRadians: this.rotation * DEG_TO_RAD,
+				centerLocalNorthMeters: this.imageHeight * 0.5,
 			} );
 			const geometry = buildTexturedDecalShadowVolumeGeometry( {
 				swEcef: footprint.swEcef,

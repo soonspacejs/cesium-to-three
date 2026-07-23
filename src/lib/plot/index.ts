@@ -36,6 +36,14 @@ export * from './plugins/utils/ArrowUtils';
 export { PlotPrimitiveBridge } from './PlotPrimitiveBridge';
 export type { PlotPrimitiveBridgeOptions } from './PlotPrimitiveBridge';
 
+export {
+	EMERGENCY_RESOURCE_ICON_BY_ONTOLOGY_ID,
+	EMERGENCY_RESOURCE_ONTOLOGY_IDS,
+	resolveEmergencyResourceIcon,
+	resolvePlotPointImageUrl,
+} from './emergency-resource-icons';
+export type { EmergencyResourceOntologyId } from './emergency-resource-icons';
+
 // 标绘顺序工具（与 demo plot-utils 一致的入口）
 export {
 	plotOrderToRenderOrder,

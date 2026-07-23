@@ -207,8 +207,9 @@ export interface CesiumGroundCirclePrimitiveOptions extends CesiumGroundCircleOp
 export type CesiumGroundPointShape = 'circle' | 'square' | 'image';
 
 /**
- * 贴地点标绘契约：单个 lon/lat 中心锚点 + 形状 + 米制尺寸 + 样式与可见性。
- * circle/square 使用 size；image 使用 imageWidth/imageHeight。
+ * 贴地点标绘契约：单个 lon/lat 锚点 + 形状 + 米制尺寸 + 样式与可见性。
+ * circle/square 以锚点为中心并使用 size；image 以锚点为底边中心并使用
+ * imageWidth/imageHeight。
  */
 interface CesiumGroundPointCommonOptions {
 	position: LonLatPoint;
@@ -236,7 +237,7 @@ export type CesiumGroundPointOptions = CesiumGroundPointCommonOptions & (
 );
 
 /**
- * 图片点底层图元选项。position 固定为图片中心，显式米制宽高决定 ENU 足迹；
+ * 图片点底层图元选项。position 固定为图片底边中心，显式米制宽高决定 ENU 足迹；
  * stroke/fillColor 字段为公共点契约兼容字段，图片着色只使用原始纹理 alpha 与
  * fillOpacity，不绘制背景或描边。
  */

@@ -28,6 +28,7 @@ import {
 	type LonLatPoint,
 } from '../lib/ground';
 import {
+	EMERGENCY_RESOURCE_ONTOLOGY_IDS,
 	GroundDecalManager,
 	type PlotAddOptions,
 	type PlotArrowOptions,
@@ -46,6 +47,7 @@ import {
 	type PlotTextLayoutDirection,
 	type PlotTextOptions,
 	type PlotTextVerticalAlign,
+	type EmergencyResourceOntologyId,
 } from '../lib/plot';
 
 import { createInfoPanel, installPageStyle } from './dom';
@@ -129,7 +131,7 @@ interface PointState extends BaseState {
 
 /** 图片点使用显式米制宽高，避免等待图片解码后再改变地面足迹。 */
 interface ImagePointState extends BaseState {
-	imageUrl: string;
+	ontologyId: EmergencyResourceOntologyId;
 	imageWidth: number;
 	imageHeight: number;
 	rotation: number;
@@ -250,7 +252,7 @@ function imagePointStateToOptions(
 		type: 'point',
 		points: [ [ state.centerLon, state.centerLat ] ],
 		pointStyle: 'image',
-		imageUrl: state.imageUrl,
+		ontologyId: state.ontologyId,
 		imageWidth: state.imageWidth,
 		imageHeight: state.imageHeight,
 		rotation: state.rotation,
@@ -596,9 +598,9 @@ export function runPlotDemo(): void {
 	const smallImagePointAnchor = lonLatFromMeters( PLOT_CENTER_LON, PLOT_CENTER_LAT, 0, - 65 );
 	const smallImagePointState: ImagePointState = {
 		visible: true,
-		imageUrl: '/xiaohuoshuan.png',
+		ontologyId: 'OutdoorFireHydrant',
 		imageWidth: 10,
-		imageHeight: 10 * 137 / 120,
+		imageHeight: 10,
 		rotation: 0,
 		centerLon: smallImagePointAnchor[ 0 ],
 		centerLat: smallImagePointAnchor[ 1 ],
@@ -1482,7 +1484,7 @@ export function runPlotDemo(): void {
 		handle: PlotHandle,
 	): void {
 		const folder = parent.addFolder( 'point/image 消防栓' );
-		folder.add( state, 'imageUrl' ).name( 'image URL' )
+		folder.add( state, 'ontologyId', EMERGENCY_RESOURCE_ONTOLOGY_IDS ).name( 'ontology id' )
 			.onFinishChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
 		folder.add( state, 'imageWidth', 1, 100, 0.1 ).name( 'width (m)' )
 			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );

@@ -47,6 +47,7 @@ import type {
 
 import { plotOrderToRenderOrder } from './plot-order';
 import { createPlainPlotPrimitive, PlainPlotPrimitive } from './PlainPlotPrimitive';
+import { resolvePlotPointImageUrl } from './emergency-resource-icons';
 
 /**
  * 桥接器构造选项。
@@ -123,7 +124,7 @@ function geometrySignature( plot: GisPlotBase ): string {
 			return `sector|${ pts }|${ o.radius }|${ o.startAngle }|${ o.sectorAngle }`;
 
 		case 'point':
-			return `point|${ pts }|${ o.pointStyle }|${ o.size }|${ o.imageUrl }`
+			return `point|${ pts }|${ o.pointStyle }|${ o.size }|${ o.imageUrl }|${ o.ontologyId }`
 				+ `|${ o.imageWidth }|${ o.imageHeight }|${ o.rotation }`;
 
 		case 'arrow':
@@ -490,11 +491,18 @@ export class PlotPrimitiveBridge {
 				if ( pts.length === 0 ) return null;
 				const o = base as PlotPointOptions;
 				if ( o.pointStyle === 'image' ) {
+					const imageUrl = resolvePlotPointImageUrl( o );
+					if ( ! imageUrl ) {
+						console.warn(
+							`[cesium-to-three] Unknown point image ontology id: ${ o.ontologyId ?? '' }`,
+						);
+						return null;
+					}
 					return new CesiumGroundPointPrimitive( {
 						classificationType: base.classificationType,
 						position: pts[ 0 ],
 						shape: 'image',
-						imageUrl: o.imageUrl,
+						imageUrl,
 						imageWidth: o.imageWidth,
 						imageHeight: o.imageHeight,
 						rotation: o.rotation,
