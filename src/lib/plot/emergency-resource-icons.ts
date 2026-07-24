@@ -1,19 +1,28 @@
-/**
- * Emergency-resource ontology identifiers mapped to SVG assets served from
- * public/icon.
- */
+import coordinationUnitUrl from '../../assets/coordination-unit.svg';
+import emergencySuppliesUrl from '../../assets/emergency-supplies.svg';
+import fireStationUrl from '../../assets/fire-station.svg';
+import fireWaterPoolUrl from '../../assets/fire-water-pool.svg';
+import hospitalResourceUrl from '../../assets/hospital-resource.svg';
+import municipalHydrantUrl from '../../assets/municipal-hydrant.svg';
+import naturalWaterSourceUrl from '../../assets/natural-water-source.svg';
+import outdoorHydrantAboveGroundUrl from '../../assets/outdoor-hydrant-above-ground.svg';
+import outdoorHydrantUndergroundUrl from '../../assets/outdoor-hydrant-underground.svg';
+import outdoorHydrantUrl from '../../assets/outdoor-hydrant.svg';
+import policeResourceUrl from '../../assets/police-resource.svg';
+
+/** Emergency-resource ontology identifiers mapped to imported SVG assets. */
 export const EMERGENCY_RESOURCE_ICON_BY_ONTOLOGY_ID = {
-	OutdoorFireHydrant: '/icon/outdoor-hydrant.svg',
-	UndergroundHydrant: '/icon/outdoor-hydrant-underground.svg',
-	AboveGroundHydrant: '/icon/outdoor-hydrant-above-ground.svg',
-	MunicipalFireHydrants: '/icon/municipal-hydrant.svg',
-	FireWaterReservoir: '/icon/fire-water-pool.svg',
-	NaturalWater: '/icon/natural-water-source.svg',
-	HospitalResourcePoint: '/icon/hospital-resource.svg',
-	PublicSecurityResourcePoint: '/icon/police-resource.svg',
-	SupportMaterialPoint: '/icon/emergency-supplies.svg',
-	FireStation: '/icon/fire-station.svg',
-	LinkageUnit: '/icon/coordination-unit.svg',
+	OutdoorFireHydrant: outdoorHydrantUrl,
+	UndergroundHydrant: outdoorHydrantUndergroundUrl,
+	AboveGroundHydrant: outdoorHydrantAboveGroundUrl,
+	MunicipalFireHydrants: municipalHydrantUrl,
+	FireWaterReservoir: fireWaterPoolUrl,
+	NaturalWater: naturalWaterSourceUrl,
+	HospitalResourcePoint: hospitalResourceUrl,
+	PublicSecurityResourcePoint: policeResourceUrl,
+	SupportMaterialPoint: emergencySuppliesUrl,
+	FireStation: fireStationUrl,
+	LinkageUnit: coordinationUnitUrl,
 } as const;
 
 export type EmergencyResourceOntologyId =

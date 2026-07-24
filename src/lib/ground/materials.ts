@@ -39,7 +39,7 @@ import {
 	cesiumMetersPerPixel,
 } from './shaders/shadow-volume-glsl';
 
-import type { IUniform } from 'three';
+import type { Uniform } from 'three';
 import {
 	CLASSIFICATION_MASK,
 	MAX_POLYGON_STYLE_VERTICES,
@@ -51,14 +51,14 @@ import type { SharedUniforms } from './types';
 
 /**
  * SharedUniforms 含可选字段（贴地线扩展），Three.js RawShaderMaterial
- * 的 uniforms 字段类型为 `{ [k: string]: IUniform }`（不允许 undefined）。
+ * 的 uniforms 字段类型为 `{ [k: string]: Uniform }`（不允许 undefined）。
  * 两边都是「索引签名」，结构上兼容，只是 TS 不能在 `undefined` 通过性上
  * 自动让步。把 SharedUniforms 当成 Three 的 uniform 表传入时统一过一次
  * cast，运行时行为不变（不存在的键就是 undefined，Three 内部把 undefined
  * 跳过）。
  */
-function asThreeUniforms( uniforms: SharedUniforms ): { [ k: string ]: IUniform } {
-	return uniforms as unknown as { [ k: string ]: IUniform };
+function asThreeUniforms( uniforms: SharedUniforms ): { [ k: string ]: Uniform } {
+	return uniforms as unknown as { [ k: string ]: Uniform };
 }
 
 // Three.js 的 RawShaderMaterial 不会执行 Cesium ShaderSource 的自动

@@ -37,21 +37,21 @@ type PlotPointOptions = GisPlotBaseOptions & (
 - 图片模式不绘制矩形背景和描边，现有 stroke/fillColor 字段保持兼容但不参与着色。
 - 浏览器运行时使用 `/xiaohuoshuan.png`，不能使用 Windows 文件路径。
 
-应急资源本体标识映射到 `public/icon` 下的 SVG：
+应急资源本体标识映射到 `src/assets` 下的 SVG，并通过模块导入打包：
 
 | 本体标识 | SVG |
 | --- | --- |
-| `OutdoorFireHydrant` | `/icon/outdoor-hydrant.svg` |
-| `UndergroundHydrant` | `/icon/outdoor-hydrant-underground.svg` |
-| `AboveGroundHydrant` | `/icon/outdoor-hydrant-above-ground.svg` |
-| `MunicipalFireHydrants` | `/icon/municipal-hydrant.svg` |
-| `FireWaterReservoir` | `/icon/fire-water-pool.svg` |
-| `NaturalWater` | `/icon/natural-water-source.svg` |
-| `HospitalResourcePoint` | `/icon/hospital-resource.svg` |
-| `PublicSecurityResourcePoint` | `/icon/police-resource.svg` |
-| `SupportMaterialPoint` | `/icon/emergency-supplies.svg` |
-| `FireStation` | `/icon/fire-station.svg` |
-| `LinkageUnit` | `/icon/coordination-unit.svg` |
+| `OutdoorFireHydrant` | `src/assets/outdoor-hydrant.svg` |
+| `UndergroundHydrant` | `src/assets/outdoor-hydrant-underground.svg` |
+| `AboveGroundHydrant` | `src/assets/outdoor-hydrant-above-ground.svg` |
+| `MunicipalFireHydrants` | `src/assets/municipal-hydrant.svg` |
+| `FireWaterReservoir` | `src/assets/fire-water-pool.svg` |
+| `NaturalWater` | `src/assets/natural-water-source.svg` |
+| `HospitalResourcePoint` | `src/assets/hospital-resource.svg` |
+| `PublicSecurityResourcePoint` | `src/assets/police-resource.svg` |
+| `SupportMaterialPoint` | `src/assets/emergency-supplies.svg` |
+| `FireStation` | `src/assets/fire-station.svg` |
+| `LinkageUnit` | `src/assets/coordination-unit.svg` |
 
 示例：
 
