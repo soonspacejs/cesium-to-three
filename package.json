@@ -1,6 +1,6 @@
 {
   "name": "cesium-to-three",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "type": "module",
   "description": "Cesium-style ground primitives for Three.js.",
   "main": "./dist/index.js",
@@ -19,11 +19,16 @@
       "types": "./dist/types/lib/arrow/index.d.ts",
       "import": "./dist/arrow.js"
     },
-    "./icon/*": "./dist/icon/*",
+    "./plot": {
+      "types": "./dist/types/lib/plot/index.d.ts",
+      "import": "./dist/plot.js"
+    },
+    "./icon/*": "./src/assets/*",
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
+    "src/assets",
     "README.md"
   ],
   "publishConfig": {
