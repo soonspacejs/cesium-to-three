@@ -1128,7 +1128,7 @@ function buildImagePointGroup(
 		resolveHeightMeters( style ),
 	);
 	const halfWidth = options.imageWidth * 0.5;
-	const rotation = ( Number.isFinite( options.rotation ) ? options.rotation ?? 0.0 : 0.0 ) * DEG_TO_RAD;
+	const rotation = ( Number.isFinite( options.imageAngle ) ? options.imageAngle ?? 0.0 : 0.0 ) * DEG_TO_RAD;
 	const cos = Math.cos( rotation );
 	const sin = Math.sin( rotation );
 	const offset = ( x: number, y: number ): Vector3 => tangentOffset(

@@ -727,7 +727,7 @@ export class CesiumGroundPointPrimitive {
 	public readonly imageWidth: number | null;
 	public readonly imageHeight: number | null;
 	public readonly imageUrl: string | null;
-	public readonly rotation: number;
+	public readonly imageAngle: number;
 
 	private readonly delegate:
 		| CesiumGroundCirclePrimitive
@@ -756,7 +756,7 @@ export class CesiumGroundPointPrimitive {
 		this.imageWidth = options.shape === 'image' ? options.imageWidth : null;
 		this.imageHeight = options.shape === 'image' ? options.imageHeight : null;
 		this.imageUrl = options.shape === 'image' ? options.imageUrl : null;
-		this.rotation = options.shape === 'image' ? options.rotation ?? 0.0 : 0.0;
+		this.imageAngle = options.shape === 'image' ? options.imageAngle ?? 0.0 : 0.0;
 
 		if ( options.shape === 'circle' ) {
 			const sizeMeters = this.size as number;
@@ -817,7 +817,7 @@ export class CesiumGroundPointPrimitive {
 				imageUrl: imageOptions.imageUrl,
 				imageWidth: imageOptions.imageWidth,
 				imageHeight: imageOptions.imageHeight,
-				rotation: imageOptions.rotation,
+				imageAngle: imageOptions.imageAngle,
 				strokeColor: options.strokeColor,
 				strokeWidth: options.strokeWidth,
 				strokeOpacity: options.strokeOpacity,

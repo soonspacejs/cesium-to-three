@@ -136,7 +136,7 @@ interface ImagePointState extends BaseState {
 	ontologyId: EmergencyResourceOntologyId;
 	imageWidth: number;
 	imageHeight: number;
-	rotation: number;
+	imageAngle: number;
 	centerLon: number;
 	centerLat: number;
 }
@@ -258,7 +258,7 @@ function imagePointStateToOptions(
 		ontologyId: state.ontologyId,
 		imageWidth: state.imageWidth,
 		imageHeight: state.imageHeight,
-		rotation: state.rotation,
+		imageAngle: state.imageAngle,
 		// 图片点不画矩形背景和描边；保留这些字段仅满足统一标绘基础契约。
 		strokeColor: state.strokeColor,
 		strokeWidth: state.strokeWidth,
@@ -605,7 +605,7 @@ export function runPlotDemo(): void {
 		ontologyId: 'OutdoorFireHydrant',
 		imageWidth: 10,
 		imageHeight: 10,
-		rotation: 0,
+		imageAngle: 0,
 		centerLon: smallImagePointAnchor[ 0 ],
 		centerLat: smallImagePointAnchor[ 1 ],
 		strokeColor: '#ffffff',
@@ -1496,7 +1496,7 @@ export function runPlotDemo(): void {
 			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
 		folder.add( state, 'imageHeight', 1, 100, 0.1 ).name( 'height (m)' )
 			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
-		folder.add( state, 'rotation', - 180, 180, 1 ).name( 'rotation clockwise (°)' )
+		folder.add( state, 'imageAngle', - 180, 180, 1 ).name( 'image angle clockwise (°)' )
 			.onChange( () => decals.setStyle( handle.id, imagePointStateToOptions( state ) ) );
 		bindCenterControls( folder, state, handle, 0.000001, 0.000001 );
 		folder.add( state, 'fillOpacity', 0, 100, 1 ).name( 'image opacity (%)' )

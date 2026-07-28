@@ -29,7 +29,7 @@ export class CesiumGroundImagePrimitive {
 	public readonly imageUrl: string;
 	public readonly imageWidth: number;
 	public readonly imageHeight: number;
-	public readonly rotation: number;
+	public readonly imageAngle: number;
 
 	private readonly textureHandle: ImageTextureHandle;
 	private readonly opacityUniform: { value: number };
@@ -47,7 +47,7 @@ export class CesiumGroundImagePrimitive {
 		this.imageUrl = options.imageUrl.trim();
 		this.imageWidth = requirePositive( options.imageWidth, 'imageWidth' );
 		this.imageHeight = requirePositive( options.imageHeight, 'imageHeight' );
-		this.rotation = Number.isFinite( options.rotation ) ? options.rotation ?? 0.0 : 0.0;
+		this.imageAngle = Number.isFinite( options.imageAngle ) ? options.imageAngle ?? 0.0 : 0.0;
 		this.textureHandle = acquireImageTexture( this.imageUrl );
 		this.opacityUniform = { value: normalizeOpacity( options.fillOpacity ) };
 
@@ -57,7 +57,7 @@ export class CesiumGroundImagePrimitive {
 				anchorLatDegrees: latitude,
 				widthMeters: this.imageWidth,
 				heightMeters: this.imageHeight,
-				rotationRadians: this.rotation * DEG_TO_RAD,
+				rotationRadians: this.imageAngle * DEG_TO_RAD,
 				centerLocalNorthMeters: this.imageHeight * 0.5,
 			} );
 			const geometry = buildTexturedDecalShadowVolumeGeometry( {

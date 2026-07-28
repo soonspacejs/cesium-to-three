@@ -22,7 +22,7 @@ type PlotPointOptions = GisPlotBaseOptions & (
       ontologyId?: EmergencyResourceOntologyId;
       imageWidth: number;
       imageHeight: number;
-      rotation?: number;
+      imageAngle?: number;
     }
 );
 ```
@@ -30,7 +30,7 @@ type PlotPointOptions = GisPlotBaseOptions & (
 同步扩展底层 `CesiumGroundPointShape` 和 `CesiumGroundPointPrimitiveOptions`：
 
 - `shape: 'image'`
-- `rotation` 为俯视顺时针角度，默认 `0`，图片顶部指向北方。
+- `imageAngle` 为俯视顺时针角度，默认 `0`，图片顶部指向北方。
 - 点击坐标固定对应图片底边中心。
 - 图片源可以使用 `imageUrl`，也可以使用应急资源本体标识 `ontologyId`；同时提供时优先使用 `imageUrl`。
 - `fillOpacity` 与管理器全局 opacity 共同乘到图片原始 alpha。
@@ -63,7 +63,7 @@ decals.addPlot({
   ontologyId: 'OutdoorFireHydrant',
   imageWidth: 10,
   imageHeight: 10,
-  rotation: 0,
+  imageAngle: 0,
   fillOpacity: 100,
   visible: true,
   clampToGround: true,

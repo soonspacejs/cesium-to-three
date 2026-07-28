@@ -232,7 +232,7 @@ export type CesiumGroundPointOptions = CesiumGroundPointCommonOptions & (
 		imageWidth: number;
 		imageHeight: number;
 		/** 俯视顺时针角度；0 表示图片顶部朝北。 */
-		rotation?: number;
+		imageAngle?: number;
 	}
 );
 
@@ -246,7 +246,7 @@ export type CesiumGroundImagePrimitiveOptions = CesiumGroundPointCommonOptions &
 	imageWidth: number;
 	imageHeight: number;
 	/** 俯视顺时针角度；0 表示图片顶部朝北。 */
-	rotation?: number;
+	imageAngle?: number;
 	granularityRadians?: number;
 	minimumHeight?: number;
 	maximumHeight?: number;
