@@ -33,6 +33,9 @@ export interface PolylineAppearanceCompileReport {
 	materialNames: string[];
 	customUniformBound: boolean;
 	rawPasses: string[];
+	arrowMaterialNames: string[];
+	arrowCustomUniformBound: boolean;
+	arrowRawPasses: string[];
 	errors: string[];
 	flowFrames: number;
 	programCountBeforeFlowFrames: number;
@@ -55,6 +58,17 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 	result.diffuse = mix(vec3(0.1, 0.2, 0.8), vec3(0.9, 0.8, 0.1), ratio) * u_tint.rgb;
 	result.emission = vec3(0.0);
 	result.alpha = materialInput.baseColor.a * u_tint.a;
+	return result;
+}
+`;
+
+const SAFE_ARROW_SOURCE = /* glsl */ `
+uniform vec4 u_arrowTint;
+c23_material c23_getMaterial(c23_materialInput materialInput) {
+	c23_material result;
+	result.diffuse = materialInput.baseColor.rgb * u_arrowTint.rgb;
+	result.emission = vec3(0.0);
+	result.alpha = materialInput.baseColor.a * u_arrowTint.a;
 	return result;
 }
 `;
@@ -85,6 +99,12 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 		fragmentShader: SAFE_SOURCE,
 	} );
 	const safeAppearance = new CesiumGroundMaterialAppearance( { material: safeMaterial } );
+	const safeArrowLogicalMaterial = new CesiumGroundMaterial( {
+		type: 'Stage9ArrowWebGL2Fixture',
+		uniforms: { u_arrowTint: { value: new Vector4( 0.9, 0.4, 0.2, 1 ) } },
+		fragmentShader: SAFE_ARROW_SOURCE,
+	} );
+	const safeArrowAppearance = new CesiumGroundMaterialAppearance( { material: safeArrowLogicalMaterial } );
 	const dashAppearance = new CesiumGroundMaterialAppearance( {
 		material: createPolylineDashMaterial( {
 			dashLengthMeters: 24,
@@ -108,6 +128,15 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 			return material;
 		},
 	} );
+	const arrowRawPasses: string[] = [];
+	const rawArrowAppearance = new CesiumGroundRawShaderAppearance( {
+		factory: context => {
+			arrowRawPasses.push( `${ context.primitiveKind}:${ context.pass }` );
+			const material = context.createDefaultMaterial();
+			material.name = 'Stage9RawArrow';
+			return material;
+		},
+	} );
 
 	const createOptions = ( extra: Record<string, unknown> = {} ) => ( {
 		points: [ [ 121.4, 31.2 ], [ 121.401, 31.2005 ], [ 121.402, 31.201 ] ] as [ number, number ][],
@@ -119,8 +148,16 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 	} );
 	const primitives = [
 		new CesiumGroundPolylinePrimitive( createOptions() ),
-		new CesiumGroundPolylinePrimitive( createOptions( { appearance: safeAppearance } ) ),
-		new CesiumGroundPolylinePrimitive( createOptions( { appearance: rawAppearance } ) ),
+		new CesiumGroundPolylinePrimitive( createOptions( {
+			appearance: safeAppearance,
+			arrowMode: 'both',
+			arrowAppearance: safeArrowAppearance,
+		} ) ),
+		new CesiumGroundPolylinePrimitive( createOptions( {
+			appearance: rawAppearance,
+			arrowMode: 'right',
+			arrowAppearance: rawArrowAppearance,
+		} ) ),
 		new CesiumGroundPolylinePrimitive( createOptions( { appearance: dashAppearance } ) ),
 		new CesiumGroundPolylinePrimitive( createOptions( { appearance: flowAppearance } ) ),
 	];
@@ -142,6 +179,10 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 
 	const safeLine = primitives[ 1 ].group.getObjectByName( 'CesiumGroundPolylineColorCommand' );
 	const safeLineMaterial = safeLine?.material as RawShaderMaterial;
+	const safeArrow = primitives[ 1 ].group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+	const safeArrowCompiledMaterial = safeArrow?.material as RawShaderMaterial;
+	const rawArrow = primitives[ 2 ].group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+	const rawArrowMaterial = rawArrow?.material as RawShaderMaterial;
 	const programCountBeforeFlowFrames = renderer.info.programs?.length ?? 0;
 	const flowFrames = 600;
 	for ( let frame = 0; frame < flowFrames; frame ++ ) {
@@ -159,6 +200,10 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 		materialNames,
 		customUniformBound: safeLineMaterial.uniforms.u_tint === safeMaterial.uniforms.u_tint,
 		rawPasses,
+		arrowMaterialNames: [ safeArrowCompiledMaterial.name, rawArrowMaterial.name ],
+		arrowCustomUniformBound:
+			safeArrowCompiledMaterial.uniforms.u_arrowTint === safeArrowLogicalMaterial.uniforms.u_arrowTint,
+		arrowRawPasses,
 		errors,
 		flowFrames,
 		programCountBeforeFlowFrames,

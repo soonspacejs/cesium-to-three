@@ -26,6 +26,12 @@ test( 'links default, safe, and Raw polyline Appearance routes in WebGL2', async
 	] );
 	expect( report.customUniformBound ).toBe( true );
 	expect( report.rawPasses ).toEqual( [ 'polyline:polyline' ] );
+	expect( report.arrowMaterialNames ).toEqual( [
+		'CesiumGroundArrowMaterial',
+		'Stage9RawArrow',
+	] );
+	expect( report.arrowCustomUniformBound ).toBe( true );
+	expect( report.arrowRawPasses ).toEqual( [ 'arrow:arrow' ] );
 	expect( report.flowFrames ).toBe( 600 );
 	expect( report.programCountAfterFlowFrames ).toBe( report.programCountBeforeFlowFrames );
 	// Color, safe gradient, Dash, and Flow sources are four distinct logical
