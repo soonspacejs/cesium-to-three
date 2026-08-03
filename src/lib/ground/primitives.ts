@@ -214,6 +214,7 @@ export class CesiumGroundRectanglePrimitive {
 	public readonly classification: CesiumClassificationPrimitive;
 	public readonly debugSurface: Mesh | null;
 	public readonly rectangle: RectangleRadians;
+	private disposed = false;
 
 	public constructor( options: CesiumGroundRectanglePrimitiveOptions ) {
 		const rectangleDegrees = rectangleDegreesFromLonLatPoints( options.points );
@@ -387,6 +388,8 @@ export class CesiumGroundRectanglePrimitive {
 	 * 释放资源。
 	 */
 	public dispose(): void {
+		if ( this.disposed ) return;
+		this.disposed = true;
 		this.classification.dispose();
 		if ( this.debugSurface ) {
 			this.debugSurface.geometry.dispose();
@@ -784,6 +787,7 @@ export class CesiumGroundPointPrimitive {
 		| CesiumGroundCirclePrimitive
 		| CesiumGroundRectanglePrimitive
 		| CesiumGroundImagePrimitive;
+	private disposed = false;
 
 	public constructor( options: CesiumGroundPointPrimitiveOptions ) {
 		const longitude = options.position?.[ 0 ];
@@ -893,6 +897,7 @@ export class CesiumGroundPointPrimitive {
 	 * 更新底层图元的逐帧 uniform。
 	 */
 	public update( frameState: CesiumGroundFrameState ): void {
+		this.ensureActive();
 		this.delegate.update( frameState );
 	}
 
@@ -900,6 +905,7 @@ export class CesiumGroundPointPrimitive {
 	 * 更新点图元命令块的渲染顺序。
 	 */
 	public setRenderOrder( renderOrder: number ): void {
+		this.ensureActive();
 		this.delegate.setRenderOrder( renderOrder );
 	}
 
@@ -910,21 +916,25 @@ export class CesiumGroundPointPrimitive {
 	 * @param classificationType 目标枚举；undefined 时保持当前值。
 	 */
 	public setClassificationType( classificationType?: ClassificationType ): void {
+		this.ensureActive();
 		this.delegate.setClassificationType( classificationType );
 	}
 
 	/** Returns the delegate's live Appearance instead of caching wrapper state. */
 	public get appearance(): CesiumGroundAppearance {
+		this.ensureActive();
 		return this.delegate.appearance;
 	}
 
 	/** Forwards the exact logical object to the selected surface/decal delegate. */
 	public setAppearance( appearance?: CesiumGroundAppearance ): void {
+		this.ensureActive();
 		this.delegate.setAppearance( appearance );
 	}
 
 	/** 只更新图片点 alpha，不重建几何；圆点和方点调用时保持不变。 */
 	public setImageOpacity( fillOpacity: number ): void {
+		this.ensureActive();
 		if ( this.delegate instanceof CesiumGroundImagePrimitive ) {
 			this.delegate.setOpacity( fillOpacity );
 		}
@@ -934,7 +944,15 @@ export class CesiumGroundPointPrimitive {
 	 * 释放资源。
 	 */
 	public dispose(): void {
+		if ( this.disposed ) return;
+		this.disposed = true;
 		this.delegate.dispose();
+	}
+
+	private ensureActive(): void {
+		if ( this.disposed ) {
+			throw new Error( 'CesiumGroundPointPrimitive: instance already disposed.' );
+		}
 	}
 }
 
@@ -1246,6 +1264,7 @@ export class CesiumGroundPolylinePrimitive {
 
 	/** Returns the exact logical Appearance object currently selected for the line body. */
 	public get appearance(): CesiumGroundAppearance {
+		this.ensureActive();
 		return this.appearanceState;
 	}
 
@@ -1256,7 +1275,7 @@ export class CesiumGroundPolylinePrimitive {
 	 * render order, layers, and SharedUniform wrapper identities are untouched.
 	 */
 	public setAppearance( appearance?: CesiumGroundAppearance ): void {
-		if ( this.disposed ) return;
+		this.ensureActive();
 		if (
 			appearance !== undefined &&
 			! ( appearance instanceof CesiumGroundMaterialAppearance ) &&
@@ -1285,6 +1304,7 @@ export class CesiumGroundPolylinePrimitive {
 
 	/** Returns the exact logical Appearance selected for the arrow pass. */
 	public get arrowAppearance(): CesiumGroundAppearance {
+		this.ensureActive();
 		return this.arrowAppearanceState;
 	}
 
@@ -1294,7 +1314,7 @@ export class CesiumGroundPolylinePrimitive {
 	 * this same object and therefore preserves every user uniform wrapper.
 	 */
 	public setArrowAppearance( appearance?: CesiumGroundAppearance ): void {
-		if ( this.disposed ) return;
+		this.ensureActive();
 		if (
 			appearance !== undefined &&
 			! ( appearance instanceof CesiumGroundMaterialAppearance ) &&
@@ -1368,14 +1388,13 @@ export class CesiumGroundPolylinePrimitive {
 
 	/** 把图元挂到场景：`scene.add(primitive.group)`。 */
 	public get group(): Group {
+		this.ensureActive();
 		return this._group;
 	}
 
 	/** 每帧调用：刷新相机相关 uniform + 全局地形深度纹理。 */
 	public update( frameState: CesiumGroundFrameState ): void {
-		if ( this.disposed ) {
-			return;
-		}
+		this.ensureActive();
 		// Reconcile before the visibility early-return so a hidden primitive does
 		// not render one stale frame after its logical source changes.
 		this.reconcileMaterialAppearance();
@@ -1399,6 +1418,7 @@ export class CesiumGroundPolylinePrimitive {
 	 * @param classificationType 目标枚举；undefined 时保持当前值。
 	 */
 	public setClassificationType( classificationType?: ClassificationType ): void {
+		this.ensureActive();
 		if ( classificationType !== undefined ) {
 			this.classificationType = classificationType;
 		}
@@ -1411,6 +1431,7 @@ export class CesiumGroundPolylinePrimitive {
 	 * @param strokeOpacity 0..100 百分比（与其它图元一致）。
 	 */
 	public setColor( strokeColor: string, strokeOpacity?: number ): void {
+		this.ensureActive();
 		const safeOpacity = Number.isFinite( strokeOpacity )
 			? ( strokeOpacity as number )
 			: this.options.strokeOpacity;
@@ -1435,6 +1456,7 @@ export class CesiumGroundPolylinePrimitive {
 	 * @param width 像素或米。
 	 */
 	public setWidth( width: number ): void {
+		this.ensureActive();
 		if ( this.options.widthMode === LineWidthMode.WORLD ) {
 			( this.uniforms.u_lineWidthMeters as { value: number } ).value = width;
 			this.options.widthMeters = width;
@@ -1463,6 +1485,7 @@ export class CesiumGroundPolylinePrimitive {
 		widthPixels: number,
 		widthMeters: number,
 	): void {
+		this.ensureActive();
 		const enumMode = mode === 'world' ? LineWidthMode.WORLD : LineWidthMode.SCREEN;
 		( this.uniforms.u_lineWidthMode as { value: number } ).value =
 			enumMode === LineWidthMode.WORLD ? 1.0 : 0.0;
@@ -1475,6 +1498,7 @@ export class CesiumGroundPolylinePrimitive {
 
 	/** 改渲染顺序（直接设 mesh.renderOrder，无 stencil 三件套偏移）。 */
 	public setRenderOrder( order: number ): void {
+		this.ensureActive();
 		this.mesh.renderOrder = order;
 		this.options.renderOrder = order;
 		if ( this.arrowMesh !== undefined ) {
@@ -1484,6 +1508,7 @@ export class CesiumGroundPolylinePrimitive {
 
 	/** 改可见性。 */
 	public setVisible( visible: boolean ): void {
+		this.ensureActive();
 		this.mesh.visible = visible;
 		this._group.visible = visible;
 		if ( this.arrowMesh !== undefined ) {
@@ -1499,6 +1524,7 @@ export class CesiumGroundPolylinePrimitive {
 	 * @param mode 'none' / 'left' / 'right' / 'both'。
 	 */
 	public setArrowMode( mode: CesiumGroundArrowMode ): void {
+		this.ensureActive();
 		const newMode = parseArrowMode( mode );
 		if ( newMode === this.options.arrowMode && this.arrowMesh !== undefined ) {
 			return; // 已经是这个 mode，不必重建。
@@ -1519,6 +1545,7 @@ export class CesiumGroundPolylinePrimitive {
 	 * @param style 'solid' / 'open'。
 	 */
 	public setArrowStyle( style: CesiumGroundArrowStyle ): void {
+		this.ensureActive();
 		this.setArrowStyles( style, style );
 	}
 
@@ -1537,6 +1564,7 @@ export class CesiumGroundPolylinePrimitive {
 		startStyle: CesiumGroundArrowStyle,
 		endStyle: CesiumGroundArrowStyle,
 	): void {
+		this.ensureActive();
 		const newStart = parseArrowStyle( startStyle );
 		const newEnd = parseArrowStyle( endStyle );
 		if (
@@ -1583,6 +1611,7 @@ export class CesiumGroundPolylinePrimitive {
 	 * @param opacity 0..100 百分比。缺省沿用线 strokeOpacity。
 	 */
 	public setArrowColor( color: string, opacity?: number ): void {
+		this.ensureActive();
 		this.arrowColorExplicit = true;
 		const safeOpacity = Number.isFinite( opacity )
 			? ( opacity as number )
@@ -1602,6 +1631,7 @@ export class CesiumGroundPolylinePrimitive {
 	 * @param mode 'screen' or 'world'。
 	 */
 	public setArrowWidthMode( mode: 'screen' | 'world' ): void {
+		this.ensureActive();
 		const enumMode = mode === 'world' ? LineWidthMode.WORLD : LineWidthMode.SCREEN;
 		( this.uniforms.u_arrowWidthMode as { value: number } ).value =
 			enumMode === LineWidthMode.WORLD ? 1.0 : 0.0;
@@ -1615,6 +1645,7 @@ export class CesiumGroundPolylinePrimitive {
 	 * @param widthPixels  基底全宽（屏幕像素）。
 	 */
 	public setArrowSize( lengthPixels: number, widthPixels: number ): void {
+		this.ensureActive();
 		( this.uniforms.u_arrowLengthPixels as { value: number } ).value = lengthPixels;
 		( this.uniforms.u_arrowHalfWidthPixels as { value: number } ).value = widthPixels * 0.5;
 		this.options.arrowLengthPixels = lengthPixels;
@@ -1628,6 +1659,7 @@ export class CesiumGroundPolylinePrimitive {
 	 * @param widthMeters  基底全宽（米）。
 	 */
 	public setArrowSizeMeters( lengthMeters: number, widthMeters: number ): void {
+		this.ensureActive();
 		( this.uniforms.u_arrowLengthMeters as { value: number } ).value = lengthMeters;
 		( this.uniforms.u_arrowHalfWidthMeters as { value: number } ).value = widthMeters * 0.5;
 		this.options.arrowLengthMeters = lengthMeters;
@@ -1639,13 +1671,19 @@ export class CesiumGroundPolylinePrimitive {
 		if ( this.disposed ) {
 			return;
 		}
+		this.disposed = true;
 		this.unsubscribeAppearance( this.appearanceState, false );
 		this.unsubscribeAppearance( this.arrowAppearanceState, true );
 		this.disposeArrowMesh();
 		this._group.remove( this.mesh );
 		this.geometry.dispose();
 		this.material.dispose();
-		this.disposed = true;
+	}
+
+	private ensureActive(): void {
+		if ( this.disposed ) {
+			throw new Error( 'CesiumGroundPolylinePrimitive: instance already disposed.' );
+		}
 	}
 
 	/** Subscribes the line or arrow consumer to its user-owned logical source. */

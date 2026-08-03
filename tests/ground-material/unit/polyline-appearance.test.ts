@@ -367,4 +367,63 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 		expect( line.geometry ).toBe( lineGeometry );
 		primitive.dispose();
 	} );
+
+	it( 'disposes line and arrow resources once and rejects all public operations afterward', () => {
+		const primitive = createPolyline( { arrowMode: 'both' } );
+		const group = primitive.group;
+		const line = lineMesh( primitive );
+		const arrow = group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+		if ( ! ( arrow instanceof Mesh ) ) throw new Error( 'Polyline arrow Mesh is missing.' );
+		const disposalCounts = {
+			lineGeometry: 0,
+			lineMaterial: 0,
+			arrowGeometry: 0,
+			arrowMaterial: 0,
+		};
+		line.geometry.addEventListener( 'dispose', () => { disposalCounts.lineGeometry += 1; } );
+		line.material.addEventListener( 'dispose', () => { disposalCounts.lineMaterial += 1; } );
+		arrow.geometry.addEventListener( 'dispose', () => { disposalCounts.arrowGeometry += 1; } );
+		arrow.material.addEventListener( 'dispose', () => { disposalCounts.arrowMaterial += 1; } );
+		const frameState = {
+			depthTexture: null,
+			width: 960,
+			height: 640,
+			camera: new PerspectiveCamera( 45, 1.5, 1, 10000000 ),
+		};
+
+		primitive.dispose();
+		primitive.dispose();
+
+		expect( group.children ).toHaveLength( 0 );
+		expect( disposalCounts ).toEqual( {
+			lineGeometry: 1,
+			lineMaterial: 1,
+			arrowGeometry: 1,
+			arrowMaterial: 1,
+		} );
+		const operations = [
+			() => primitive.appearance,
+			() => primitive.setAppearance(),
+			() => primitive.arrowAppearance,
+			() => primitive.setArrowAppearance(),
+			() => primitive.group,
+			() => primitive.update( frameState ),
+			() => primitive.setClassificationType(),
+			() => primitive.setColor( '#ffffff' ),
+			() => primitive.setWidth( 3 ),
+			() => primitive.applyWidthState( 'screen', 3, 30 ),
+			() => primitive.setRenderOrder( 20 ),
+			() => primitive.setVisible( true ),
+			() => primitive.setArrowMode( 'right' ),
+			() => primitive.setArrowStyle( 'solid' ),
+			() => primitive.setArrowStyles( 'solid', 'open' ),
+			() => primitive.setArrowColor( '#ffffff' ),
+			() => primitive.setArrowWidthMode( 'screen' ),
+			() => primitive.setArrowSize( 10, 8 ),
+			() => primitive.setArrowSizeMeters( 10, 8 ),
+		];
+		for ( const operation of operations ) {
+			expect( operation ).toThrow( /already disposed/ );
+		}
+	} );
 } );

@@ -119,6 +119,7 @@ export class CesiumGroundImagePrimitive {
 
 	/** Returns the exact logical Appearance bound to the decal color pass. */
 	public get appearance(): CesiumGroundAppearance {
+		this.ensureActive();
 		return this.classification.appearance;
 	}
 

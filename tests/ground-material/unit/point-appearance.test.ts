@@ -1,4 +1,4 @@
-import { Mesh, RawShaderMaterial, Vector4 } from 'three';
+import { Mesh, PerspectiveCamera, RawShaderMaterial, Vector4 } from 'three';
 import { describe, expect, it } from 'vitest';
 
 import { CesiumGroundPointPrimitive } from '../../../src/lib/ground/primitives';
@@ -57,6 +57,48 @@ describe( 'point delegate Appearance forwarding', () => {
 			point.setAppearance( appearance );
 			expect( point.appearance ).toBe( appearance );
 			point.dispose();
+		},
+	);
+
+	it.each( [ 'circle', 'square' ] as const )(
+		'makes %s disposal idempotent and rejects every wrapper operation afterward',
+		shape => {
+			const point = new CesiumGroundPointPrimitive( {
+				position: [ 121.4, 31.2 ],
+				shape,
+				size: 20,
+				strokeColor: '#ffffff',
+				strokeWidth: 1,
+				strokeOpacity: 100,
+				fillColor: '#336699',
+				fillOpacity: 80,
+				visible: true,
+			} );
+			const color = colorMaterial( point );
+			let disposeEvents = 0;
+			color.addEventListener( 'dispose', () => { disposeEvents += 1; } );
+			const frameState = {
+				depthTexture: null,
+				width: 960,
+				height: 640,
+				camera: new PerspectiveCamera( 45, 1.5, 1, 10000000 ),
+			};
+
+			point.dispose();
+			point.dispose();
+
+			expect( disposeEvents ).toBe( 1 );
+			const operations = [
+				() => point.update( frameState ),
+				() => point.setRenderOrder( 20 ),
+				() => point.setClassificationType(),
+				() => point.appearance,
+				() => point.setAppearance(),
+				() => point.setImageOpacity( 50 ),
+			];
+			for ( const operation of operations ) {
+				expect( operation ).toThrow( /already disposed/ );
+			}
 		},
 	);
 } );

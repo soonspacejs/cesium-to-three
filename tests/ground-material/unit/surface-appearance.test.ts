@@ -186,4 +186,29 @@ describe( 'surface primitive safe Appearance forwarding', () => {
 		expect( candidateDisposes[ 1 ] ).toHaveBeenCalledOnce();
 		circle.dispose();
 	} );
+
+	it( 'disposes a rectangle debug surface exactly once', () => {
+		const rectangle = new CesiumGroundRectanglePrimitive( {
+			points: [ [ 121.4, 31.2 ], [ 121.401, 31.2 ], [ 121.401, 31.201 ], [ 121.4, 31.201 ] ],
+			strokeColor: '#ffffff',
+			strokeWidth: 2,
+			strokeOpacity: 100,
+			fillColor: '#44aa66',
+			fillOpacity: 80,
+			visible: true,
+			debugSurface: true,
+		} );
+		const debugSurface = rectangle.debugSurface;
+		if ( debugSurface === null ) throw new Error( 'Rectangle debug surface is missing.' );
+		const geometryDispose = vi.fn();
+		const materialDispose = vi.fn();
+		debugSurface.geometry.addEventListener( 'dispose', geometryDispose );
+		debugSurface.material.addEventListener( 'dispose', materialDispose );
+
+		rectangle.dispose();
+		rectangle.dispose();
+
+		expect( geometryDispose ).toHaveBeenCalledOnce();
+		expect( materialDispose ).toHaveBeenCalledOnce();
+	} );
 } );

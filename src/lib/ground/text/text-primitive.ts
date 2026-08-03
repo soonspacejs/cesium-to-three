@@ -165,6 +165,7 @@ export class CesiumGroundTextPrimitive {
 
 	/** Returns the exact logical Appearance currently bound to the text decal. */
 	public get appearance(): CesiumGroundAppearance {
+		this.ensureNotDisposed();
 		return this.appearanceState;
 	}
 
