@@ -498,8 +498,14 @@ export interface PlanarBounds {
 	maxY: number;
 }
 
-export interface SharedUniforms {
-	[ uniform: string ]: { value: unknown } | undefined;
+/**
+ * Strict runtime map used by Ground primitives while adapting legacy wrapper
+ * names to the canonical Material ABI. Unlike the deprecated public extension
+ * type, this schema cannot be widened with arbitrary system uniforms.
+ *
+ * @internal
+ */
+export interface GroundRuntimeUniforms {
 	/** Canonical animation wrappers are attached by the migrated Material map. */
 	c23_time?: { value: number };
 	c23_deltaTime?: { value: number };
@@ -546,14 +552,6 @@ export interface SharedUniforms {
 	czm_farDepthFromNearPlusOne: { value: number };
 	czm_log2FarDepthFromNearPlusOne: { value: number };
 	czm_oneOverLog2FarDepthFromNearPlusOne: { value: number };
-	/**
-	 * 历史贴地文本内容纹理槽。保留用于兼容；新代码使用通用 u_decalTexture。
-	 */
-	u_textTexture: { value: Texture | null };
-	/** 通用透明纹理贴花（贴地文字和图片点共享）。 */
-	u_decalTexture: { value: Texture | null };
-	/** 贴花整体透明度，0..1；与纹理自身 alpha 相乘。 */
-	u_decalOpacity: { value: number };
 	// ── 贴地线扩展（全部可选；面图元的 uniform map 不设这些键，
 	//    classification.ts 守卫式写入跳过它们）。GLSL 端用
 	//    `#ifdef CESIUM_THREE_POLYLINE` 守住声明，对 stencil/color 编译无影响。──
@@ -562,9 +560,6 @@ export interface SharedUniforms {
 	u_lineWidthPixels?: { value: number };
 	u_lineWidthMode?: { value: number };
 	u_lineWidthMeters?: { value: number };
-	u_lineDashEnabled?: { value: number };
-	u_lineDashLengthMeters?: { value: number };
-	u_lineGapLengthMeters?: { value: number };
 	u_lineTotalMeters?: { value: number };
 	// ── 线端箭头扩展（仅在 polyline 材质 / 箭头材质里使用；其它材质
 	//    prefix 不声明这些 uniform，写入 no-op，零回归）。──
@@ -585,4 +580,30 @@ export interface SharedUniforms {
 	// 支持「起点实心、终点空心」。随各端 arrowStyle 更新。
 	u_lineArrowStyleStart?: { value: number };
 	u_lineArrowStyleEnd?: { value: number };
+}
+
+/**
+ * Legacy internal-extension uniform map retained for source compatibility.
+ *
+ * New shader extensions must use `CesiumGroundMaterial`,
+ * `CesiumGroundMaterialAppearance`, or `CesiumGroundRawShaderAppearance` and
+ * their validated `GroundUserUniforms` / `GroundSystemUniforms` maps instead.
+ *
+ * @deprecated Internal Ground uniforms are not a stable extension ABI. Use the
+ * public Material/Appearance API.
+ */
+export interface SharedUniforms extends GroundRuntimeUniforms {
+	[ uniform: string ]: { value: unknown } | undefined;
+	/** @deprecated Retained only for legacy internal-extension source compatibility. */
+	u_textTexture: { value: Texture | null };
+	/** @deprecated Decal textures now belong to validated logical Material uniforms. */
+	u_decalTexture: { value: Texture | null };
+	/** @deprecated Decal opacity now belongs to the logical Material. */
+	u_decalOpacity: { value: number };
+	/** @deprecated Dash selection now uses the built-in PolylineDash Material. */
+	u_lineDashEnabled?: { value: number };
+	/** @deprecated Use the built-in `u_dashLengthMeters` user uniform. */
+	u_lineDashLengthMeters?: { value: number };
+	/** @deprecated Use the built-in `u_gapLengthMeters` user uniform. */
+	u_lineGapLengthMeters?: { value: number };
 }

@@ -1,13 +1,13 @@
 // ============================================================
 // material/system-uniforms.ts
-// Purpose: adapt deprecated SharedUniforms to the canonical c23_ namespace by
+// Purpose: adapt the strict legacy runtime map to the canonical c23_ namespace by
 //          aliasing wrappers, never values. User merge is a separate checked
 //          operation so ordinary user names such as u_color remain available.
 // ============================================================
 
 import type { IUniform } from 'three';
 
-import type { SharedUniforms } from '../types';
+import type { GroundRuntimeUniforms } from '../types';
 import { CesiumGroundMaterialError } from './errors';
 import type {
 	GroundPrimitiveKind,
@@ -102,12 +102,13 @@ export const LEGACY_LINE_UNIFORM_ALIASES = {
 
 function appendAliases(
 	target: Record<string, IUniform>,
-	legacy: SharedUniforms,
+	legacy: GroundRuntimeUniforms,
 	aliases: Readonly<Record<string, string>>,
 ): void {
+	const legacyByName = legacy as unknown as Readonly<Record<string, IUniform | undefined>>;
 	for ( const [ canonicalName, legacyName ] of Object.entries( aliases ) ) {
-		const wrapper = legacy[ legacyName ];
-		if ( wrapper !== undefined ) target[ canonicalName ] = wrapper as IUniform;
+		const wrapper = legacyByName[ legacyName ];
+		if ( wrapper !== undefined ) target[ canonicalName ] = wrapper;
 	}
 }
 
@@ -116,12 +117,12 @@ function appendAliases(
  * wrapper replaced, but each wrapper's `.value` remains mutable by the library.
  */
 export function createCanonicalGroundSystemUniforms(
-	legacy: SharedUniforms,
+	legacy: GroundRuntimeUniforms,
 	kind: GroundPrimitiveKind,
 	timeUniforms: GroundTimeUniforms = createGroundTimeUniforms(),
 ): GroundSystemUniforms {
 	// Keep the same wrappers in the compatibility map and the canonical map.
-	// updateFrameStateUniforms still accepts SharedUniforms, so this bridge lets
+	// updateFrameStateUniforms accepts the same strict runtime map, so this bridge lets
 	// it update animation values without replacing either map or wrapper object.
 	const resolvedTimeUniforms: GroundTimeUniforms = {
 		c23_time: legacy.c23_time ?? timeUniforms.c23_time,

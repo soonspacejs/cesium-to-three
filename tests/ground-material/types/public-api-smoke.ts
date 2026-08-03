@@ -30,6 +30,7 @@ import type {
 	PolylineDashMaterialOptions,
 	PulsePointMaterialOptions,
 	ScalePulseMaterialOptions,
+	SharedUniforms,
 	TexturedDecalMaterialOptions,
 } from '../../../src/cesium-three-ground';
 import type {
@@ -60,6 +61,7 @@ import type {
 	PolylineDashMaterialOptions as GroundPolylineDashMaterialOptions,
 	PulsePointMaterialOptions as GroundPulsePointMaterialOptions,
 	ScalePulseMaterialOptions as GroundScalePulseMaterialOptions,
+	SharedUniforms as GroundSharedUniforms,
 	TexturedDecalMaterialOptions as GroundTexturedDecalMaterialOptions,
 } from '../../../src/lib/ground';
 
@@ -98,5 +100,8 @@ export type PublicGroundApiEntryParity = [
 	Assert<Equal<PolylineDashMaterialOptions, GroundPolylineDashMaterialOptions>>,
 	Assert<Equal<PulsePointMaterialOptions, GroundPulsePointMaterialOptions>>,
 	Assert<Equal<ScalePulseMaterialOptions, GroundScalePulseMaterialOptions>>,
+	// Deprecated, but intentionally retained through both entry points until a
+	// future major release removes the old internal-extension type.
+	Assert<Equal<SharedUniforms, GroundSharedUniforms>>,
 	Assert<Equal<TexturedDecalMaterialOptions, GroundTexturedDecalMaterialOptions>>,
 ];

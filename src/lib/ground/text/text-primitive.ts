@@ -3,10 +3,10 @@
 // 层级：L4（顶层公开类，串联 A/B/C 全层 + 复用共享 classification）
 // 职责：CesiumGroundTextPrimitive —— 贴地文本标绘对外入口。
 //       构造：resolve 选项 → 画 canvas → CanvasTexture → 算足迹 → 建几何 →
-//       算 extents → new CesiumClassificationPrimitive(注入文字 color 材质 +
-//       u_textTexture)。update 只转发 frameState。setText 局部重建。
-// 依赖：Three.CanvasTexture 等、classification（注入扩展）、materials
-//      (createTextColorMaterial)、text-defaults/-canvas/-placement/
+//       算 extents → new CesiumClassificationPrimitive(绑定 decal Material)。
+//       update 只转发 frameState；setText 在固定 topology 内局部更新。
+// 依赖：Three.CanvasTexture 等、classification、Material/Appearance、
+//      text-defaults/-canvas/-placement/
 //      -shadow-volume/-extents/-options。
 // 被消费：业务渲染代码 / demo。
 // ============================================================
@@ -234,8 +234,8 @@ export class CesiumGroundTextPrimitive {
 
 	/**
 	 * 用当前 resolved + footprint + 纹理构造一个新的 CesiumClassificationPrimitive。
-	 * 复用 buildTextShadowVolumeGeometry 与 computeTextPlanarExtents，并注入文字
-	 * color 材质工厂与 u_textTexture，保证所有命令共享同一 jitter-fixed 管线。
+	 * 复用 buildTextShadowVolumeGeometry 与 computeTextPlanarExtents，并绑定
+	 * decal logical Material，保证所有命令共享同一 jitter-fixed 管线。
 	 *
 	 * @returns 新建的 classification。
 	 */
@@ -259,7 +259,6 @@ export class CesiumGroundTextPrimitive {
 			this.renderOrder,
 			true, // fragmentCull：裁足迹 + 丢弃无地形 fragment
 			{
-				useMaterialPipeline: true,
 				primitiveKind: 'decal',
 				defaultMaterial: this.decalMaterial,
 				appearance: this.appearanceState,

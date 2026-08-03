@@ -8,14 +8,10 @@
 // ============================================================
 
 import {
-	BackSide,
 	BufferAttribute,
 	BufferGeometry,
 	Color,
-	DecrementWrapStencilOp,
-	FrontSide,
 	Group,
-	IncrementWrapStencilOp,
 	Matrix3,
 	Matrix4,
 	Mesh,
@@ -23,7 +19,6 @@ import {
 	Vector3,
 	Vector4,
 	type Material,
-	type RawShaderMaterial,
 	type Texture,
 } from 'three';
 
@@ -35,7 +30,6 @@ import {
 	SCENE_MODE_3D,
 } from './constants';
 import { encodeCesiumVector3 } from './geometry';
-import { createColorMaterial, createStencilMaterial } from './materials';
 import {
 	CesiumGroundMaterialAppearance,
 	CesiumGroundRawShaderAppearance,
@@ -54,8 +48,8 @@ import {
 	ClassificationType,
 	type CesiumClassificationCommandVisibility,
 	type CesiumGroundFrameState,
+	type GroundRuntimeUniforms,
 	type PlanarExtents,
-	type SharedUniforms,
 } from './types';
 
 /**
@@ -323,7 +317,7 @@ function writeEyeDirectionFloat64( source: Vector3, out: Float64Array ): void {
  */
 function updateCpuPlanarUniforms(
 	frameState: CesiumGroundFrameState,
-	uniforms: SharedUniforms,
+	uniforms: GroundRuntimeUniforms,
 ): void {
 	const swHigh = uniforms.u_southWest_HIGH.value;
 	const swLow = uniforms.u_southWest_LOW.value;
@@ -401,7 +395,10 @@ function updateCpuPlanarUniforms(
  * @param frameState 当前 Three 侧帧状态。
  * @param uniforms 原地更新的共享材质 uniform。
  */
-export function updateFrameStateUniforms( frameState: CesiumGroundFrameState, uniforms: SharedUniforms ): void {
+export function updateFrameStateUniforms(
+	frameState: CesiumGroundFrameState,
+	uniforms: GroundRuntimeUniforms,
+): void {
 	const camera = frameState.camera;
 	const quaternion = camera.quaternion;
 
@@ -490,40 +487,22 @@ export function updateFrameStateUniforms( frameState: CesiumGroundFrameState, un
 	}
 }
 
-/**
- * 可选注入点，供需要非默认 color material 的调用方使用。
- * 例如贴地文字和图片点需要用纹理 sampler 替代 per-instance 填充色。
- * 其它调用方省略该参数时，图元回退到 `createColorMaterial`，
- * 圆形/矩形/多边形行为保持不变。
- */
-export interface ClassificationColorInjection {
-	/** 自定义 color material 工厂。未设置时使用默认 `createColorMaterial`。 */
-	colorMaterialFactory?: ( uniforms: SharedUniforms, fragmentCull: boolean ) => RawShaderMaterial;
-	/** 材质构建前合并到共享 uniform map 的额外 uniform。 */
-	extraUniforms?: Record<string, { value: unknown }>;
-	/** Stage 5 safe Material Appearance；Raw Appearance 留到后续三 pass 阶段。 */
+/** Internal logical Material configuration for one classification command set. */
+interface ClassificationMaterialOptions {
+	/** Optional safe or Raw Appearance; omitted values use the primitive default. */
 	appearance?: CesiumGroundAppearance;
-	/** Selects the canonical color ABI; decal keeps the same shadow-volume passes. */
+	/** Selects the canonical surface/decal ABI for the command set. */
 	primitiveKind?: Extract<GroundPrimitiveKind, 'surface' | 'decal'>;
-	/** Optional logical default used when no explicit Appearance is supplied. */
+	/** Logical default used by safe fallback and Raw createDefaultMaterial(). */
 	defaultMaterial?: CesiumGroundMaterial;
-	/**
-	 * 仅供 Ground primitive 分阶段迁移使用的内部开关。
-	 *
-	 * `true` 时 front/back stencil 仍由历史固定工厂创建，只有 color 命令进入
-	 * Material assembler/compiler。文字和图片贴花当前仍依赖自定义 legacy color
-	 * factory，因此不得同时传入 `colorMaterialFactory`；等 decal 阶段迁移时会改由
-	 * 独立的 `primitiveKind: 'decal'` 管线接管。
-	 */
-	useMaterialPipeline?: boolean;
 }
 
 /**
- * 一个 classification 实例私有的 color 编译上下文。
+ * 一个 classification 实例私有的 Material 编译上下文。
  *
  * system map、logical Material 和 Appearance 都在构造时只创建一次；后续
  * `setFragmentCulling()` 只替换 `compiledColor`。这样旧 style setter 写入的
- * SharedUniform wrapper 会被 canonical map 持续别名引用，既不复制值，也不会
+ * runtime wrapper 会被 canonical map 持续别名引用，既不复制值，也不会
  * 因重编译丢失 wrapper 身份。
  */
 interface ClassificationMaterialPipelineRuntime {
@@ -587,16 +566,18 @@ function compileClassificationPass(
 }
 
 /**
- * Builds the complete candidate set needed by the current Appearance kind.
- * Safe appearances intentionally return only color; Raw appearances must own all
- * three surface passes so a user vertex transform cannot silently diverge between
- * stencil and classification color.
+ * Builds the candidate set needed by the current Appearance transition. Safe
+ * appearances normally rebuild only color and retain fixed compiled stencils;
+ * initial construction and Raw-to-safe transitions also assemble the fixed pair.
+ * Raw appearances always own all three passes so a user vertex transform cannot
+ * silently diverge between stencil and classification color.
  */
 function compileClassificationAppearance(
 	runtime: Pick<ClassificationMaterialPipelineRuntime, 'systemUniforms' | 'defaultMaterial' | 'appearance' | 'primitiveId' | 'primitiveKind'>,
 	fragmentCull: boolean,
+	includeSafeStencil = false,
 ): Pick<ClassificationMaterialPipelineRuntime, 'compiledFront' | 'compiledBack' | 'compiledColor'> {
-	if ( runtime.appearance instanceof CesiumGroundRawShaderAppearance ) {
+	if ( runtime.appearance instanceof CesiumGroundRawShaderAppearance || includeSafeStencil ) {
 		let compiledFront: GroundCompiledMaterial | undefined;
 		let compiledBack: GroundCompiledMaterial | undefined;
 		let compiledColor: GroundCompiledMaterial | undefined;
@@ -620,19 +601,19 @@ function compileClassificationAppearance(
 
 /**
  * 为一个 classification 创建隔离的默认 Color Material 运行时。
- * canonical system map 只保存 legacy SharedUniform wrapper 的别名；白色 logical
+ * canonical system map 只保存 strict runtime wrapper 的别名；白色 logical
  * Color Material 是乘法恒等元，所以迁移后的默认结果仍完全由原 fill/stroke
  * wrappers 决定。
  */
 function createClassificationMaterialPipelineRuntime(
-	uniforms: SharedUniforms,
+	uniforms: GroundRuntimeUniforms,
 	fragmentCull: boolean,
 	requestedAppearance?: CesiumGroundAppearance,
-	injection?: ClassificationColorInjection,
+	options?: ClassificationMaterialOptions,
 ): ClassificationMaterialPipelineRuntime {
-	const defaultMaterial = injection?.defaultMaterial ?? createColorGroundMaterial();
+	const defaultMaterial = options?.defaultMaterial ?? createColorGroundMaterial();
 	const defaultAppearance = new CesiumGroundMaterialAppearance( { material: defaultMaterial } );
-	const primitiveKind = injection?.primitiveKind ?? 'surface';
+	const primitiveKind = options?.primitiveKind ?? 'surface';
 	if ( requestedAppearance !== undefined &&
 		! ( requestedAppearance instanceof CesiumGroundMaterialAppearance ) &&
 		! ( requestedAppearance instanceof CesiumGroundRawShaderAppearance ) ) {
@@ -649,7 +630,10 @@ function createClassificationMaterialPipelineRuntime(
 		primitiveId: nextClassificationMaterialPrimitiveId ++,
 	};
 
-	return { ...runtimeWithoutCompiled, ...compileClassificationAppearance( runtimeWithoutCompiled, fragmentCull ) };
+	return {
+		...runtimeWithoutCompiled,
+		...compileClassificationAppearance( runtimeWithoutCompiled, fragmentCull, true ),
+	};
 }
 
 /**
@@ -661,13 +645,10 @@ export class CesiumClassificationPrimitive {
 	private readonly stencilMesh: Mesh;
 	private readonly backStencilMesh: Mesh;
 	private readonly colorMesh: Mesh;
-	private readonly uniforms: SharedUniforms;
+	private readonly uniforms: GroundRuntimeUniforms;
 	private readonly cameraHigh = new Vector3();
 	private readonly cameraLow = new Vector3();
-	private readonly colorMaterialFactory:
-		( uniforms: SharedUniforms, fragmentCull: boolean ) => RawShaderMaterial;
-	/** null 表示该实例仍完整使用 legacy color factory（当前 text/image 即如此）。 */
-	private readonly materialPipeline: ClassificationMaterialPipelineRuntime | null;
+	private readonly materialPipeline: ClassificationMaterialPipelineRuntime;
 	private colorFragmentCull: boolean;
 
 	/**
@@ -683,7 +664,7 @@ export class CesiumClassificationPrimitive {
 		alpha: number,
 		renderOrder: number,
 		fragmentCull: boolean,
-		injection?: ClassificationColorInjection,
+		materialOptions?: ClassificationMaterialOptions,
 	) {
 		this.group = new Group();
 		this.group.name = 'CesiumClassificationPrimitive';
@@ -743,63 +724,21 @@ export class CesiumClassificationPrimitive {
 			czm_farDepthFromNearPlusOne: { value: 1.0 },
 			czm_log2FarDepthFromNearPlusOne: { value: 1.0 },
 			czm_oneOverLog2FarDepthFromNearPlusOne: { value: 1.0 },
-			// 历史贴地文字纹理槽，保留在 SharedUniforms 中兼容旧扩展；新文字和图片点
-			// 统一使用下方 u_decalTexture/u_decalOpacity。
-			u_textTexture: { value: null },
-			// 通用透明纹理贴花槽。文字与图片点都通过 extraUniforms 覆盖。
-			u_decalTexture: { value: null },
-			u_decalOpacity: { value: 1.0 },
 		};
 
-		// 在任何材质构建前合并调用方提供的 uniform（例如 `u_decalTexture`），
-		// 使三个命令共享同一张 map。
-		if ( injection !== undefined && injection.extraUniforms !== undefined ) {
-			for ( const key in injection.extraUniforms ) {
-				if ( Object.prototype.hasOwnProperty.call( injection.extraUniforms, key ) ) {
-					this.uniforms[ key ] = injection.extraUniforms[ key ];
-				}
-			}
+		this.materialPipeline = createClassificationMaterialPipelineRuntime(
+			this.uniforms,
+			fragmentCull,
+			materialOptions?.appearance,
+			materialOptions,
+		);
+		const frontStencilMaterial = this.materialPipeline.compiledFront?.material;
+		const backStencilMaterial = this.materialPipeline.compiledBack?.material;
+		if ( frontStencilMaterial === undefined || backStencilMaterial === undefined ) {
+			this.materialPipeline.compiledColor.material.dispose();
+			throw new Error( 'Classification compiler did not create the fixed stencil pass set.' );
 		}
-
-		if ( injection?.useMaterialPipeline === true && injection.colorMaterialFactory !== undefined ) {
-			throw new TypeError(
-				'Classification Material pipeline cannot be combined with a legacy colorMaterialFactory.',
-			);
-		}
-
-		// 保存 color material 工厂，使 `setFragmentCulling` 后续重建 color mesh 时
-		// 不会丢失 textured-decal color 注入。
-		this.colorMaterialFactory =
-			injection !== undefined && injection.colorMaterialFactory !== undefined
-				? injection.colorMaterialFactory
-				: createColorMaterial;
-		// 此处只创建 color 编译上下文。front/back 继续在下方调用既有 stencil
-		// 工厂，确保 Stage 4 迁移不会改变它们的 GLSL、render state 或对象身份。
-		this.materialPipeline = injection?.useMaterialPipeline === true
-			? createClassificationMaterialPipelineRuntime(
-				this.uniforms,
-				fragmentCull,
-				injection.appearance,
-				injection,
-			)
-			: null;
-
-		const frontStencilMaterial = this.materialPipeline?.compiledFront?.material
-			?? createStencilMaterial(
-				this.uniforms,
-				FrontSide,
-				DecrementWrapStencilOp,
-				'CesiumClassificationFrontStencilDepthMaterial',
-			);
-		const backStencilMaterial = this.materialPipeline?.compiledBack?.material
-			?? createStencilMaterial(
-				this.uniforms,
-				BackSide,
-				IncrementWrapStencilOp,
-				'CesiumClassificationBackStencilDepthMaterial',
-			);
-		const colorMaterial = this.materialPipeline?.compiledColor.material
-			?? this.colorMaterialFactory( this.uniforms, fragmentCull );
+		const colorMaterial = this.materialPipeline.compiledColor.material;
 
 		this.stencilMesh = new Mesh( geometry, frontStencilMaterial );
 		this.stencilMesh.name = 'CesiumClassificationFrontStencilDepthCommand';
@@ -945,15 +884,10 @@ export class CesiumClassificationPrimitive {
 	/**
 	 * Returns the logical Appearance currently bound to the color pass.
 	 *
-	 * Legacy injected decal/text instances deliberately have no safe pipeline in
-	 * Stage 5 and therefore throw a clear error instead of exposing a misleading
-	 * partial Appearance. Surface primitives always enable the pipeline and return
-	 * either their internal default or the exact user Appearance object.
+	 * Every surface/decal instance uses the canonical pipeline and returns either
+	 * its internal default or the exact user Appearance object.
 	 */
 	public get appearance(): CesiumGroundAppearance {
-		if ( this.materialPipeline === null ) {
-			throw new Error( 'This legacy classification instance has no Material Appearance.' );
-		}
 		return this.materialPipeline.appearance;
 	}
 
@@ -963,9 +897,6 @@ export class CesiumClassificationPrimitive {
 	 * Appearance; user-owned logical materials are never disposed here.
 	 */
 	public setAppearance( appearance?: CesiumGroundAppearance ): void {
-		if ( this.materialPipeline === null ) {
-			throw new Error( 'This legacy classification instance does not support Appearance switching.' );
-		}
 		if (
 			appearance !== undefined &&
 			! ( appearance instanceof CesiumGroundMaterialAppearance )
@@ -979,34 +910,23 @@ export class CesiumClassificationPrimitive {
 		// Compile first. A validation failure leaves the current material and
 		// Appearance untouched, so a failed custom shader cannot create a half-updated
 		// command block or a transient transparent frame.
+		const replaceRawStencilWithFixed =
+			this.materialPipeline.appearance instanceof CesiumGroundRawShaderAppearance &&
+			! ( nextAppearance instanceof CesiumGroundRawShaderAppearance );
 		const nextCompiled = compileClassificationAppearance( {
 			...this.materialPipeline,
 			appearance: nextAppearance,
-		}, this.colorFragmentCull );
+		}, this.colorFragmentCull, replaceRawStencilWithFixed );
 		const previousFrontMaterial = this.stencilMesh.material as Material;
 		const previousBackMaterial = this.backStencilMesh.material as Material;
 		const previousColorMaterial = this.colorMesh.material as Material;
-		const nextFrontMaterial = nextCompiled.compiledFront?.material
-			?? ( this.materialPipeline.appearance instanceof CesiumGroundRawShaderAppearance
-				? createStencilMaterial(
-					this.uniforms,
-					FrontSide,
-					DecrementWrapStencilOp,
-					'CesiumClassificationFrontStencilDepthMaterial',
-				)
-				: previousFrontMaterial );
-		const nextBackMaterial = nextCompiled.compiledBack?.material
-			?? ( this.materialPipeline.appearance instanceof CesiumGroundRawShaderAppearance
-				? createStencilMaterial(
-					this.uniforms,
-					BackSide,
-					IncrementWrapStencilOp,
-					'CesiumClassificationBackStencilDepthMaterial',
-				)
-				: previousBackMaterial );
+		const nextFrontMaterial = nextCompiled.compiledFront?.material ?? previousFrontMaterial;
+		const nextBackMaterial = nextCompiled.compiledBack?.material ?? previousBackMaterial;
 		this.materialPipeline.appearance = nextAppearance;
-		this.materialPipeline.compiledFront = nextCompiled.compiledFront;
-		this.materialPipeline.compiledBack = nextCompiled.compiledBack;
+		this.materialPipeline.compiledFront =
+			nextCompiled.compiledFront ?? this.materialPipeline.compiledFront;
+		this.materialPipeline.compiledBack =
+			nextCompiled.compiledBack ?? this.materialPipeline.compiledBack;
 		this.materialPipeline.compiledColor = nextCompiled.compiledColor;
 		this.stencilMesh.material = nextFrontMaterial;
 		this.backStencilMesh.material = nextBackMaterial;
@@ -1130,7 +1050,6 @@ export class CesiumClassificationPrimitive {
 	 * candidate compilation completes before the old color material is disposed.
 	 */
 	private reconcileMaterialAppearance(): void {
-		if ( this.materialPipeline === null ) return;
 		const currentVersion = this.materialPipeline.appearance.version;
 		if ( this.materialPipeline.compiledColor.appearanceVersion === currentVersion ) return;
 
@@ -1140,8 +1059,10 @@ export class CesiumClassificationPrimitive {
 		const previousColorMaterial = this.colorMesh.material as Material;
 		const nextFrontMaterial = nextCompiled.compiledFront?.material ?? previousFrontMaterial;
 		const nextBackMaterial = nextCompiled.compiledBack?.material ?? previousBackMaterial;
-		this.materialPipeline.compiledFront = nextCompiled.compiledFront;
-		this.materialPipeline.compiledBack = nextCompiled.compiledBack;
+		this.materialPipeline.compiledFront =
+			nextCompiled.compiledFront ?? this.materialPipeline.compiledFront;
+		this.materialPipeline.compiledBack =
+			nextCompiled.compiledBack ?? this.materialPipeline.compiledBack;
 		this.materialPipeline.compiledColor = nextCompiled.compiledColor;
 		this.stencilMesh.material = nextFrontMaterial;
 		this.backStencilMesh.material = nextBackMaterial;
@@ -1164,18 +1085,13 @@ export class CesiumClassificationPrimitive {
 		// compiler 路径先完整构建候选产物；只有编译期校验全部成功后才改变
 		// 当前开关和 Mesh.material。若未来 safe/Raw appearance 构建抛错，旧 color
 		// command 仍保持可用，不会出现半套命令或一帧空白。
-		const nextCompiled = this.materialPipeline === null
-			? null
-			: compileClassificationColor( this.materialPipeline, enabled );
-		const nextMaterial = nextCompiled?.material
-			?? this.colorMaterialFactory( this.uniforms, enabled );
+		const nextCompiled = compileClassificationColor( this.materialPipeline, enabled );
+		const nextMaterial = nextCompiled.material;
 		const oldMaterial = this.colorMesh.material as Material;
 
 		this.colorFragmentCull = enabled;
 		this.colorMesh.material = nextMaterial;
-		if ( nextCompiled !== null && this.materialPipeline !== null ) {
-			this.materialPipeline.compiledColor = nextCompiled;
-		}
+		this.materialPipeline.compiledColor = nextCompiled;
 		oldMaterial.dispose();
 	}
 

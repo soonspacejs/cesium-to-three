@@ -112,7 +112,7 @@ import type {
 	LonLatPoint,
 	PolygonHierarchyDegrees,
 	RectangleRadians,
-	SharedUniforms,
+	GroundRuntimeUniforms,
 } from './types';
 
 /**
@@ -280,13 +280,7 @@ export class CesiumGroundRectanglePrimitive {
 			alpha,
 			options.renderOrder ?? 10,
 			options.fragmentCull ?? true,
-			{
-				// Stage 4 首个运行时切换点：矩形仅把 color pass 交给显式
-				// Material compiler；classification 内部仍保留原 front/back
-				// stencil 材质、三个 Mesh、共享 wrapper 和命令顺序。
-				useMaterialPipeline: true,
-				appearance: options.appearance,
-			},
+			{ appearance: options.appearance },
 		);
 		this.classification.group.visible = options.visible;
 		this.classification.setClassificationType( options.classificationType );
@@ -527,13 +521,7 @@ export class CesiumGroundPolygonPrimitive {
 			fillAlpha,
 			options.renderOrder ?? 30,
 			options.fragmentCull ?? true,
-			{
-				// Polygon geometry and its hole/stroke uniforms remain unchanged;
-				// only the color command is now assembled through the canonical
-				// surface Material ABI. The fixed stencil pair stays legacy-owned.
-				useMaterialPipeline: true,
-				appearance: options.appearance,
-			},
+			{ appearance: options.appearance },
 		);
 		this.classification.group.visible = options.visible ?? true;
 		this.classification.setClassificationType( options.classificationType );
@@ -702,13 +690,7 @@ export class CesiumGroundCirclePrimitive {
 			alpha,
 			options.renderOrder ?? 50,
 			options.fragmentCull ?? true,
-			{
-				// Ring/sector evaluation already lives in the trusted surface system
-				// stage. This opt-in changes only the color material source; circle
-				// shadow-volume geometry and the fixed stencil pair remain untouched.
-				useMaterialPipeline: true,
-				appearance: options.appearance,
-			},
+			{ appearance: options.appearance },
 		);
 		this.classification.group.visible = options.visible;
 		this.classification.setClassificationType( options.classificationType );
@@ -982,7 +964,7 @@ function parseLineColor( strokeColor: string, strokeOpacity: number ): { color: 
  */
 export class CesiumGroundPolylinePrimitive {
 	private readonly _group = new Group();
-	private readonly uniforms: SharedUniforms;
+	private readonly uniforms: GroundRuntimeUniforms;
 	private readonly mesh: Mesh;
 	/** The currently bound compiled or legacy compatibility material. */
 	private material: RawShaderMaterial;
@@ -1640,7 +1622,7 @@ function createPolylineUniforms(
 	alpha: number,
 	options: ResolvedLineOptions,
 	length3D: number,
-): SharedUniforms {
+): GroundRuntimeUniforms {
 	const safeAlpha = Math.min( Math.max( alpha, 0.0 ), 1.0 );
 
 	return {
@@ -1653,7 +1635,7 @@ function createPolylineUniforms(
 		czm_geometricToleranceOverMeter: { value: 0.0 },
 		czm_sceneMode: { value: 3.0 },
 
-		// 占位字段（polyline 不读，但与共享 SharedUniforms 接口保持兼容）
+		// Compatibility placeholders retained by the strict runtime schema.
 		u_globeMinimumAltitude: { value: CESIUM_GLOBE_MINIMUM_ALTITUDE },
 		u_southWest_HIGH: { value: new Vector3() },
 		u_southWest_LOW: { value: new Vector3() },
@@ -1691,21 +1673,13 @@ function createPolylineUniforms(
 		czm_farDepthFromNearPlusOne: { value: 1.0 },
 		czm_log2FarDepthFromNearPlusOne: { value: 1.0 },
 		czm_oneOverLog2FarDepthFromNearPlusOne: { value: 1.0 },
-		u_textTexture: { value: null },
 
-		// ── 贴地线扩展 9 件套 ──
+		// ── 贴地线扩展 ──
 		czm_projection: { value: new Matrix4() },
 		czm_pixelRatio: { value: 1.0 },
 		u_lineWidthPixels: { value: options.widthPixels ?? LINE_DEFAULT_WIDTH_PIXELS },
 		u_lineWidthMode: { value: options.widthMode === LineWidthMode.WORLD ? 1.0 : 0.0 },
 		u_lineWidthMeters: { value: options.widthMeters },
-		// Deprecated dash wrappers stay in SharedUniforms for one compatibility
-		// cycle. They are intentionally absent from the canonical system map and
-		// compiled shader; the internal Dash Material owns its independent user
-		// wrappers with the ABI names u_dashLengthMeters/u_gapLengthMeters.
-		u_lineDashEnabled: { value: options.dashEnabled ? 1.0 : 0.0 },
-		u_lineDashLengthMeters: { value: options.dashLengthMeters },
-		u_lineGapLengthMeters: { value: options.gapLengthMeters },
 		u_lineTotalMeters: { value: length3D },
 
 		// ── 线端箭头 7 件套（线材质里这些 uniform 是 inactive，无副作用） ──
@@ -1735,5 +1709,5 @@ function createPolylineUniforms(
 		// 收口策略：solid 整段收平到 base、open 收窄成 V 形。两端独立。
 		u_lineArrowStyleStart: { value: ARROW_STYLE_ID[ options.arrowStartStyle ] },
 		u_lineArrowStyleEnd: { value: ARROW_STYLE_ID[ options.arrowEndStyle ] },
-	} as unknown as SharedUniforms;
+	} as unknown as GroundRuntimeUniforms;
 }

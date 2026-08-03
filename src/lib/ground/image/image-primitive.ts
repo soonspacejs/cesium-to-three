@@ -83,7 +83,6 @@ export class CesiumGroundImagePrimitive {
 				options.renderOrder ?? 10,
 				options.fragmentCull ?? true,
 				{
-					useMaterialPipeline: true,
 					primitiveKind: 'decal',
 					defaultMaterial: this.defaultMaterial,
 					appearance: options.appearance,

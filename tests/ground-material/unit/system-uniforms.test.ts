@@ -6,7 +6,7 @@ import {
 	createGroundTimeUniforms,
 	mergeGroundUniforms,
 } from '../../../src/lib/ground/material/system-uniforms';
-import type { SharedUniforms } from '../../../src/lib/ground/types';
+import type { GroundRuntimeUniforms } from '../../../src/lib/ground/types';
 
 describe( 'canonical Ground system uniforms', () => {
 	it( 'aliases surface legacy wrappers without exposing legacy keys', () => {
@@ -17,7 +17,7 @@ describe( 'canonical Ground system uniforms', () => {
 			czm_viewport: viewport,
 			u_color: fill,
 			u_borderColor: stroke,
-		} as unknown as SharedUniforms;
+		} as unknown as GroundRuntimeUniforms;
 		const canonical = createCanonicalGroundSystemUniforms( legacy, 'surface' );
 
 		expect( canonical.czm_viewport ).toBe( viewport );
@@ -33,7 +33,7 @@ describe( 'canonical Ground system uniforms', () => {
 		const legacy = {
 			u_color: color,
 			u_lineWidthPixels: width,
-		} as unknown as SharedUniforms;
+		} as unknown as GroundRuntimeUniforms;
 
 		for ( const kind of [ 'polyline', 'arrow' ] as const ) {
 			const canonical = createCanonicalGroundSystemUniforms( legacy, kind );
@@ -61,7 +61,7 @@ describe( 'canonical Ground system uniforms', () => {
 			c23_time: existing.c23_time,
 			c23_deltaTime: existing.c23_deltaTime,
 			c23_frameNumber: existing.c23_frameNumber,
-		} as unknown as SharedUniforms;
+		} as unknown as GroundRuntimeUniforms;
 		const replacement = createGroundTimeUniforms();
 		const canonical = createCanonicalGroundSystemUniforms( legacy, 'surface', replacement );
 

@@ -18,10 +18,10 @@ import { CesiumGroundMaterialAppearance } from '../../../src/lib/ground/material
 import type { PlanarExtents } from '../../../src/lib/ground/types';
 
 /**
- * Unit tests intentionally stop before a renderer compiles the GLSL. The Stage 4
+ * Unit tests intentionally stop before a renderer compiles the GLSL. The
  * contract under test is ownership and identity: one canonical system map is
- * created, only color is assembled, and the existing command graph survives a
- * fragment-culling rebuild unchanged.
+ * shared by the explicitly assembled stencil/color pass set, and the command
+ * graph survives a fragment-culling rebuild unchanged.
  */
 function createExtents(): PlanarExtents {
 	return {
@@ -70,7 +70,7 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 }
 
 describe( 'classification color Material pipeline', () => {
-	it( 'keeps fixed stencil commands and wrapper aliases while compiling only color', () => {
+	it( 'assembles fixed stencil commands without legacy shader patching', () => {
 		const geometry = new BufferGeometry();
 		const primitive = new CesiumClassificationPrimitive(
 			geometry,
@@ -79,21 +79,21 @@ describe( 'classification color Material pipeline', () => {
 			0.75,
 			12,
 			true,
-			{ useMaterialPipeline: true },
+			{},
 		);
 		const commands = getCommands( primitive );
 		const frontMaterial = commands.front.material as RawShaderMaterial;
 		const backMaterial = commands.back.material as RawShaderMaterial;
 		const colorMaterial = commands.color.material as RawShaderMaterial;
 
-		// Stencil remains the legacy material and therefore keeps its historical
-		// source/state identity; the compiled color pass uses GLSL3 and canonical
-		// c23_* aliases alongside the logical u_color multiplier.
+		// All three passes use the canonical compiler. Fixed stencil shaders borrow
+		// only system wrappers; the color pass additionally owns logical u_color.
 		expect( frontMaterial.side ).toBe( FrontSide );
-		expect( frontMaterial.uniforms.u_color ).toBeDefined();
-		expect( backMaterial.uniforms.u_color ).toBe( frontMaterial.uniforms.u_color );
+		expect( frontMaterial.uniforms.u_color ).toBeUndefined();
+		expect( frontMaterial.uniforms.c23_fillColor ).toBeDefined();
+		expect( backMaterial.uniforms.c23_fillColor ).toBe( frontMaterial.uniforms.c23_fillColor );
 		expect( colorMaterial.glslVersion ).toBe( GLSL3 );
-		expect( colorMaterial.uniforms.c23_fillColor ).toBe( frontMaterial.uniforms.u_color );
+		expect( colorMaterial.uniforms.c23_fillColor ).toBe( frontMaterial.uniforms.c23_fillColor );
 		expect( colorMaterial.uniforms.u_color ).toBeDefined();
 		expect( colorMaterial.uniforms.u_color ).not.toBe( frontMaterial.uniforms.u_color );
 		expect( colorMaterial.fragmentShader ).toContain( 'c23_getMaterial' );
@@ -119,29 +119,10 @@ describe( 'classification color Material pipeline', () => {
 		expect( rebuilt.back.material ).toBe( backMaterial );
 		expect( rebuilt.color.material ).not.toBe( colorMaterial );
 		expect(( rebuilt.color.material as RawShaderMaterial ).uniforms.c23_fillColor )
-			.toBe( frontMaterial.uniforms.u_color );
+			.toBe( frontMaterial.uniforms.c23_fillColor );
 		expect( oldColorDispose ).toHaveBeenCalledTimes( 1 );
 
 		primitive.dispose();
-	} );
-
-	it( 'does not silently combine the opt-in compiler with a legacy factory', () => {
-		const legacyFactory = vi.fn( () => new RawShaderMaterial() );
-		const geometry = new BufferGeometry();
-		expect( () => new CesiumClassificationPrimitive(
-			geometry,
-			createExtents(),
-			new Color( 1, 1, 1 ),
-			1,
-			0,
-			true,
-			{
-				useMaterialPipeline: true,
-				colorMaterialFactory: legacyFactory,
-			},
-		) ).toThrow( /cannot be combined/ );
-		expect( legacyFactory ).not.toHaveBeenCalled();
-		geometry.dispose();
 	} );
 
 	it( 'atomically switches safe appearances and restores the internal default', () => {
@@ -152,7 +133,7 @@ describe( 'classification color Material pipeline', () => {
 			0.75,
 			12,
 			true,
-			{ useMaterialPipeline: true },
+			{},
 		);
 		const defaultAppearance = primitive.appearance;
 		const before = getCommands( primitive );
@@ -206,7 +187,7 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 			0.75,
 			12,
 			true,
-			{ useMaterialPipeline: true, appearance },
+			{ appearance },
 		);
 		const before = getCommands( primitive );
 		const oldColorMaterial = before.color.material as RawShaderMaterial;
@@ -256,7 +237,7 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 			0.75,
 			12,
 			true,
-			{ useMaterialPipeline: true, appearance },
+			{ appearance },
 		);
 		const colorMaterial = getCommands( primitive ).color.material as RawShaderMaterial;
 		const time = colorMaterial.uniforms.c23_time;

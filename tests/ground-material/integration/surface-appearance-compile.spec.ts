@@ -26,9 +26,9 @@ test( 'links one safe surface Appearance on rectangle, polygon, and circle', asy
 	expect( report.customUniformBound ).toEqual( [ true, true, true, false ] );
 	expect( report.stencilMaterialCallsMaterial ).toEqual( [ false, false, false, false ] );
 	expect( report.rawPasses ).toEqual( [ 'frontStencil', 'backStencil', 'color' ] );
-	// Safe primitives share one color and one fixed-stencil program. Raw factory
-	// calls createDefaultMaterial for all three passes, while pass-specific ABI
-	// macros and the custom safe source produce three additional driver programs.
-	expect( report.programCount ).toBe( 5 );
+	// Stage 14 routes safe and Raw stencil defaults through the same canonical
+	// compiler sources. Three therefore shares front/back programs across both
+	// Appearance kinds; only custom-safe and Raw-default color remain distinct.
+	expect( report.programCount ).toBe( 4 );
 	expect( browserErrors ).toEqual( [] );
 } );
