@@ -662,6 +662,12 @@ export class CesiumGroundCirclePrimitive {
 			alpha,
 			options.renderOrder ?? 50,
 			options.fragmentCull ?? true,
+			{
+				// Ring/sector evaluation already lives in the trusted surface system
+				// stage. This opt-in changes only the color material source; circle
+				// shadow-volume geometry and the fixed stencil pair remain untouched.
+				useMaterialPipeline: true,
+			},
 		);
 		this.classification.group.visible = options.visible;
 		this.classification.setClassificationType( options.classificationType );
