@@ -23,8 +23,9 @@ test( 'links default, safe, and Raw text/image decals in WebGL2', async ( { page
 		'CesiumGroundDecalColorMaterial',
 		'CesiumGroundDecalColorMaterial',
 		'Stage10RawDecal',
+		'CesiumGroundDecalColorMaterial',
 	] );
-	expect( report.decalDefines ).toEqual( [ true, true, true, true, true, true ] );
+	expect( report.decalDefines ).toEqual( [ true, true, true, true, true, true, true ] );
 	expect( report.customUniformBound ).toBe( true );
 	expect( report.rawPasses ).toEqual( [
 		'decal:frontStencil', 'decal:backStencil', 'decal:color',
@@ -33,5 +34,6 @@ test( 'links default, safe, and Raw text/image decals in WebGL2', async ( { page
 	expect( report.textGroupStable ).toBe( true );
 	expect( report.textGeometryStable ).toBe( true );
 	expect( report.textTextureStable ).toBe( true );
+	expect( report.imagePointAppearanceForwarded ).toBe( true );
 	expect( browserErrors ).toEqual( [] );
 } );

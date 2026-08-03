@@ -13,6 +13,7 @@ import {
 } from 'three';
 
 import { CesiumGroundImagePrimitive } from '../../../src/lib/ground/image/image-primitive';
+import { CesiumGroundPointPrimitive } from '../../../src/lib/ground/primitives';
 import { CesiumGroundTextPrimitive } from '../../../src/lib/ground/text/text-primitive';
 import { CesiumGroundMaterial } from '../../../src/lib/ground/material/CesiumGroundMaterial';
 import {
@@ -31,6 +32,7 @@ export interface DecalAppearanceCompileReport {
 	textGroupStable: boolean;
 	textGeometryStable: boolean;
 	textTextureStable: boolean;
+	imagePointAppearanceForwarded: boolean;
 }
 
 declare global {
@@ -138,9 +140,21 @@ async function compileDecalAppearances(): Promise<DecalAppearanceCompileReport> 
 		strokeColor: '#ffffff', strokeWidth: 0, strokeOpacity: 0,
 		fillColor: '#ffffff', fillOpacity: 100, visible: true, appearance: rawAppearance,
 	} );
-	const primitives = [ defaultText, safeText, rawText, defaultImage, safeImage, rawImage ];
+	const imagePoint = new CesiumGroundPointPrimitive( {
+		position: [ 121.403, 31.201 ], shape: 'image', imageUrl: IMAGE_URL,
+		imageWidth: 20, imageHeight: 20,
+		strokeColor: '#ffffff', strokeWidth: 0, strokeOpacity: 0,
+		fillColor: '#ffffff', fillOpacity: 100, visible: true, appearance: safeAppearance,
+	} );
+	const primitives = [
+		defaultText, safeText, rawText, defaultImage, safeImage, rawImage, imagePoint,
+	];
 	const scene = new Scene();
-	for ( const primitive of primitives ) scene.add( primitive.group );
+	for ( const primitive of primitives ) {
+		scene.add( primitive instanceof CesiumGroundPointPrimitive
+			? primitive.classification.group
+			: primitive.group );
+	}
 	const camera = new PerspectiveCamera( 45, 1, 1, 1_000_000 );
 	camera.position.z = 2;
 	camera.updateProjectionMatrix();
@@ -169,6 +183,7 @@ async function compileDecalAppearances(): Promise<DecalAppearanceCompileReport> 
 		textGroupStable: defaultText.group === beforeGroup,
 		textGeometryStable: afterGeometry === beforeGeometry,
 		textTextureStable: colors[ 0 ].uniforms.u_texture.value === beforeTexture,
+		imagePointAppearanceForwarded: imagePoint.appearance === safeAppearance,
 	};
 	for ( const primitive of primitives ) primitive.dispose();
 	renderer.dispose();
