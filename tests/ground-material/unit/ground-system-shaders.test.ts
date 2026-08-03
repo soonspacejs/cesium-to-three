@@ -4,6 +4,7 @@ import { CesiumGroundMaterial } from '../../../src/lib/ground/material/CesiumGro
 import {
 	createGroundClassificationColorShaders,
 	createGroundClassificationStencilShaders,
+	createGroundPolylineShaders,
 } from '../../../src/lib/ground/material/ground-system-shaders';
 
 const COLOR_MATERIAL = new CesiumGroundMaterial( {
@@ -77,5 +78,23 @@ describe( 'Ground classification stencil system shaders', () => {
 		expect( source.fragmentShader ).not.toContain( '#define C23_FRAGMENT_CULL 1' );
 		expect( source.fragmentShader ).toContain( 'c23_input.st = c23_surface.st' );
 		expect( source.fragmentShader ).not.toContain( 'discard;' );
+	} );
+
+	it( 'locks the full polyline reconstruction, membership, and ABI source', () => {
+		const source = createGroundPolylineShaders( COLOR_MATERIAL, false );
+		expect( source ).toMatchSnapshot();
+		expect( source.vertexShader ).toContain( 'startHiAndForwardOffsetX' );
+		expect( source.fragmentShader ).toContain( 'c23_polylineRayMissesEllipsoid' );
+		expect( source.fragmentShader ).toContain( 'c23_polylineEyePointBeyondHorizon' );
+		expect( source.fragmentShader ).toContain( 'c23_distanceAlongMeters' );
+		expect( source.fragmentShader ).toContain( 'c23_input.distanceAcrossMeters = c23_acrossMeters' );
+		expect( source.fragmentShader.match( /c23_getMaterial\(c23_input\)/g ) ).toHaveLength( 1 );
+	} );
+
+	it( 'adds debug box output only through a compile-time system define', () => {
+		const normal = createGroundPolylineShaders( COLOR_MATERIAL, false );
+		const debug = createGroundPolylineShaders( COLOR_MATERIAL, true );
+		expect( normal.fragmentShader ).not.toContain( '#define C23_DEBUG_VOLUME 1' );
+		expect( debug.fragmentShader ).toContain( '#define C23_DEBUG_VOLUME 1' );
 	} );
 } );
