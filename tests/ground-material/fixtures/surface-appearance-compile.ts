@@ -22,6 +22,7 @@ import {
 } from '../../../src/lib/ground/primitives';
 import { CesiumGroundMaterial } from '../../../src/lib/ground/material/CesiumGroundMaterial';
 import { CesiumGroundMaterialAppearance } from '../../../src/lib/ground/material/appearances';
+import { CesiumGroundRawShaderAppearance } from '../../../src/lib/ground/material/appearances';
 
 export interface SurfaceAppearanceCompileReport {
 	ready: boolean;
@@ -30,6 +31,7 @@ export interface SurfaceAppearanceCompileReport {
 	colorMaterialNames: string[];
 	customUniformBound: boolean[];
 	stencilMaterialCallsMaterial: boolean[];
+	rawPasses: string[];
 	errors: string[];
 }
 
@@ -77,6 +79,15 @@ function compileSurfaceAppearances(): SurfaceAppearanceCompileReport {
 			fragmentShader: SAFE_SOURCE,
 		} ),
 	} );
+	const rawPasses: string[] = [];
+	const rawAppearance = new CesiumGroundRawShaderAppearance( {
+		factory: context => {
+			rawPasses.push( context.pass );
+			const material = context.createDefaultMaterial();
+			material.name = `Stage5Raw/${ context.pass }`;
+			return material;
+		},
+	} );
 	const rectangle = new CesiumGroundRectanglePrimitive( {
 		points: [ [ 121.4, 31.2 ], [ 121.401, 31.2 ], [ 121.401, 31.201 ], [ 121.4, 31.201 ] ],
 		strokeColor: '#ffffff', strokeWidth: 2, strokeOpacity: 100,
@@ -92,8 +103,13 @@ function compileSurfaceAppearances(): SurfaceAppearanceCompileReport {
 		strokeColor: '#ffffff', strokeWidth: 2, strokeOpacity: 100,
 		fillColor: '#44aa66', fillOpacity: 80, visible: true, appearance,
 	} );
+	const rawCircle = new CesiumGroundCirclePrimitive( {
+		center: [ 121.405, 31.2 ], radius: 50,
+		strokeColor: '#ffffff', strokeWidth: 2, strokeOpacity: 100,
+		fillColor: '#44aa66', fillOpacity: 80, visible: true, appearance: rawAppearance,
+	} );
 
-	const primitives = [ rectangle, polygon, circle ];
+	const primitives = [ rectangle, polygon, circle, rawCircle ];
 	const scene = new Scene();
 	for ( const primitive of primitives ) scene.add( primitive.classification.group );
 	const camera = new PerspectiveCamera( 45, 1, 1, 1_000_000 );
@@ -135,6 +151,7 @@ function compileSurfaceAppearances(): SurfaceAppearanceCompileReport {
 		colorMaterialNames,
 		customUniformBound,
 		stencilMaterialCallsMaterial,
+		rawPasses,
 		errors,
 	};
 

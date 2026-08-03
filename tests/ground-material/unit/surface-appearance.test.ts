@@ -83,11 +83,17 @@ describe( 'surface primitive safe Appearance forwarding', () => {
 		circle.dispose();
 	} );
 
-	it( 'rejects Raw Appearance before a surface primitive can bind a partial Stage 5 path', () => {
+	it( 'binds an independent Raw material for each surface pass', () => {
+		const passes: string[] = [];
 		const raw = new CesiumGroundRawShaderAppearance( {
-			factory: () => new RawShaderMaterial(),
+			factory: context => {
+				passes.push( context.pass );
+				const material = context.createDefaultMaterial();
+				material.name = `RawSurface/${ context.pass }`;
+				return material;
+			},
 		} );
-		expect( () => new CesiumGroundCirclePrimitive( {
+		const circle = new CesiumGroundCirclePrimitive( {
 			center: [ 121.4, 31.2 ],
 			radius: 50,
 			strokeColor: '#ffffff',
@@ -97,6 +103,22 @@ describe( 'surface primitive safe Appearance forwarding', () => {
 			fillOpacity: 80,
 			visible: true,
 			appearance: raw,
-		} ) ).toThrow( /CesiumGroundMaterialAppearance/ );
+		} );
+
+		expect( circle.appearance ).toBe( raw );
+		expect( passes ).toEqual( [ 'frontStencil', 'backStencil', 'color' ] );
+		expect(( circle.classification.group.getObjectByName(
+		'CesiumClassificationFrontStencilDepthCommand',
+		)?.material as RawShaderMaterial ).name ).toBe( 'RawSurface/frontStencil' );
+		expect(( circle.classification.group.getObjectByName(
+		'CesiumClassificationBackStencilDepthCommand',
+		)?.material as RawShaderMaterial ).name ).toBe( 'RawSurface/backStencil' );
+		expect(( circle.classification.group.getObjectByName(
+		'CesiumClassificationColorCommand',
+		)?.material as RawShaderMaterial ).name ).toBe( 'RawSurface/color' );
+
+		circle.setAppearance( undefined );
+		expect( circle.appearance ).not.toBe( raw );
+		circle.dispose();
 	} );
 } );

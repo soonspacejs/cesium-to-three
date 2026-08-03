@@ -37,6 +37,7 @@ import { encodeCesiumVector3 } from './geometry';
 import { createColorMaterial, createStencilMaterial } from './materials';
 import {
 	CesiumGroundMaterialAppearance,
+	CesiumGroundRawShaderAppearance,
 	type CesiumGroundAppearance,
 } from './material/appearances';
 import { createColorGroundMaterial } from './material/builtins';
@@ -507,8 +508,10 @@ interface ClassificationMaterialPipelineRuntime {
 	readonly systemUniforms: GroundSystemUniforms;
 	readonly defaultMaterial: ReturnType<typeof createColorGroundMaterial>;
 	readonly defaultAppearance: CesiumGroundMaterialAppearance;
-	appearance: CesiumGroundMaterialAppearance;
+	appearance: CesiumGroundAppearance;
 	readonly primitiveId: number;
+	compiledFront?: GroundCompiledMaterial;
+	compiledBack?: GroundCompiledMaterial;
 	compiledColor: GroundCompiledMaterial;
 }
 
@@ -539,6 +542,59 @@ function compileClassificationColor(
 	} );
 }
 
+/** Compiles one Raw surface pass with the same canonical wrappers and owner key. */
+function compileClassificationPass(
+	runtime: Pick<ClassificationMaterialPipelineRuntime, 'systemUniforms' | 'defaultMaterial' | 'appearance' | 'primitiveId'>,
+	pass: 'frontStencil' | 'backStencil' | 'color',
+	fragmentCull: boolean,
+): GroundCompiledMaterial {
+	return compileGroundPass( {
+		primitiveKind: 'surface',
+		pass,
+		appearance: runtime.appearance,
+		systemUniforms: runtime.systemUniforms,
+		defaultMaterial: runtime.defaultMaterial,
+		pipelineState: {
+			fragmentCull,
+			debugVolume: false,
+			attributeLayoutKey: 'classification-shadow-volume-v1',
+			primitiveId: runtime.primitiveId,
+		},
+	} );
+}
+
+/**
+ * Builds the complete candidate set needed by the current Appearance kind.
+ * Safe appearances intentionally return only color; Raw appearances must own all
+ * three surface passes so a user vertex transform cannot silently diverge between
+ * stencil and classification color.
+ */
+function compileClassificationAppearance(
+	runtime: Pick<ClassificationMaterialPipelineRuntime, 'systemUniforms' | 'defaultMaterial' | 'appearance' | 'primitiveId'>,
+	fragmentCull: boolean,
+): Pick<ClassificationMaterialPipelineRuntime, 'compiledFront' | 'compiledBack' | 'compiledColor'> {
+	if ( runtime.appearance instanceof CesiumGroundRawShaderAppearance ) {
+		let compiledFront: GroundCompiledMaterial | undefined;
+		let compiledBack: GroundCompiledMaterial | undefined;
+		let compiledColor: GroundCompiledMaterial | undefined;
+		try {
+			compiledFront = compileClassificationPass( runtime, 'frontStencil', fragmentCull );
+			compiledBack = compileClassificationPass( runtime, 'backStencil', fragmentCull );
+			compiledColor = compileClassificationPass( runtime, 'color', fragmentCull );
+			return { compiledFront, compiledBack, compiledColor };
+		} catch ( error ) {
+			// A later pass may fail after earlier factories have returned materials.
+			// Dispose every candidate from this transaction before surfacing the error;
+			// the currently bound command set is deliberately never touched here.
+			compiledFront?.material.dispose();
+			compiledBack?.material.dispose();
+			compiledColor?.material.dispose();
+			throw error;
+		}
+	}
+	return { compiledColor: compileClassificationColor( runtime, fragmentCull ) };
+}
+
 /**
  * 为一个 classification 创建隔离的默认 Color Material 运行时。
  * canonical system map 只保存 legacy SharedUniform wrapper 的别名；白色 logical
@@ -552,13 +608,10 @@ function createClassificationMaterialPipelineRuntime(
 ): ClassificationMaterialPipelineRuntime {
 	const defaultMaterial = createColorGroundMaterial();
 	const defaultAppearance = new CesiumGroundMaterialAppearance( { material: defaultMaterial } );
-	if (
-		requestedAppearance !== undefined &&
-		! ( requestedAppearance instanceof CesiumGroundMaterialAppearance )
-	) {
-		throw new TypeError(
-			'Classification surface appearance must be a CesiumGroundMaterialAppearance in Stage 5.',
-		);
+	if ( requestedAppearance !== undefined &&
+		! ( requestedAppearance instanceof CesiumGroundMaterialAppearance ) &&
+		! ( requestedAppearance instanceof CesiumGroundRawShaderAppearance ) ) {
+		throw new TypeError( 'Classification surface appearance is not a supported Ground Appearance.' );
 	}
 	const appearance = requestedAppearance ?? defaultAppearance;
 	const systemUniforms = createCanonicalGroundSystemUniforms( uniforms, 'surface' );
@@ -570,10 +623,7 @@ function createClassificationMaterialPipelineRuntime(
 		primitiveId: nextClassificationMaterialPrimitiveId ++,
 	};
 
-	return {
-		...runtimeWithoutCompiled,
-		compiledColor: compileClassificationColor( runtimeWithoutCompiled, fragmentCull ),
-	};
+	return { ...runtimeWithoutCompiled, ...compileClassificationAppearance( runtimeWithoutCompiled, fragmentCull ) };
 }
 
 /**
@@ -707,18 +757,20 @@ export class CesiumClassificationPrimitive {
 			)
 			: null;
 
-		const frontStencilMaterial = createStencilMaterial(
-			this.uniforms,
-			FrontSide,
-			DecrementWrapStencilOp,
-			'CesiumClassificationFrontStencilDepthMaterial',
-		);
-		const backStencilMaterial = createStencilMaterial(
-			this.uniforms,
-			BackSide,
-			IncrementWrapStencilOp,
-			'CesiumClassificationBackStencilDepthMaterial',
-		);
+		const frontStencilMaterial = this.materialPipeline?.compiledFront?.material
+			?? createStencilMaterial(
+				this.uniforms,
+				FrontSide,
+				DecrementWrapStencilOp,
+				'CesiumClassificationFrontStencilDepthMaterial',
+			);
+		const backStencilMaterial = this.materialPipeline?.compiledBack?.material
+			?? createStencilMaterial(
+				this.uniforms,
+				BackSide,
+				IncrementWrapStencilOp,
+				'CesiumClassificationBackStencilDepthMaterial',
+			);
 		const colorMaterial = this.materialPipeline?.compiledColor.material
 			?? this.colorMaterialFactory( this.uniforms, fragmentCull );
 
@@ -826,9 +878,7 @@ export class CesiumClassificationPrimitive {
 			appearance !== undefined &&
 			! ( appearance instanceof CesiumGroundMaterialAppearance )
 		) {
-			throw new TypeError(
-				'Classification surface appearance must be a CesiumGroundMaterialAppearance in Stage 5.',
-			);
+			throw new TypeError( 'Classification surface appearance is not a supported Ground Appearance.' );
 		}
 
 		const nextAppearance = appearance ?? this.materialPipeline.defaultAppearance;
@@ -837,15 +887,41 @@ export class CesiumClassificationPrimitive {
 		// Compile first. A validation failure leaves the current material and
 		// Appearance untouched, so a failed custom shader cannot create a half-updated
 		// command block or a transient transparent frame.
-		const nextCompiled = compileClassificationColor( {
+		const nextCompiled = compileClassificationAppearance( {
 			...this.materialPipeline,
 			appearance: nextAppearance,
 		}, this.colorFragmentCull );
-		const previousMaterial = this.colorMesh.material as Material;
+		const previousFrontMaterial = this.stencilMesh.material as Material;
+		const previousBackMaterial = this.backStencilMesh.material as Material;
+		const previousColorMaterial = this.colorMesh.material as Material;
+		const nextFrontMaterial = nextCompiled.compiledFront?.material
+			?? ( this.materialPipeline.appearance instanceof CesiumGroundRawShaderAppearance
+				? createStencilMaterial(
+					this.uniforms,
+					FrontSide,
+					DecrementWrapStencilOp,
+					'CesiumClassificationFrontStencilDepthMaterial',
+				)
+				: previousFrontMaterial );
+		const nextBackMaterial = nextCompiled.compiledBack?.material
+			?? ( this.materialPipeline.appearance instanceof CesiumGroundRawShaderAppearance
+				? createStencilMaterial(
+					this.uniforms,
+					BackSide,
+					IncrementWrapStencilOp,
+					'CesiumClassificationBackStencilDepthMaterial',
+				)
+				: previousBackMaterial );
 		this.materialPipeline.appearance = nextAppearance;
-		this.materialPipeline.compiledColor = nextCompiled;
-		this.colorMesh.material = nextCompiled.material;
-		previousMaterial.dispose();
+		this.materialPipeline.compiledFront = nextCompiled.compiledFront;
+		this.materialPipeline.compiledBack = nextCompiled.compiledBack;
+		this.materialPipeline.compiledColor = nextCompiled.compiledColor;
+		this.stencilMesh.material = nextFrontMaterial;
+		this.backStencilMesh.material = nextBackMaterial;
+		this.colorMesh.material = nextCompiled.compiledColor.material;
+		if ( nextFrontMaterial !== previousFrontMaterial ) previousFrontMaterial.dispose();
+		if ( nextBackMaterial !== previousBackMaterial ) previousBackMaterial.dispose();
+		if ( nextCompiled.compiledColor.material !== previousColorMaterial ) previousColorMaterial.dispose();
 	}
 
 	/**
@@ -966,11 +1042,21 @@ export class CesiumClassificationPrimitive {
 		const currentVersion = this.materialPipeline.appearance.version;
 		if ( this.materialPipeline.compiledColor.appearanceVersion === currentVersion ) return;
 
-		const nextCompiled = compileClassificationColor( this.materialPipeline, this.colorFragmentCull );
-		const previousMaterial = this.colorMesh.material as Material;
-		this.materialPipeline.compiledColor = nextCompiled;
-		this.colorMesh.material = nextCompiled.material;
-		previousMaterial.dispose();
+		const nextCompiled = compileClassificationAppearance( this.materialPipeline, this.colorFragmentCull );
+		const previousFrontMaterial = this.stencilMesh.material as Material;
+		const previousBackMaterial = this.backStencilMesh.material as Material;
+		const previousColorMaterial = this.colorMesh.material as Material;
+		const nextFrontMaterial = nextCompiled.compiledFront?.material ?? previousFrontMaterial;
+		const nextBackMaterial = nextCompiled.compiledBack?.material ?? previousBackMaterial;
+		this.materialPipeline.compiledFront = nextCompiled.compiledFront;
+		this.materialPipeline.compiledBack = nextCompiled.compiledBack;
+		this.materialPipeline.compiledColor = nextCompiled.compiledColor;
+		this.stencilMesh.material = nextFrontMaterial;
+		this.backStencilMesh.material = nextBackMaterial;
+		this.colorMesh.material = nextCompiled.compiledColor.material;
+		if ( nextFrontMaterial !== previousFrontMaterial ) previousFrontMaterial.dispose();
+		if ( nextBackMaterial !== previousBackMaterial ) previousBackMaterial.dispose();
+		if ( nextCompiled.compiledColor.material !== previousColorMaterial ) previousColorMaterial.dispose();
 	}
 
 	/**

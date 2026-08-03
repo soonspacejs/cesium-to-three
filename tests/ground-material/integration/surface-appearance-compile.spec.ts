@@ -21,11 +21,14 @@ test( 'links one safe surface Appearance on rectangle, polygon, and circle', asy
 		'CesiumGroundSurfaceColorMaterial',
 		'CesiumGroundSurfaceColorMaterial',
 		'CesiumGroundSurfaceColorMaterial',
+		'Stage5Raw/color',
 	] );
-	expect( report.customUniformBound ).toEqual( [ true, true, true ] );
-	expect( report.stencilMaterialCallsMaterial ).toEqual( [ false, false, false ] );
-	// All three primitives intentionally share one color program; front/back also
-	// share the fixed stencil program because neither key includes owner identity.
-	expect( report.programCount ).toBe( 2 );
+	expect( report.customUniformBound ).toEqual( [ true, true, true, false ] );
+	expect( report.stencilMaterialCallsMaterial ).toEqual( [ false, false, false, false ] );
+	expect( report.rawPasses ).toEqual( [ 'frontStencil', 'backStencil', 'color' ] );
+	// Safe primitives share one color and one fixed-stencil program. Raw factory
+	// calls createDefaultMaterial for all three passes, while pass-specific ABI
+	// macros and the custom safe source produce three additional driver programs.
+	expect( report.programCount ).toBe( 5 );
 	expect( browserErrors ).toEqual( [] );
 } );
