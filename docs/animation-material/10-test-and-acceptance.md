@@ -1,6 +1,6 @@
 # 10. 测试与验收规范
 
-> 状态：**Proposed Test Plan**。当前仓库尚无自动测试脚本；本篇定义实现 Ground Material/Shader 扩展时必须新增的测试设施和发布门槛。
+> 状态：**Implemented Acceptance Suite**。自动测试已覆盖单元、真实 WebGL2、视觉关键帧、600 帧资源/堆稳定性和包出口；本篇同时保留发布门槛与失败分诊规则。
 
 ## 目标
 
@@ -35,7 +35,7 @@
 - Three 将 `renderer.info.programs` 绑定到 program cache，见 `src/renderers/WebGLRenderer.js:478`；material program 按 cache key 获取/复用，见 `2177-2229`；dispose 会 release program，见 `1168-1177`。
 - Three 在 material version 变化时更新程序状态，见 `src/renderers/WebGLRenderer.js:2400-2509`，而普通 ShaderMaterial uniform 上传不要求换 program，见 `2763-2766`。
 
-### 1.2 Proposed 测试栈
+### 1.2 已落地测试栈
 
 | 层 | 工具 | 用途 |
 | --- | --- | --- |
@@ -45,29 +45,19 @@
 | 性能/稳定性 | Playwright performance harness | programs、geometry/texture、heap、相对 GPU/帧耗时 |
 | 类型/包出口 | TypeScript fixture + Node ESM smoke | 根入口、`./ground`、`.d.ts` 与旧代码兼容 |
 
-建议目录是 **Proposed**，不是当前目录：
+当前目录：
 
 ```text
 tests/ground-material/
-├── unit/
-│   ├── material.test.ts
-│   ├── assembler.test.ts
-│   ├── uniforms.test.ts
-│   └── builtins.test.ts
-├── webgl/
-│   ├── surface.spec.ts
-│   ├── polyline-arrow.spec.ts
-│   ├── decal-point.spec.ts
-│   └── lifecycle.spec.ts
-├── visual/
-│   ├── default-parity.spec.ts
-│   └── effects.spec.ts
-├── perf/program-stability.spec.ts
-├── package/import-smoke.mjs
-└── fixtures/
+├── unit/                 # Material、ABI、compiler、公式、生命周期与静态边界
+├── integration/          # Chromium WebGL2 编译、矩阵、stencil 与 readPixels
+├── visual/               # immutable golden、动画和切换关键帧
+├── perf/                 # 600 帧 program/resource/heap 稳定性
+├── package-smoke/        # 源码类型与构建后 Node ESM 导入
+└── fixtures/             # 无网络、固定相机与合成 packed-depth 场景
 ```
 
-CI 固定 Chromium、WebGL2、viewport `1280×720`、deviceScaleFactor `1`、相机/near/far、颜色空间、tone mapping、随机种子和 packed-depth fixture。截图元数据必须记录 OS、Chromium、Three 与项目提交。
+CI 固定 Chromium、WebGL2、viewport `960×640`、deviceScaleFactor `1`、相机/near/far、颜色空间、tone mapping、随机种子和 packed-depth fixture。截图元数据记录 package、Three、WebGL 版本与 viewport。
 
 ### 1.3 设计过程
 
@@ -191,7 +181,7 @@ safe Appearance 必须保持下表；Raw 测试则验证 `createDefaultMaterial(
 5. 再加入低视角天空与 packed depth clear sentinel，验证没有把无地形处染色。
 
 ```ts
-// Proposed integration-test pseudocode
+// Integration-test reference pseudocode
 renderClassification(transparentHalfMaterial);
 renderClassification(solidProbeMaterial);
 const pixels = readProbeRegion();
@@ -257,7 +247,7 @@ Raw factory 在第二或第三 pass 故意抛错时，测试必须证明新建�
 必须在首次渲染和异步编译完成后建立 warm baseline，不能把首次 lazy compile 算成泄漏。比较 program 对象集合而不只比较数组长度，因为“释放旧 program + 创建新 program”可能长度不变。
 
 ```ts
-// Proposed performance-test pseudocode
+// Performance-test reference pseudocode
 await warmAndCompile(renderer, scene, camera);
 const baseline = new Set(renderer.info.programs ?? []);
 
@@ -315,6 +305,8 @@ expect(after).toEqual(baseline);
 | ScalePulse 无纹理 | 相对纯色同覆盖场景 `+15%` |
 | ScalePulse 有纹理 | 相对默认 TexturedDecal `+20%` |
 
+这组墙钟/GPU 相对值属于固定硬件发布 runner：必须同时提供同提交构建的阶段 1 基线产物，不能拿已删除的历史源码在普通开发机上伪造比较。仓库内跨平台 `test:perf` 阻断可确定重现的 program 对象、geometry、texture 与显式 GC heap 稳定性；固定硬件 runner 另按本表阻断相对耗时。
+
 任何 program compile、texture upload、geometry rebuild 都必须在采样窗口前完成。阈值失败时先用 GPU timer（可用时）和 CPU profile 分辨 Shader 成本与宿主噪声；不能通过减少测试覆盖像素来“修复”。
 
 ## 6. 生命周期与资源所有权矩阵
@@ -343,7 +335,7 @@ primitive dispose 测试至少调用两次，证明几何/compiled 资源只释�
 
 ### 7.2 包入口与类型
 
-以下 **Proposed compile fixtures** 必须同时通过：
+以下 compile fixtures 已同时通过：
 
 ```ts
 import {
@@ -399,7 +391,7 @@ npm run build
 npm run build:lib
 ```
 
-### 9.2 实施后新增命令
+### 9.2 已落地命令
 
 ```powershell
 # 首次准备 Chromium（CI 镜像可预装）
@@ -409,19 +401,20 @@ npm run test:unit
 npm run test:integration
 npm run test:visual
 npm run test:perf
+npm run test:package
 npm run test
 npm pack --dry-run
-node tests/ground-material/package/import-smoke.mjs
 ```
 
-Proposed scripts 的固定含义：
+scripts 的固定含义：
 
 | script | 执行内容 | 是否发布阻断 |
 | --- | --- | --- |
 | `test:unit` | `vitest run tests/ground-material/unit` | 是 |
 | `test:integration` | Playwright WebGL2 functional specs | 是 |
 | `test:visual` | 固定平台 golden/pixel diff | 是 |
-| `test:perf` | program/resource 600 帧；相对耗时 | program/resource 是；耗时由专用 runner 阻断 |
+| `test:perf` | 120 帧预热；600 帧 program/resource/显式 GC heap 稳定性 | 是 |
+| `test:package` | build:lib、声明消费与构建后 Node ESM import | 是 |
 | `test` | unit + integration + visual | 是 |
 
 PR 快速门禁运行 type-check、unit、integration、默认视觉和 build:lib；主分支/发布门禁再运行全部视觉、性能、app build、pack smoke。任何 golden 更新都必须单独提交，附原因和前后 diff。
@@ -452,19 +445,19 @@ PR 快速门禁运行 type-check、unit、integration、默认视觉和 build:li
 
 ## 12. 最终发布验收清单
 
-- [ ] Material、uniform、保留字、clone/version/cache-key 单元测试全通过。
-- [ ] assembler 的 surface 三 pass、polyline、decal、arrow 全部真实 WebGL2 编译。
-- [ ] default/safe/Raw × primitive × classificationType 的最小矩阵全部覆盖。
-- [ ] alpha 0、透明纹理、Pulse/Scale coverage 外部均无 stencil 残留。
-- [ ] 默认视觉、旧 setter、低视角天空、无深度与椭球兜底无回归。
-- [ ] `setFragmentCulling`、`setText`、appearance 切换和 arrow rebuild 的对象/资源语义正确；`setText` 不替换 geometry/attribute/material/Texture identity。
-- [ ] uniform 动画 600 帧 program 对象集合、geometry、texture 均稳定。
-- [ ] source/defines/schema 变化只产生预期的新 logical pass 产物；Three program 仅在 assembled source/program 参数变化时增加，没有每帧重编译。
-- [ ] shared/clone/dispose 通知、普通/RT Texture clone 所有权与 image cache 引用计数全部通过。
-- [ ] Flow/Pulse/Scale 在相同 absolute time 下不受 30/60/120 FPS 影响。
-- [ ] 库代码无 timeline/tween/RAF/timer/request-render 调度。
-- [ ] 根入口与 `cesium-to-three/ground` 的 JS、类型与 pack smoke 通过。
-- [ ] `npm run type-check`、`npm run build`、`npm run build:lib` 和全部 test scripts 通过。
+- [x] Material、uniform、保留字、clone/version/cache-key 单元测试全通过。
+- [x] assembler 的 surface 三 pass、polyline、decal、arrow 全部真实 WebGL2 编译。
+- [x] default/safe/Raw × primitive × classificationType 的最小矩阵全部覆盖。
+- [x] alpha 0、透明纹理、Pulse/Scale coverage 外部均无 stencil 残留。
+- [x] 默认视觉、旧 setter、低视角天空、无深度与椭球兜底无回归。
+- [x] `setFragmentCulling`、`setText`、appearance 切换和 arrow rebuild 的对象/资源及实际切换帧语义正确；`setText` 不替换 geometry/attribute/material/Texture identity。
+- [x] uniform 动画 600 帧 program 对象集合、geometry、texture 与显式 GC heap 均稳定。
+- [x] source/defines/schema 变化只产生预期的新 logical pass 产物；Three program 仅在 assembled source/program 参数变化时增加，没有每帧重编译。
+- [x] shared/clone/dispose 通知、普通/RT Texture clone 所有权与 image cache 引用计数全部通过。
+- [x] Flow/Pulse/Scale 在相同 absolute time 下不受 30/60/120 FPS 影响，并由 framebuffer 逐像素比较证明。
+- [x] 库代码无 timeline/tween/RAF/timer/request-render 调度。
+- [x] 根入口与 `cesium-to-three/ground` 的 JS、类型与 pack smoke 通过。
+- [x] `npm run type-check`、`npm run build`、`npm run build:lib` 和全部 test scripts 通过。
 
 ## 结论与导航
 
