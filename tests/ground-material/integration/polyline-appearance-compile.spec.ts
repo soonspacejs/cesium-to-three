@@ -26,6 +26,8 @@ test( 'links default, safe, and Raw polyline Appearance routes in WebGL2', async
 	] );
 	expect( report.customUniformBound ).toBe( true );
 	expect( report.rawPasses ).toEqual( [ 'polyline:polyline' ] );
+	expect( report.flowFrames ).toBe( 600 );
+	expect( report.programCountAfterFlowFrames ).toBe( report.programCountBeforeFlowFrames );
 	// Color, safe gradient, Dash, and Flow sources are four distinct logical
 	// shader schemas; Raw default reuses the Color program through Three's cache.
 	expect( report.programCount ).toBeGreaterThanOrEqual( 4 );

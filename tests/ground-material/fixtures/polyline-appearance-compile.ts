@@ -34,6 +34,9 @@ export interface PolylineAppearanceCompileReport {
 	customUniformBound: boolean;
 	rawPasses: string[];
 	errors: string[];
+	flowFrames: number;
+	programCountBeforeFlowFrames: number;
+	programCountAfterFlowFrames: number;
 }
 
 declare global {
@@ -89,14 +92,13 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 			offsetMeters: -6,
 		} ),
 	} );
-	const flowAppearance = new CesiumGroundMaterialAppearance( {
-		material: createFlowLineMaterial( {
+	const flowMaterial = createFlowLineMaterial( {
 			speed: 0.6,
 			repeat: 4,
 			trailFraction: 0.3,
 			direction: -1,
-		} ),
 	} );
+	const flowAppearance = new CesiumGroundMaterialAppearance( { material: flowMaterial } );
 	const rawPasses: string[] = [];
 	const rawAppearance = new CesiumGroundRawShaderAppearance( {
 		factory: context => {
@@ -140,6 +142,16 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 
 	const safeLine = primitives[ 1 ].group.getObjectByName( 'CesiumGroundPolylineColorCommand' );
 	const safeLineMaterial = safeLine?.material as RawShaderMaterial;
+	const programCountBeforeFlowFrames = renderer.info.programs?.length ?? 0;
+	const flowFrames = 600;
+	for ( let frame = 0; frame < flowFrames; frame ++ ) {
+		// A real host may update speed or other uniform values between frames. The
+		// logical Material schema/source stays fixed and renderer.compile must reuse
+		// the same driver program instead of allocating a structural variant.
+		flowMaterial.setUniform( 'u_speed', 0.25 + ( frame % 17 ) * 0.01 );
+		renderer.compile( scene, camera );
+	}
+	const programCountAfterFlowFrames = renderer.info.programs?.length ?? 0;
 	const report: PolylineAppearanceCompileReport = {
 		ready: true,
 		isWebGL2: renderer.getContext() instanceof WebGL2RenderingContext,
@@ -148,6 +160,9 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 		customUniformBound: safeLineMaterial.uniforms.u_tint === safeMaterial.uniforms.u_tint,
 		rawPasses,
 		errors,
+		flowFrames,
+		programCountBeforeFlowFrames,
+		programCountAfterFlowFrames,
 	};
 
 	for ( const primitive of primitives ) primitive.dispose();
