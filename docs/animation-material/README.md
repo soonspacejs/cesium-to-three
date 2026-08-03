@@ -1,7 +1,7 @@
-# Ground Material / Shader 扩展体系：设计文档集
+# Ground Material / Shader 扩展体系：实现与设计文档集
 
-> 状态：**Proposed Design**（仅设计，尚未实现）  
-> 适用项目：`cesium-to-three` `0.1.9`，当前提交 `32a6b24`  
+> 状态：**Implemented**（Stage 14 legacy cleanup 已完成）
+> 适用项目：`cesium-to-three` `0.1.9`，分支 `edit-shape`
 > 技术基线：Three `0.183.x`、`WebGLRenderer`、WebGL2、GLSL ES 3.00  
 > 本文档集位置：`docs/animation-material/`
 
@@ -14,6 +14,19 @@
 - 在需要时接管完整 Three `RawShaderMaterial` 和多个 Ground 渲染 pass；
 - 保持当前 RTE、packed depth、log depth、stencil、分类目标和资源生命周期不变；
 - uniform 每帧变化不触发 Shader 重编译，不导致 program 数量持续增长。
+
+## 已实现范围
+
+当前 Ground 公共入口已经提供：
+
+- `CesiumGroundMaterial`：安全的逻辑 Material、稳定 user uniform wrapper、`setUniform()`、`clone()` 和显式 `dispose()`；
+- `CesiumGroundMaterialAppearance`：推荐的 `c23_getMaterial` 接入方式；
+- `CesiumGroundRawShaderAppearance`：按物理 pass 完整接管 `RawShaderMaterial` 的专家入口；
+- `createFlowLineMaterial`、`createPulsePointMaterial`、`createScalePulseMaterial` 等内置效果；
+- rectangle、polygon、circle、polyline、arrow、text/image decal 与 point delegate 的统一 Material ABI；
+- 由宿主帧状态驱动的 `c23_time`、`c23_deltaTime`、`c23_frameNumber`。
+
+旧 `SharedUniforms` 仍从原入口导出，但已标记 `@deprecated`，只用于已有内部扩展的源码兼容。新扩展应使用上述 Material / Appearance API。
 
 ## 前置阅读
 
@@ -35,9 +48,9 @@
 - 自动扩大几何、包围盒或拾取范围的真实几何缩放；
 - 自动修复 Raw Appearance 中不一致的 stencil/color 顶点变换。
 
-## 设计过程
+## 设计与实现过程
 
-本文档集按“先证据、再约束、后接口”的顺序形成：先固定当前项目、Three 与 Cesium 的提交并核对源码行号；再还原 surface、polyline、decal、arrow 的真实 pass 与资源所有权；随后锁定分层、公共 API 和 Shader ABI；最后用内置效果、实施阶段与验收矩阵反向验证设计可落地。各篇统一用 **Current**、**Proposed** 和**示例伪代码**区分事实、方案与说明性代码，避免把尚未实现的接口写成当前能力。
+本文档集按“先证据、再约束、后接口”的顺序形成：先固定项目、Three 与 Cesium 的源码事实，再还原 surface、polyline、decal、arrow 的真实 pass 与资源所有权，随后锁定分层、公共 API 和 Shader ABI，最后按 14 个阶段完成实现与验收。编号文档保留实施前的 **Current** / **Proposed** 标记作为设计记录；本 README 的“已实现范围”和示例描述当前可用能力。
 
 ## 核心结论
 
@@ -155,6 +168,8 @@ flowchart TD
    将实现拆成 14 个可单独验证、可回退的阶段。
 10. [测试与验收](./10-test-and-acceptance.md)  
     给出单元、集成、视觉、性能、兼容性矩阵和构建门禁。
+11. [当前实现交接](./11-current-implementation-handoff.md)
+    汇总最终落地能力、Stage 14 清理结果和最近验证状态。
 
 ## 术语
 
@@ -195,9 +210,9 @@ flowchart TD
 
 当前项目的 `package.json:44` 固定依赖 `three ^0.183.0`，因此 r185 源码结论必须经过兼容判断。首期不依赖只在 r185 才存在的接口。`THREE.Clock` 自 r183 起被标记弃用；本套 API 只接收宿主产生的秒值，按需求保留 `Clock` 示例，并在 [源码调研](./01-three-cesium-reference.md) 中说明 `Timer` 等价接线。
 
-## 示例：最小使用形态（Proposed）
+## 示例：共享 Material 与热更新 uniform
 
-下面只展示整体接线，完整类型和错误规则见 [04-public-api-design.md](./04-public-api-design.md)：
+同一个 Appearance 可以绑定到多个图元；它们共享同一个逻辑 Material 及其 uniform wrapper。`setUniform()` 只修改现有 wrapper 的 `.value`，不会改变 Material version 或 program 身份：
 
 ```ts
 import * as THREE from 'three';
@@ -214,15 +229,25 @@ const flowMaterial = createFlowLineMaterial({
   trailFraction: 0.3,
 });
 
-const line = new CesiumGroundPolylinePrimitive({
-  points,
+const lineA = new CesiumGroundPolylinePrimitive({
+	points,
   strokeColor: '#00e5ff',
   strokeOpacity: 100,
   visible: true,
-  appearance: new CesiumGroundMaterialAppearance({ material: flowMaterial }),
 });
+const lineB = new CesiumGroundPolylinePrimitive({
+	points: otherPoints,
+  strokeColor: '#00e5ff',
+  strokeOpacity: 100,
+  visible: true,
+});
+const sharedFlowAppearance = new CesiumGroundMaterialAppearance({ material: flowMaterial });
 
-scene.add(line.group);
+lineA.setAppearance(sharedFlowAppearance);
+lineB.setAppearance(sharedFlowAppearance);
+flowMaterial.setUniform('u_speed', 0.8); // 两条线立即共享新速度，不重编译
+
+scene.add(lineA.group, lineB.group);
 
 const clock = new THREE.Clock();
 let frameNumber = 0;
@@ -230,30 +255,61 @@ let frameNumber = 0;
 function renderFrame() {
   const deltaSeconds = clock.getDelta(); // 每个逻辑帧只调用一次
 
-  line.update({
-    ...groundFrameState,
-    timeSeconds: clock.elapsedTime,
-    deltaSeconds,
-    frameNumber: frameNumber++,
-  });
+	const frameState = {
+		...groundFrameState,
+		timeSeconds: clock.elapsedTime,
+		deltaSeconds,
+		frameNumber: frameNumber++,
+	};
+	lineA.update(frameState);
+	lineB.update(frameState);
 
   renderer.render(scene, camera);
   requestAnimationFrame(renderFrame); // 归宿主所有，不由 Material 模块创建
 }
 ```
 
+独立相位应通过 `clone()` 建立明确的值边界：
+
+```ts
+const pulseA = createPulsePointMaterial({ phase: 0.0 });
+const pulseB = pulseA.clone().setUniform('u_phase', 0.5);
+
+pointA.setAppearance(new CesiumGroundMaterialAppearance({ material: pulseA }));
+pointB.setAppearance(new CesiumGroundMaterialAppearance({ material: pulseB }));
+```
+
+## 资源所有权与释放
+
+| 资源 | 所有者 | 释放规则 |
+| --- | --- | --- |
+| Ground geometry、内部纹理/lease、compiled `RawShaderMaterial` | primitive | `primitive.dispose()` 自动释放 |
+| `CesiumGroundMaterial`、Appearance | 调用方 | primitive 只借用；需要时由调用方显式释放 Material |
+| 用户传入的 `Texture` | 调用方 | 始终 borrowed；Material 和 primitive 都不会自动 `dispose()` |
+| depth texture / render target texture | 宿主深度管线 | Ground primitive 只采样，不取得所有权 |
+
+卸载 Appearance 后再释放逻辑 Material；用户 Texture 必须在最后一个消费者脱离后由调用方释放：
+
+```ts
+const scale = createScalePulseMaterial({ texture, minScale: 0.75, maxScale: 1.0 });
+texturedPoint.setAppearance(new CesiumGroundMaterialAppearance({ material: scale }));
+
+// cleanup
+texturedPoint.setAppearance(undefined);
+scale.dispose();
+texture.dispose(); // borrowed Texture 始终由调用方负责
+```
+
 ## 全局验收清单
 
-- [ ] 本目录包含 `README.md` 与 `01` 至 `10` 共 11 个 Markdown 文件。
-- [ ] README 能通过相对链接到达全部文档，上一篇/下一篇链接闭合。
-- [ ] 两套同级入口在 API、ABI、集成、生命周期和测试文档中的命名完全一致。
-- [ ] `c23_materialInput`、`c23_material`、时间 uniforms、defines 与 pass 名称只有一套定义。
-- [ ] Current、Proposed API 和示例伪代码无混淆。
-- [ ] 每个源码结论都带本地路径、提交号和关键行号。
-- [ ] 流动、呼吸和缩放效果只依赖 `c23_time` 与用户 uniforms，不创建 RAF/tween/timeline。
-- [ ] 明确解释视觉缩放、footprint 和真实几何缩放的边界。
-- [ ] 实现者可从 [09-implementation-roadmap.md](./09-implementation-roadmap.md) 逐阶段编码，无需再选择架构。
-- [ ] 本次写入范围只包含 `docs/animation-material/`，不修改运行时代码和仓库根 README。
+- [x] 本目录包含 `README.md` 与 `01` 至 `11` 共 12 个 Markdown 文件。
+- [x] README 能通过相对链接到达全部文档。
+- [x] 两套同级入口在 API、ABI、集成、生命周期和测试文档中的命名完全一致。
+- [x] `c23_materialInput`、`c23_material`、时间 uniforms、defines 与 pass 名称只有一套定义。
+- [x] Current、Proposed 历史设计记录与本页已实现 API 无混淆。
+- [x] 流动、呼吸和缩放效果只依赖 `c23_time` 与用户 uniforms，不创建 RAF/tween/timeline。
+- [x] 明确解释视觉缩放、footprint 和真实几何缩放的边界。
+- [x] [09-implementation-roadmap.md](./09-implementation-roadmap.md) 的 14 个阶段均已落地。
 
 ---
 
