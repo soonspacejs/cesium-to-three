@@ -61,6 +61,7 @@ import {
 } from './line/line-arrowhead';
 import { LineWidthMode } from './line/line-types';
 import { createArrowHeadMaterial, createPolylineMaterial } from './materials';
+import type { CesiumGroundAppearance } from './material/appearances';
 import { computePolygonPlanarExtents } from './polygon/polygon-extents';
 import { polygonRenderBoundsThroughMeters } from './polygon/polygon-offset';
 import {
@@ -271,6 +272,7 @@ export class CesiumGroundRectanglePrimitive {
 				// Material compiler；classification 内部仍保留原 front/back
 				// stencil 材质、三个 Mesh、共享 wrapper 和命令顺序。
 				useMaterialPipeline: true,
+				appearance: options.appearance,
 			},
 		);
 		this.classification.group.visible = options.visible;
@@ -358,6 +360,20 @@ export class CesiumGroundRectanglePrimitive {
 	 */
 	public setClassificationType( classificationType?: ClassificationType ): void {
 		this.classification.setClassificationType( classificationType );
+	}
+
+	/** Returns the exact safe Appearance object currently used by the color pass. */
+	public get appearance(): CesiumGroundAppearance {
+		return this.classification.appearance;
+	}
+
+	/**
+	 * Recompiles only the rectangle color pass for a new safe Appearance. Geometry,
+	 * stencil materials, render order and all legacy style uniform wrappers remain
+	 * owned by the existing classification instance.
+	 */
+	public setAppearance( appearance?: CesiumGroundAppearance ): void {
+		this.classification.setAppearance( appearance );
 	}
 
 	/**
@@ -503,6 +519,7 @@ export class CesiumGroundPolygonPrimitive {
 				// only the color command is now assembled through the canonical
 				// surface Material ABI. The fixed stencil pair stays legacy-owned.
 				useMaterialPipeline: true,
+				appearance: options.appearance,
 			},
 		);
 		this.classification.group.visible = options.visible ?? true;
@@ -547,6 +564,16 @@ export class CesiumGroundPolygonPrimitive {
 	 */
 	public setClassificationType( classificationType?: ClassificationType ): void {
 		this.classification.setClassificationType( classificationType );
+	}
+
+	/** Returns the exact Appearance object bound to this polygon's color command. */
+	public get appearance(): CesiumGroundAppearance {
+		return this.classification.appearance;
+	}
+
+	/** Atomically changes polygon shading while retaining hole geometry and style state. */
+	public setAppearance( appearance?: CesiumGroundAppearance ): void {
+		this.classification.setAppearance( appearance );
 	}
 
 	/**
@@ -667,6 +694,7 @@ export class CesiumGroundCirclePrimitive {
 				// stage. This opt-in changes only the color material source; circle
 				// shadow-volume geometry and the fixed stencil pair remain untouched.
 				useMaterialPipeline: true,
+				appearance: options.appearance,
 			},
 		);
 		this.classification.group.visible = options.visible;
@@ -714,6 +742,16 @@ export class CesiumGroundCirclePrimitive {
 	 */
 	public setClassificationType( classificationType?: ClassificationType ): void {
 		this.classification.setClassificationType( classificationType );
+	}
+
+	/** Returns the current circle color Appearance, including the internal default. */
+	public get appearance(): CesiumGroundAppearance {
+		return this.classification.appearance;
+	}
+
+	/** Swaps the circle color Appearance without rebuilding ring/sector geometry. */
+	public setAppearance( appearance?: CesiumGroundAppearance ): void {
+		this.classification.setAppearance( appearance );
 	}
 
 	/**

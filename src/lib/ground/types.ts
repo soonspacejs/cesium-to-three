@@ -17,6 +17,7 @@ import type {
 	Vector4,
 	WebGLRenderTarget,
 } from 'three';
+import type { CesiumGroundAppearance } from './material/appearances';
 
 // ── 贴地分类目标（标绘"贴什么表面"）─────────────────────────────────
 // 数值与 Cesium `Source/Scene/ClassificationType.js` 逐值对齐，便于业务层在
@@ -113,6 +114,8 @@ export interface CesiumGroundRectangleOptions {
 }
 
 export interface CesiumGroundRectanglePrimitiveOptions extends CesiumGroundRectangleOptions {
+	/** Optional safe Material Appearance; omitted uses the legacy-equivalent Color preset. */
+	appearance?: CesiumGroundAppearance;
 	granularityRadians?: number;
 	minimumHeight?: number;
 	maximumHeight?: number;
@@ -136,6 +139,8 @@ export interface CesiumGroundRectanglePrimitiveOptions extends CesiumGroundRecta
  * 保证既有调用方仍可工作。
  */
 export interface CesiumGroundPolygonOptions {
+	/** Optional safe Material Appearance; Raw is validated when the primitive is built. */
+	appearance?: CesiumGroundAppearance;
 	points?: LonLatPoint[];
 	holes?: LonLatPoint[][];
 	hole?: boolean;
@@ -179,6 +184,8 @@ export interface CesiumGroundCircleOptions {
 }
 
 export interface CesiumGroundCirclePrimitiveOptions extends CesiumGroundCircleOptions {
+	/** Optional safe Material Appearance; omitted uses the internal Color preset. */
+	appearance?: CesiumGroundAppearance;
 	height?: number;
 	extrudedHeight?: number;
 	granularityRadians?: number;
