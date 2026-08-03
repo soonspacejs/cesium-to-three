@@ -9,7 +9,9 @@
 import {
 	Color,
 	type Group,
+	Mesh,
 	PerspectiveCamera,
+	type RawShaderMaterial,
 	Scene,
 	SRGBColorSpace,
 	Vector3,
@@ -70,7 +72,15 @@ function fromClassification(
 }
 
 function fromDirectGroup( primitive: GroundFixturePrimitive ): GroundFixturePrimitive {
-	return primitive;
+	return {
+		// Text replaces its public group during setText(); keep this adapter live
+		// instead of copying the initial node and later disposing a stale group.
+		get group() {
+			return primitive.group;
+		},
+		update: frameState => primitive.update( frameState ),
+		dispose: () => primitive.dispose(),
+	};
 }
 
 export interface LegacyGroundResourceSnapshot {
@@ -84,8 +94,42 @@ export interface LegacyGroundFixtureApi {
 	isWebGL2: boolean;
 	frameNumber: number;
 	resourceSnapshot: LegacyGroundResourceSnapshot;
+	exerciseLegacySetters(): LegacyGroundSetterReport;
 	renderFrames( count: number ): LegacyGroundResourceSnapshot;
 	dispose(): LegacyGroundResourceSnapshot;
+}
+
+export interface LegacyGroundSetterReport {
+	fragmentCulling: {
+		geometryStable: boolean;
+		frontMaterialStable: boolean;
+		backMaterialStable: boolean;
+		colorMaterialReplaced: boolean;
+	};
+	lineUniformSetters: { geometryStable: boolean; materialStable: boolean };
+	arrowStyleRebuild: {
+		lineGeometryStable: boolean;
+		lineMaterialStable: boolean;
+		arrowGeometryReplaced: boolean;
+		arrowMaterialReplaced: boolean;
+	};
+	textUpdate: {
+		groupReplaced: boolean;
+		geometryReplaced: boolean;
+		textureStable: boolean;
+	};
+	visibilityAndOrder: {
+		hidden: boolean;
+		frontOrder: number;
+		backOrder: number;
+		colorOrder: number;
+	};
+	doubleDispose: {
+		geometryDisposeEvents: number;
+		frontMaterialDisposeEvents: number;
+		backMaterialDisposeEvents: number;
+		colorMaterialDisposeEvents: number;
+	};
 }
 
 declare global {
@@ -127,7 +171,14 @@ function rectanglePoints(
  * branch independently recognizable in a screenshot instead of relying on the
  * library defaults that the implementation is about to migrate.
  */
-function createLegacyPrimitives( imageUrl: string ): GroundFixturePrimitive[] {
+interface LegacyPrimitiveBundle {
+	entries: GroundFixturePrimitive[];
+	rectangle: CesiumGroundRectanglePrimitive;
+	solidPolyline: CesiumGroundPolylinePrimitive;
+	text: CesiumGroundTextPrimitive;
+}
+
+function createLegacyPrimitives( imageUrl: string ): LegacyPrimitiveBundle {
 	const rectangle = new CesiumGroundRectanglePrimitive( {
 		points: rectanglePoints( - 230, 145, 165, 115 ),
 		strokeColor: '#ffe08a',
@@ -272,17 +323,153 @@ function createLegacyPrimitives( imageUrl: string ): GroundFixturePrimitive[] {
 		renderOrder: 90,
 	} );
 
-	return [
-		fromClassification( rectangle ),
-		fromClassification( polygon ),
-		fromClassification( circle ),
-		fromDirectGroup( solidPolyline ),
-		fromDirectGroup( dashPolyline ),
-		fromClassification( circlePoint ),
-		fromClassification( squarePoint ),
-		fromDirectGroup( text ),
-		fromDirectGroup( image ),
-	];
+	return {
+		entries: [
+			fromClassification( rectangle ),
+			fromClassification( polygon ),
+			fromClassification( circle ),
+			fromDirectGroup( solidPolyline ),
+			fromDirectGroup( dashPolyline ),
+			fromClassification( circlePoint ),
+			fromClassification( squarePoint ),
+			fromDirectGroup( text ),
+			fromDirectGroup( image ),
+		],
+		rectangle,
+		solidPolyline,
+		text,
+	};
+}
+
+/** Resolves the three ordered classification commands by their stable names. */
+function classificationMeshes(
+	primitive: CesiumGroundRectanglePrimitive | CesiumGroundTextPrimitive,
+): { front: Mesh; back: Mesh; color: Mesh } {
+	const group = primitive.classification.group;
+	const front = group.getObjectByName( 'CesiumClassificationFrontStencilDepthCommand' );
+	const back = group.getObjectByName( 'CesiumClassificationBackStencilDepthCommand' );
+	const color = group.getObjectByName( 'CesiumClassificationColorCommand' );
+	if ( ! ( front instanceof Mesh ) || ! ( back instanceof Mesh ) || ! ( color instanceof Mesh ) ) {
+		throw new Error( 'Legacy classification command set is incomplete.' );
+	}
+	return { front, back, color };
+}
+
+/** Resolves line and optional arrow commands without reaching into private fields. */
+function polylineMeshes(
+	primitive: CesiumGroundPolylinePrimitive,
+): { line: Mesh; arrow: Mesh } {
+	const line = primitive.group.getObjectByName( 'CesiumGroundPolylineColorCommand' );
+	const arrow = primitive.group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+	if ( ! ( line instanceof Mesh ) || ! ( arrow instanceof Mesh ) ) {
+		throw new Error( 'Legacy polyline fixture requires both line and arrow commands.' );
+	}
+	return { line, arrow };
+}
+
+/**
+ * Captures the exact pre-migration object-identity behavior. Several values are
+ * intentionally legacy behavior (not the final design), which lets a later
+ * migration prove that each deliberate identity change is covered by a test.
+ */
+function exerciseLegacySetters(
+	bundle: LegacyPrimitiveBundle,
+): LegacyGroundSetterReport {
+	const surfaceBefore = classificationMeshes( bundle.rectangle );
+	const surfaceGeometry = surfaceBefore.color.geometry;
+	const frontMaterial = surfaceBefore.front.material;
+	const backMaterial = surfaceBefore.back.material;
+	const colorMaterial = surfaceBefore.color.material;
+	bundle.rectangle.classification.setFragmentCulling( false );
+	const surfaceAfter = classificationMeshes( bundle.rectangle );
+
+	const lineBefore = polylineMeshes( bundle.solidPolyline );
+	bundle.solidPolyline.setColor( '#f4d35e', 88 );
+	bundle.solidPolyline.applyWidthState( 'world', 9, 11 );
+	bundle.solidPolyline.setArrowColor( '#ff477e', 91 );
+	bundle.solidPolyline.setArrowSizeMeters( 36, 28 );
+	const lineAfterUniformSetters = polylineMeshes( bundle.solidPolyline );
+	bundle.solidPolyline.setArrowStyles( 'solid', 'open' );
+	const lineAfterArrowStyle = polylineMeshes( bundle.solidPolyline );
+
+	const textBefore = classificationMeshes( bundle.text );
+	const textGroup = bundle.text.group;
+	const textTexture = ( textBefore.color.material as RawShaderMaterial )
+		.uniforms.u_decalTexture.value;
+	bundle.text.setText( { content: 'C23 UPDATED' } );
+	const textAfter = classificationMeshes( bundle.text );
+	const updatedTextTexture = ( textAfter.color.material as RawShaderMaterial )
+		.uniforms.u_decalTexture.value;
+
+	bundle.rectangle.classification.group.visible = false;
+	bundle.rectangle.setRenderOrder( 125 );
+	const orderedSurface = classificationMeshes( bundle.rectangle );
+
+	const disposable = new CesiumGroundRectanglePrimitive( {
+		points: rectanglePoints( 0, 0, 20, 20 ),
+		strokeColor: '#ffffff',
+		strokeWidth: 1,
+		strokeOpacity: 100,
+		fillColor: '#ffffff',
+		fillOpacity: 100,
+		visible: true,
+	} );
+	const disposableMeshes = classificationMeshes( disposable );
+	const disposeCounts = {
+		geometryDisposeEvents: 0,
+		frontMaterialDisposeEvents: 0,
+		backMaterialDisposeEvents: 0,
+		colorMaterialDisposeEvents: 0,
+	};
+	disposableMeshes.front.geometry.addEventListener(
+		'dispose',
+		() => disposeCounts.geometryDisposeEvents += 1,
+	);
+	disposableMeshes.front.material.addEventListener(
+		'dispose',
+		() => disposeCounts.frontMaterialDisposeEvents += 1,
+	);
+	disposableMeshes.back.material.addEventListener(
+		'dispose',
+		() => disposeCounts.backMaterialDisposeEvents += 1,
+	);
+	disposableMeshes.color.material.addEventListener(
+		'dispose',
+		() => disposeCounts.colorMaterialDisposeEvents += 1,
+	);
+	disposable.dispose();
+	disposable.dispose();
+
+	return {
+		fragmentCulling: {
+			geometryStable: surfaceAfter.color.geometry === surfaceGeometry,
+			frontMaterialStable: surfaceAfter.front.material === frontMaterial,
+			backMaterialStable: surfaceAfter.back.material === backMaterial,
+			colorMaterialReplaced: surfaceAfter.color.material !== colorMaterial,
+		},
+		lineUniformSetters: {
+			geometryStable: lineAfterUniformSetters.line.geometry === lineBefore.line.geometry,
+			materialStable: lineAfterUniformSetters.line.material === lineBefore.line.material,
+		},
+		arrowStyleRebuild: {
+			lineGeometryStable: lineAfterArrowStyle.line.geometry === lineBefore.line.geometry,
+			lineMaterialStable: lineAfterArrowStyle.line.material === lineBefore.line.material,
+			arrowGeometryReplaced: lineAfterArrowStyle.arrow.geometry !== lineBefore.arrow.geometry,
+			arrowMaterialReplaced: lineAfterArrowStyle.arrow.material !== lineBefore.arrow.material,
+		},
+		textUpdate: {
+			groupReplaced: bundle.text.group !== textGroup,
+			geometryReplaced: textAfter.color.geometry !== textBefore.color.geometry,
+			textureStable: updatedTextTexture === textTexture,
+		},
+		visibilityAndOrder: {
+			hidden: bundle.rectangle.classification.group.visible === false,
+			frontOrder: orderedSurface.front.renderOrder,
+			backOrder: orderedSurface.back.renderOrder,
+			colorOrder: orderedSurface.color.renderOrder,
+		},
+		doubleDispose: disposeCounts,
+	};
 }
 
 /**
@@ -356,7 +543,8 @@ async function createFixture(): Promise<LegacyGroundFixtureApi> {
 	scene.add( mainDepthMesh );
 	globeDepth.addDepthMesh( packedDepthMesh );
 
-	const primitives = createLegacyPrimitives( imageUrl );
+	const bundle = createLegacyPrimitives( imageUrl );
+	const primitives = bundle.entries;
 	for ( const primitive of primitives ) scene.add( primitive.group );
 	// TextureLoader creates its own HTMLImageElement. Even though the URL has
 	// already decoded into the browser cache, allow two task/paint boundaries for
@@ -405,6 +593,9 @@ async function createFixture(): Promise<LegacyGroundFixtureApi> {
 		},
 		get resourceSnapshot() {
 			return snapshotResources();
+		},
+		exerciseLegacySetters() {
+			return exerciseLegacySetters( bundle );
 		},
 		renderFrames( count: number ) {
 			const safeCount = Math.max( 0, Math.floor( count ) );
