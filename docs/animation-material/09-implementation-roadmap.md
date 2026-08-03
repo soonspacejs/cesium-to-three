@@ -1,6 +1,6 @@
 # 09. 实施路线图：14 个可独立验证阶段
 
-> 状态：**Proposed Implementation Plan**。本篇描述未来代码改造顺序，不表示这些接口已经存在。
+> 状态：**Implemented Roadmap**。14 个阶段均已落地；本篇保留实施顺序、回退边界和最终验收证据，供后续维护与回归定位。
 
 ## 目标
 
@@ -39,7 +39,7 @@
 
 本地参考源码提交固定为 Three `2a005fdbad6b8503a8a70edfdd279b79c5e04b49` 与 Cesium `effe290c08dc340a7a6bd4435367a7d092c6b2b9`；实现期间若升级依赖，先重新跑阶段 1 基线，不直接套用旧截图。
 
-### 1.2 Proposed 模块布局
+### 1.2 已落地模块布局
 
 ```text
 src/lib/ground/material/
@@ -445,7 +445,7 @@ src/lib/ground/material/
 以下是 **伪代码**，说明任何 primitive 的 material version 与 appearance 切换都采用同一事务顺序：
 
 ```ts
-// Proposed implementation pseudocode
+// Implemented transaction pattern pseudocode
 function refreshCompiledAppearanceIfNeeded(): void {
   if (compiled.logicalVersion === appearance.version) return;
 
@@ -481,17 +481,17 @@ function refreshCompiledAppearanceIfNeeded(): void {
 
 ## 5. 路线图总体验收清单
 
-- [ ] 14 个阶段按顺序各有独立提交、测试结果与回退说明。
-- [ ] rectangle/polygon/circle 的 front/back/color 不变量保持。
-- [ ] polyline 全线距离和 arrow 附加 pass 已进入正式 ABI。
-- [ ] text `setText` 原位更新固定 topology，不替换 geometry/appearance/user uniform；image rebuild 不丢 appearance 与用户 uniform 引用。
-- [ ] point 对三类 delegate 完整透传。
-- [ ] 六个 built-in factory 与 safe/Raw 两套入口从根和 `./ground` 可导入。
-- [ ] uniform 动画期间 Shader、defines、schema 和 program 数稳定。
-- [ ] `setFragmentCulling`、appearance/version 变化只重建相关 GPU material。
-- [ ] 分类透明片元不 `discard`，默认视觉与 setter 行为无回归。
-- [ ] `SharedUniforms` 仅弃用、未删除；旧 import 与宿主 FrameState 仍兼容。
-- [ ] `npm run type-check`、`npm run build`、`npm run build:lib` 和 [10](./10-test-and-acceptance.md) 全矩阵通过。
+- [x] 14 个阶段按顺序各有独立提交、测试结果与回退说明。
+- [x] rectangle/polygon/circle 的 front/back/color 不变量保持。
+- [x] polyline 全线距离和 arrow 附加 pass 已进入正式 ABI。
+- [x] text `setText` 原位更新固定 topology，不替换 geometry/appearance/user uniform；image rebuild 不丢 appearance 与用户 uniform 引用。
+- [x] point 对三类 delegate 完整透传。
+- [x] 六个 built-in factory 与 safe/Raw 两套入口从根和 `./ground` 可导入。
+- [x] uniform 动画期间 Shader、defines、schema 和 program 数稳定。
+- [x] `setFragmentCulling`、appearance/version 变化只重建相关 GPU material。
+- [x] 分类透明片元不 `discard`，默认视觉与 setter 行为无回归。
+- [x] `SharedUniforms` 仅弃用、未删除；旧 import 与宿主 FrameState 仍兼容。
+- [x] `npm run type-check`、`npm run build`、`npm run build:lib` 和 [10](./10-test-and-acceptance.md) 自动矩阵通过。
 
 ## 结论与导航
 
