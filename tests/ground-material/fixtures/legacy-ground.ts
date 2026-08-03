@@ -21,6 +21,8 @@ import {
 import {
 	CesiumGlobeDepth,
 	CesiumGroundCirclePrimitive,
+	CesiumGroundMaterialAppearance,
+	CesiumGroundRawShaderAppearance,
 	CesiumGroundImagePrimitive,
 	CesiumGroundPointPrimitive,
 	CesiumGroundPolygonPrimitive,
@@ -29,6 +31,7 @@ import {
 	CesiumGroundTextPrimitive,
 	CESIUM_GROUND_NON_PICKABLE_LAYER,
 	createCesiumEllipsoidDepthMeshes,
+	createColorGroundMaterial,
 	initializeApproximateTerrainHeights,
 	longitudeLatitudeFromCenterOffsetsMeters,
 	updateTerrainLogDepthUniforms,
@@ -98,6 +101,7 @@ export interface LegacyGroundFixtureApi {
 	measureFrameStability( count: number ): LegacyGroundStabilityReport;
 	renderFrames( count: number ): LegacyGroundResourceSnapshot;
 	measureLowAngleSky(): LegacyGroundSkyReport;
+	measureAppearanceSwitchFrames(): LegacyGroundAppearanceSwitchReport;
 	dispose(): LegacyGroundResourceSnapshot;
 }
 
@@ -105,6 +109,13 @@ export interface LegacyGroundSkyReport {
 	sampledPixels: number;
 	wrongColorPixels: number;
 	firstWrongPixel: [ number, number, number, number ] | null;
+}
+
+export interface LegacyGroundAppearanceSwitchReport {
+	defaultPixel: [ number, number, number, number ];
+	safePixel: [ number, number, number, number ];
+	rawPixel: [ number, number, number, number ];
+	restoredPixel: [ number, number, number, number ];
 }
 
 export interface LegacyGroundStabilityReport {
@@ -672,6 +683,55 @@ async function createFixture(): Promise<LegacyGroundFixtureApi> {
 				wrongColorPixels,
 				firstWrongPixel,
 			};
+		},
+		measureAppearanceSwitchFrames() {
+			const readPixel = ( x: number, y: number ): [ number, number, number, number ] => {
+				const pixel = new Uint8Array( 4 );
+				const gl = renderer.getContext();
+				gl.readPixels( x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel );
+				return [ pixel[ 0 ], pixel[ 1 ], pixel[ 2 ], pixel[ 3 ] ];
+			};
+			renderOneFrame();
+			let probeX = -1;
+			let probeY = -1;
+			const regionPixels = new Uint8Array( WIDTH * HEIGHT * 4 );
+			const gl = renderer.getContext();
+			gl.readPixels( 0, 0, WIDTH, HEIGHT, gl.RGBA, gl.UNSIGNED_BYTE, regionPixels );
+			for ( let y = HEIGHT - 1; y >= 0 && probeX < 0; y -= 1 ) {
+				for ( let x = 0; x < WIDTH; x += 1 ) {
+					const offset = ( y * WIDTH + x ) * 4;
+					const red = regionPixels[ offset ];
+					const green = regionPixels[ offset + 1 ];
+					const blue = regionPixels[ offset + 2 ];
+					// The rectangle is the only muted dark-red region. The point is
+					// brighter red/pink and the polyline is orange, so both are excluded.
+					if ( red < 100 || red > 220 || green >= 80 || blue < 20 || blue > 120 ) continue;
+					probeX = x;
+					probeY = y;
+					break;
+				}
+			}
+			if ( probeX < 0 || probeY < 0 ) {
+				throw new Error( 'Appearance switch fixture could not locate the rectangle probe pixel.' );
+			}
+			const sample = (): [ number, number, number, number ] => {
+				renderOneFrame();
+				return readPixel( probeX, probeY );
+			};
+			const safe = new CesiumGroundMaterialAppearance( {
+				material: createColorGroundMaterial( { color: '#00ff66', opacity: 1 } ),
+			} );
+			const raw = new CesiumGroundRawShaderAppearance( {
+				factory: context => context.createDefaultMaterial(),
+			} );
+			const defaultPixel = readPixel( probeX, probeY );
+			bundle.rectangle.setAppearance( safe );
+			const safePixel = sample();
+			bundle.rectangle.setAppearance( raw );
+			const rawPixel = sample();
+			bundle.rectangle.setAppearance( undefined );
+			const restoredPixel = sample();
+			return { defaultPixel, safePixel, rawPixel, restoredPixel };
 		},
 		dispose() {
 			if ( disposed ) return snapshotResources();
