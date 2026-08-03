@@ -498,6 +498,12 @@ export class CesiumGroundPolygonPrimitive {
 			fillAlpha,
 			options.renderOrder ?? 30,
 			options.fragmentCull ?? true,
+			{
+				// Polygon geometry and its hole/stroke uniforms remain unchanged;
+				// only the color command is now assembled through the canonical
+				// surface Material ABI. The fixed stencil pair stays legacy-owned.
+				useMaterialPipeline: true,
+			},
 		);
 		this.classification.group.visible = options.visible ?? true;
 		this.classification.setClassificationType( options.classificationType );
