@@ -9,6 +9,7 @@
 
 import {
 	BackSide,
+	BufferAttribute,
 	BufferGeometry,
 	Color,
 	DecrementWrapStencilOp,
@@ -859,6 +860,71 @@ export class CesiumClassificationPrimitive {
 	 */
 	public setColor( color: Color, alpha: number ): void {
 		this.uniforms.u_color.value.set( color.r, color.g, color.b, alpha );
+	}
+
+	/**
+	 * Copies a fixed-topology classification candidate into the live geometry.
+	 * Every layout check completes before the first write, so callers can build
+	 * text/decal candidates off-screen and keep the current command set intact if
+	 * a future geometry implementation changes attribute capacity.
+	 */
+	public updateGeometryAndPlanarExtents(
+		candidate: BufferGeometry,
+		extents: PlanarExtents,
+	): void {
+		const live = this.stencilMesh.geometry;
+		const attributeNames = [
+			'position3DHigh',
+			'position3DLow',
+			'extrudeDirection',
+			'batchId',
+		] as const;
+		const pairs: Array<[ BufferAttribute, BufferAttribute ]> = [];
+
+		for ( const name of attributeNames ) {
+			const liveAttribute = live.getAttribute( name );
+			const candidateAttribute = candidate.getAttribute( name );
+			if (
+				! ( liveAttribute instanceof BufferAttribute ) ||
+				! ( candidateAttribute instanceof BufferAttribute ) ||
+				liveAttribute.itemSize !== candidateAttribute.itemSize ||
+				liveAttribute.count !== candidateAttribute.count
+			) {
+				throw new Error(
+					`Classification geometry attribute "${ name }" changed fixed topology.`,
+				);
+			}
+			pairs.push( [ liveAttribute, candidateAttribute ] );
+		}
+
+		const liveIndex = live.getIndex();
+		const candidateIndex = candidate.getIndex();
+		if (
+			! ( liveIndex instanceof BufferAttribute ) ||
+			! ( candidateIndex instanceof BufferAttribute ) ||
+			liveIndex.count !== candidateIndex.count
+		) {
+			throw new Error( 'Classification geometry index changed fixed topology.' );
+		}
+
+		for ( const [ liveAttribute, candidateAttribute ] of pairs ) {
+			( liveAttribute.array as unknown as { set( source: ArrayLike<number> ): void } )
+				.set( candidateAttribute.array );
+			liveAttribute.needsUpdate = true;
+		}
+		( liveIndex.array as unknown as { set( source: ArrayLike<number> ): void } )
+			.set( candidateIndex.array );
+		liveIndex.needsUpdate = true;
+
+		// Copy values into the existing Three vectors. Replacing either wrapper or
+		// value would break compiled safe/Raw uniform identity guarantees.
+		this.uniforms.u_southWest_HIGH.value.copy( extents.southWestHigh );
+		this.uniforms.u_southWest_LOW.value.copy( extents.southWestLow );
+		this.uniforms.u_eastward.value.copy( extents.eastward );
+		this.uniforms.u_northward.value.copy( extents.northward );
+		this.uniforms.u_uvMinAndExtents.value.copy( extents.uvMinAndExtents );
+		this.uniforms.u_uMaxVmax.value.copy( extents.uMaxVmax );
+		this.uniforms.u_innerMetersRect.value.copy( extents.innerMetersRect );
 	}
 
 	/**
