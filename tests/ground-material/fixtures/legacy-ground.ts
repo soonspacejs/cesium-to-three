@@ -19,6 +19,7 @@ import {
 import {
 	CesiumGlobeDepth,
 	CesiumGroundCirclePrimitive,
+	CesiumGroundImagePrimitive,
 	CesiumGroundPointPrimitive,
 	CesiumGroundPolygonPrimitive,
 	CesiumGroundPolylinePrimitive,
@@ -126,7 +127,7 @@ function rectanglePoints(
  * branch independently recognizable in a screenshot instead of relying on the
  * library defaults that the implementation is about to migrate.
  */
-function createLegacyPrimitives(): GroundFixturePrimitive[] {
+function createLegacyPrimitives( imageUrl: string ): GroundFixturePrimitive[] {
 	const rectangle = new CesiumGroundRectanglePrimitive( {
 		points: rectanglePoints( - 230, 145, 165, 115 ),
 		strokeColor: '#ffe08a',
@@ -256,6 +257,21 @@ function createLegacyPrimitives(): GroundFixturePrimitive[] {
 		renderOrder: 80,
 	} );
 
+	const image = new CesiumGroundImagePrimitive( {
+		position: point( 285, - 255 ),
+		imageUrl,
+		imageWidth: 70,
+		imageHeight: 70,
+		rotation: 12,
+		strokeColor: '#ffffff',
+		strokeWidth: 0,
+		strokeOpacity: 0,
+		fillColor: '#ffffff',
+		fillOpacity: 100,
+		visible: true,
+		renderOrder: 90,
+	} );
+
 	return [
 		fromClassification( rectangle ),
 		fromClassification( polygon ),
@@ -265,11 +281,38 @@ function createLegacyPrimitives(): GroundFixturePrimitive[] {
 		fromClassification( circlePoint ),
 		fromClassification( squarePoint ),
 		fromDirectGroup( text ),
+		fromDirectGroup( image ),
 	];
 }
 
-function createFixture(): LegacyGroundFixtureApi {
+/**
+ * Produces a transparent, high-contrast decal without a repository binary or
+ * network request. The public image primitive still goes through Three's real
+ * ImageLoader and Canvas/WebGL texture upload path.
+ */
+function createInlineImageUrl(): string {
+	const source = [
+		'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">',
+		'<path fill="#101820" d="M32 2 61 32 32 62 3 32z"/>',
+		'<path fill="#ffcf33" d="M32 9 54 32 32 55 10 32z"/>',
+		'<circle cx="32" cy="32" r="10" fill="#e83f5b"/>',
+		'<circle cx="32" cy="32" r="4" fill="#ffffff"/>',
+		'</svg>',
+	].join( '' );
+	return `data:image/svg+xml;charset=utf-8,${ encodeURIComponent( source ) }`;
+}
+
+/** Waits for browser decode so the recorded frame cannot race texture upload. */
+async function preloadImage( url: string ): Promise<void> {
+	const image = new Image();
+	image.src = url;
+	await image.decode();
+}
+
+async function createFixture(): Promise<LegacyGroundFixtureApi> {
 	initializeApproximateTerrainHeights();
+	const imageUrl = createInlineImageUrl();
+	await preloadImage( imageUrl );
 
 	const renderer = new WebGLRenderer( {
 		antialias: false,
@@ -313,8 +356,14 @@ function createFixture(): LegacyGroundFixtureApi {
 	scene.add( mainDepthMesh );
 	globeDepth.addDepthMesh( packedDepthMesh );
 
-	const primitives = createLegacyPrimitives();
+	const primitives = createLegacyPrimitives( imageUrl );
 	for ( const primitive of primitives ) scene.add( primitive.group );
+	// TextureLoader creates its own HTMLImageElement. Even though the URL has
+	// already decoded into the browser cache, allow two task/paint boundaries for
+	// its load callback to set Texture.needsUpdate before the warm render.
+	await new Promise<void>( resolve => requestAnimationFrame(
+		() => requestAnimationFrame( () => resolve() ),
+	) );
 
 	let frameNumber = 0;
 	let disposed = false;
@@ -383,4 +432,13 @@ function createFixture(): LegacyGroundFixtureApi {
 	return api;
 }
 
-window.__C23_LEGACY_GROUND__ = createFixture();
+void createFixture()
+	.then( fixture => {
+		window.__C23_LEGACY_GROUND__ = fixture;
+	} )
+	.catch( error => {
+		// Surface asynchronous fixture failures in Playwright's pageerror/console
+		// collection instead of leaving only an opaque waitForFunction timeout.
+		console.error( '[legacy-ground fixture] failed to initialize', error );
+		throw error;
+	} );
