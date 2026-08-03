@@ -1054,7 +1054,16 @@ export class CesiumGroundPolylinePrimitive {
 			// option; an explicit Appearance always selects the new ABI.
 			this.material = createPolylineMaterial( this.uniforms, this.options.debugVolume );
 		} else {
-			this.compiledMaterial = this.compileAppearance( this.appearanceState );
+			try {
+				this.compiledMaterial = this.compileAppearance( this.appearanceState );
+			} catch ( error ) {
+				// Geometry exists before Material compilation because its userData
+				// supplies lineTotalMeters. A constructor that fails synchronously has
+				// no primitive instance whose dispose() can be called, so release this
+				// sole owned GPU resource before preserving the original error.
+				this.geometry.dispose();
+				throw error;
+			}
 			this.material = this.compiledMaterial.material;
 		}
 		this.mesh = new Mesh( this.geometry, this.material );

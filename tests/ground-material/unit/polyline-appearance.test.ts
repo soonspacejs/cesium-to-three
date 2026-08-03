@@ -1,10 +1,11 @@
 import {
+	BufferGeometry,
 	Mesh,
 	PerspectiveCamera,
 	RawShaderMaterial,
 	Vector4,
 } from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
 	CesiumGroundPolylinePrimitive,
@@ -154,5 +155,47 @@ describe( 'polyline ABI and Appearance integration', () => {
 		expect( line.material ).not.toBe( before );
 		expect( line.geometry ).toBe( geometry );
 		primitive.dispose();
+	} );
+
+	it( 'keeps the live line intact when a Raw switch candidate fails', () => {
+		const primitive = createPolyline( { arrowMode: 'right' } );
+		const line = lineMesh( primitive );
+		const arrow = primitive.group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+		if ( ! ( arrow instanceof Mesh ) ) throw new Error( 'Polyline arrow Mesh is missing.' );
+		const originalAppearance = primitive.appearance;
+		const originalMaterial = line.material;
+		const originalGeometry = line.geometry;
+		const originalArrowMaterial = arrow.material;
+		let candidateDisposeEvents = 0;
+		const brokenRaw = new CesiumGroundRawShaderAppearance( {
+			factory: context => {
+				const candidate = context.createDefaultMaterial();
+				candidate.addEventListener( 'dispose', () => { candidateDisposeEvents += 1; } );
+				throw new Error( 'intentional polyline Raw failure' );
+			},
+		} );
+
+		expect( () => primitive.setAppearance( brokenRaw ) ).toThrow();
+		expect( candidateDisposeEvents ).toBe( 1 );
+		expect( primitive.appearance ).toBe( originalAppearance );
+		expect( line.material ).toBe( originalMaterial );
+		expect( line.geometry ).toBe( originalGeometry );
+		expect( arrow.material ).toBe( originalArrowMaterial );
+		primitive.dispose();
+	} );
+
+	it( 'releases line geometry when constructor-time Material validation fails', () => {
+		const geometryDispose = vi.spyOn( BufferGeometry.prototype, 'dispose' );
+		const invalidAppearance = new CesiumGroundMaterialAppearance( {
+			material: new CesiumGroundMaterial( {
+				type: 'InvalidPolylineConstructorFixture',
+				// The safe compiler requires exactly one valid c23_getMaterial entry.
+				fragmentShader: 'float unrelatedFunction() { return 1.0; }',
+			} ),
+		} );
+
+		expect( () => createPolyline( { appearance: invalidAppearance } ) ).toThrow();
+		expect( geometryDispose ).toHaveBeenCalledTimes( 1 );
+		geometryDispose.mockRestore();
 	} );
 } );
