@@ -97,7 +97,14 @@ export interface LegacyGroundFixtureApi {
 	exerciseLegacySetters(): LegacyGroundSetterReport;
 	measureFrameStability( count: number ): LegacyGroundStabilityReport;
 	renderFrames( count: number ): LegacyGroundResourceSnapshot;
+	measureLowAngleSky(): LegacyGroundSkyReport;
 	dispose(): LegacyGroundResourceSnapshot;
+}
+
+export interface LegacyGroundSkyReport {
+	sampledPixels: number;
+	wrongColorPixels: number;
+	firstWrongPixel: [ number, number, number, number ] | null;
 }
 
 export interface LegacyGroundStabilityReport {
@@ -625,6 +632,46 @@ async function createFixture(): Promise<LegacyGroundFixtureApi> {
 			const safeCount = Math.max( 0, Math.floor( count ) );
 			for ( let index = 0; index < safeCount; index += 1 ) renderOneFrame();
 			return snapshotResources();
+		},
+		measureLowAngleSky() {
+			// Aim almost tangentially across the ellipsoid. The top 48 framebuffer
+			// rows are guaranteed sky/no-depth; any Ground color there means the
+			// packed-depth clear sentinel escaped fragment culling.
+			camera.position.copy( anchor ).addScaledVector( up, 500 );
+			camera.lookAt(
+				anchor.clone().addScaledVector( east, 10000 ).addScaledVector( up, - 50 ),
+			);
+			camera.updateMatrixWorld( true );
+			renderOneFrame();
+			const gl = renderer.getContext();
+			const bandHeight = 48;
+			const pixels = new Uint8Array( WIDTH * bandHeight * 4 );
+			gl.readPixels(
+				0,
+				HEIGHT - bandHeight,
+				WIDTH,
+				bandHeight,
+				gl.RGBA,
+				gl.UNSIGNED_BYTE,
+				pixels,
+			);
+			let wrongColorPixels = 0;
+			let firstWrongPixel: [ number, number, number, number ] | null = null;
+			for ( let index = 0; index < pixels.length; index += 4 ) {
+				const pixel = [
+					pixels[ index ], pixels[ index + 1 ], pixels[ index + 2 ], pixels[ index + 3 ],
+				] as [ number, number, number, number ];
+				if ( pixel[ 0 ] === 8 && pixel[ 1 ] === 16 && pixel[ 2 ] === 24 && pixel[ 3 ] === 255 ) {
+					continue;
+				}
+				wrongColorPixels += 1;
+				firstWrongPixel ??= pixel;
+			}
+			return {
+				sampledPixels: WIDTH * bandHeight,
+				wrongColorPixels,
+				firstWrongPixel,
+			};
 		},
 		dispose() {
 			if ( disposed ) return snapshotResources();
