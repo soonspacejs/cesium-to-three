@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { CesiumGroundMaterial } from '../../../src/lib/ground/material/CesiumGroundMaterial';
 import {
+	createGroundArrowShaders,
 	createGroundClassificationColorShaders,
 	createGroundClassificationStencilShaders,
 	createGroundPolylineShaders,
@@ -96,5 +97,17 @@ describe( 'Ground classification stencil system shaders', () => {
 		const debug = createGroundPolylineShaders( COLOR_MATERIAL, true );
 		expect( normal.fragmentShader ).not.toContain( '#define C23_DEBUG_VOLUME 1' );
 		expect( debug.fragmentShader ).toContain( '#define C23_DEBUG_VOLUME 1' );
+	} );
+
+	it( 'locks arrow endpoint frame, membership, and local ABI inputs', () => {
+		const source = createGroundArrowShaders( COLOR_MATERIAL, false );
+		expect( source ).toMatchSnapshot();
+		expect( source.vertexShader ).toContain( 'in vec3 arrowTipHigh' );
+		expect( source.vertexShader ).toContain( 'arrowTerrainHeights.x - extraDrop' );
+		expect( source.fragmentShader ).toContain( 'dot(c23_tipToPosition, c23_arrowBackEC)' );
+		expect( source.fragmentShader ).toContain( 'c23_edgeDistance <= c23_arrowStrokeHalfPixels' );
+		expect( source.fragmentShader ).toContain( 'c23_input.localMeters = vec2(c23_arrowA, c23_arrowB)' );
+		expect( source.fragmentShader ).toContain( 'c23_input.isStroke = c23_style == 1' );
+		expect( source.fragmentShader.match( /c23_getMaterial\(c23_input\)/g ) ).toHaveLength( 1 );
 	} );
 } );

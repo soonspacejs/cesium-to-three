@@ -1068,3 +1068,262 @@ export function createGroundPolylineShaders(
 		} ),
 	} );
 }
+
+// ---------------------------------------------------------------------------
+// Arrowhead depth-reconstruction pass
+// ---------------------------------------------------------------------------
+
+const ARROW_VERTEX_DECLARATIONS = /* glsl */ `
+uniform mat4 czm_modelViewRelativeToEye;
+uniform mat4 czm_projection;
+uniform mat3 czm_normal;
+uniform vec3 czm_encodedCameraPositionMCHigh;
+uniform vec3 czm_encodedCameraPositionMCLow;
+uniform float czm_geometricToleranceOverMeter;
+uniform float czm_sceneMode;
+uniform vec4 czm_viewport;
+uniform vec4 czm_frustumPlanes;
+uniform vec3 czm_currentFrustum;
+uniform float czm_pixelRatio;
+
+uniform float c23_arrowWidthMode;
+uniform float c23_arrowLengthPixels;
+uniform float c23_arrowHalfWidthPixels;
+uniform float c23_arrowLengthMeters;
+uniform float c23_arrowHalfWidthMeters;
+`;
+
+const ARROW_ATTRIBUTES = /* glsl */ `
+in vec3 arrowTipHigh;
+in vec3 arrowTipLow;
+in vec3 arrowBackDir;
+in vec3 arrowRightDir;
+in vec3 arrowUpDir;
+in vec3 arrowCorner;
+in vec2 arrowTerrainHeights;
+in float arrowStyleId;
+`;
+
+const ARROW_VARYINGS = /* glsl */ `
+out vec3 c23_arrowTipEC;
+out vec3 c23_arrowBackEC;
+out vec3 c23_arrowRightEC;
+flat out float c23_arrowStyle;
+`;
+
+/**
+ * Builds a conservative terrain-height box around one endpoint. The box is
+ * deliberately larger than the final triangle/chevron; the fragment stage
+ * performs exact `(a,b)` membership against the reconstructed terrain point.
+ */
+const ARROW_VERTEX_MAIN = /* glsl */ `
+void main() {
+	vec4 tipRelativeToEye = c23_translateRelativeToEye(arrowTipHigh, arrowTipLow);
+	vec4 tipEC = czm_modelViewRelativeToEye * tipRelativeToEye;
+	vec3 backEC = normalize(czm_normal * arrowBackDir);
+	vec3 rightEC = normalize(czm_normal * arrowRightDir);
+	vec3 upEC = normalize(czm_normal * arrowUpDir);
+	c23_arrowTipEC = tipEC.xyz;
+	c23_arrowBackEC = backEC;
+	c23_arrowRightEC = rightEC;
+	c23_arrowStyle = arrowStyleId;
+
+	float metersPerPixel = max(0.0, c23_metersPerPixel(tipEC));
+	float lengthMeters = c23_branch(
+		c23_arrowWidthMode > 0.5,
+		c23_arrowLengthMeters,
+		c23_arrowLengthPixels * metersPerPixel
+	) * 1.35;
+	float halfWidthMeters = c23_branch(
+		c23_arrowWidthMode > 0.5,
+		c23_arrowHalfWidthMeters,
+		c23_arrowHalfWidthPixels * metersPerPixel
+	) * 1.35;
+
+	float alongCoefficient = arrowCorner.x;
+	float rightSign = arrowCorner.y;
+	float topBottomSide = arrowCorner.z;
+	vec3 positionEC = tipEC.xyz
+		+ backEC * (alongCoefficient * lengthMeters)
+		+ rightEC * (rightSign * halfWidthMeters);
+
+	float viewDistance = length(tipRelativeToEye.xyz);
+	float extraDrop = min(55000.0, czm_geometricToleranceOverMeter * viewDistance);
+	float altitudeOffset = topBottomSide > 0.0
+		? arrowTerrainHeights.y
+		: arrowTerrainHeights.x - extraDrop;
+	positionEC += upEC * altitudeOffset;
+
+	gl_Position = czm_projection * vec4(positionEC, 1.0);
+	gl_Position.z = clamp(gl_Position.z / gl_Position.w, -1.0, 1.0) * gl_Position.w;
+}
+`;
+
+const ARROW_FRAGMENT_DECLARATIONS = /* glsl */ `
+uniform sampler2D czm_globeDepthTexture;
+uniform vec4 czm_viewport;
+uniform mat4 czm_inverseProjection;
+uniform mat4 czm_modelViewRelativeToEye;
+uniform vec3 czm_encodedCameraPositionMCHigh;
+uniform vec3 czm_encodedCameraPositionMCLow;
+uniform vec4 czm_frustumPlanes;
+uniform vec3 czm_currentFrustum;
+uniform float czm_log2FarDepthFromNearPlusOne;
+uniform float czm_sceneMode;
+uniform float czm_pixelRatio;
+
+uniform float c23_arrowWidthMode;
+uniform float c23_arrowLengthPixels;
+uniform float c23_arrowHalfWidthPixels;
+uniform float c23_arrowLengthMeters;
+uniform float c23_arrowHalfWidthMeters;
+uniform vec4 c23_arrowColor;
+uniform float c23_arrowStrokeHalfPixels;
+`;
+
+const ARROW_FRAGMENT_VARYINGS = /* glsl */ `
+in vec3 c23_arrowTipEC;
+in vec3 c23_arrowBackEC;
+in vec3 c23_arrowRightEC;
+flat in float c23_arrowStyle;
+`;
+
+/**
+ * Guard and membership code mirrors the polyline depth contract but evaluates
+ * endpoint-local triangle or open-chevron distance. All rejects happen before
+ * user Material execution and are legal because arrow has no stencil pass.
+ */
+const ARROW_MAIN_PROLOGUE = /* glsl */ `
+vec2 c23_screenCoordinate = c23_polylineScreenCoordinate(gl_FragCoord.xy);
+if (c23_polylineScreenCoordinateIsInvalid(c23_screenCoordinate)) {
+#ifdef C23_DEBUG_VOLUME
+	out_FragColor = vec4(0.0, 1.0, 0.0, 0.5);
+	return;
+#else
+	discard;
+#endif
+}
+float c23_depth = c23_unpackDepth(c23_polylineFetchPackedDepth(c23_screenCoordinate));
+if (c23_polylineDepthIsInvalid(c23_depth) || c23_polylineRayMissesEllipsoid(c23_screenCoordinate)) {
+#ifdef C23_DEBUG_VOLUME
+	out_FragColor = vec4(0.0, 1.0, 0.0, 0.5);
+	return;
+#else
+	discard;
+#endif
+}
+
+vec3 c23_positionEC = c23_reconstructEyePosition(gl_FragCoord.xy, c23_depth);
+if (c23_polylineEyePointBeyondHorizon(c23_positionEC)) {
+#ifdef C23_DEBUG_VOLUME
+	out_FragColor = vec4(0.0, 1.0, 0.0, 0.5);
+	return;
+#else
+	discard;
+#endif
+}
+
+vec3 c23_tipToPosition = c23_positionEC - c23_arrowTipEC;
+float c23_arrowA = dot(c23_tipToPosition, c23_arrowBackEC);
+float c23_arrowB = dot(c23_tipToPosition, c23_arrowRightEC);
+float c23_mpp = c23_metersPerPixel(c23_positionEC);
+float c23_arrowLength = c23_branch(
+	c23_arrowWidthMode > 0.5,
+	c23_arrowLengthMeters,
+	c23_arrowLengthPixels * c23_mpp
+);
+float c23_arrowHalfWidth = c23_branch(
+	c23_arrowWidthMode > 0.5,
+	c23_arrowHalfWidthMeters,
+	c23_arrowHalfWidthPixels * c23_mpp
+);
+
+int c23_style = int(c23_arrowStyle + 0.5);
+bool c23_insideArrow;
+if (c23_style == 1) {
+	float c23_lineFactor = c23_arrowLength / max(
+		sqrt(
+			c23_arrowLength * c23_arrowLength
+				+ c23_arrowHalfWidth * c23_arrowHalfWidth
+		),
+		1e-6
+	);
+	float c23_edgeDistance = abs(
+		abs(c23_arrowB)
+			- c23_arrowHalfWidth * (c23_arrowA / max(c23_arrowLength, 1e-6))
+	) * c23_lineFactor;
+	c23_insideArrow = c23_arrowA >= 0.0
+		&& c23_arrowA <= c23_arrowLength
+		&& c23_edgeDistance <= c23_arrowStrokeHalfPixels * c23_mpp;
+} else {
+	c23_insideArrow = c23_arrowA >= 0.0
+		&& c23_arrowA <= c23_arrowLength
+		&& abs(c23_arrowB) <= c23_arrowHalfWidth
+			* (c23_arrowA / max(c23_arrowLength, 1e-6));
+}
+if (!c23_insideArrow) {
+#ifdef C23_DEBUG_VOLUME
+	out_FragColor = vec4(0.0, 1.0, 0.0, 0.5);
+	return;
+#else
+	discard;
+#endif
+}
+
+vec3 c23_derivativeX = dFdx(c23_positionEC);
+vec3 c23_derivativeY = dFdy(c23_positionEC);
+vec3 c23_normalEC = normalize(cross(c23_derivativeX, c23_derivativeY));
+if (dot(c23_normalEC, -c23_positionEC) < 0.0) c23_normalEC = -c23_normalEC;
+`;
+
+const ARROW_INPUT_ASSIGNMENTS = /* glsl */ `
+c23_input.st = vec2(
+	c23_arrowLength > 0.0 ? clamp(c23_arrowA / c23_arrowLength, 0.0, 1.0) : 0.0,
+	c23_arrowHalfWidth > 0.0
+		? clamp(c23_arrowB / (2.0 * c23_arrowHalfWidth) + 0.5, 0.0, 1.0)
+		: 0.5
+);
+c23_input.localMeters = vec2(c23_arrowA, c23_arrowB);
+c23_input.baseColor = c23_arrowColor;
+c23_input.isStroke = c23_style == 1 ? 1.0 : 0.0;
+c23_input.positionEC = c23_positionEC;
+c23_input.positionToEyeEC = -c23_positionEC;
+c23_input.normalEC = c23_normalEC;
+c23_input.metersPerPixel = c23_mpp;
+`;
+
+/** Builds the complete safe arrowhead source pair. */
+export function createGroundArrowShaders(
+	material: Pick<CesiumGroundMaterial, 'type' | 'fragmentShader' | 'uniforms' | 'defines'>,
+	debugVolume: boolean,
+): GroundShaderSourcePair {
+	const systemDefines = debugVolume ? [ 'C23_DEBUG_VOLUME 1' ] : [];
+	return Object.freeze( {
+		vertexShader: assembleGroundVertexShader( {
+			kind: 'arrow',
+			pass: 'arrow',
+			systemDefines,
+			sections: {
+				declarations: ARROW_VERTEX_DECLARATIONS,
+				attributes: ARROW_ATTRIBUTES,
+				varyings: ARROW_VARYINGS,
+				helpers: POLYLINE_VERTEX_HELPERS,
+				main: ARROW_VERTEX_MAIN,
+			},
+		} ),
+		fragmentShader: assembleGroundFragmentShader( {
+			mode: 'material',
+			kind: 'arrow',
+			pass: 'arrow',
+			material,
+			systemDefines,
+			sections: {
+				declarations: ARROW_FRAGMENT_DECLARATIONS,
+				varyings: ARROW_FRAGMENT_VARYINGS,
+				helpers: POLYLINE_FRAGMENT_HELPERS,
+				mainPrologue: ARROW_MAIN_PROLOGUE,
+				inputAssignments: ARROW_INPUT_ASSIGNMENTS,
+			},
+		} ),
+	} );
+}
