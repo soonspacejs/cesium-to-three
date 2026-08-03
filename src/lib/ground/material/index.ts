@@ -3,6 +3,7 @@
 export * from './CesiumGroundMaterial';
 export * from './appearances';
 export * from './errors';
+export * from './ground-system-shaders';
 export * from './logical-key';
 export * from './shader-abi';
 export * from './shader-assembler';

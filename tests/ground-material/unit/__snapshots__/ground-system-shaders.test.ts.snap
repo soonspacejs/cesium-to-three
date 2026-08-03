@@ -1,0 +1,98 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Ground classification stencil system shaders > locks the complete front-stencil source pair 1`] = `
+{
+  "fragmentShader": "// [c23:fragment-precision-output]
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+
+out vec4 out_FragColor;
+
+// [c23:pipeline-defines]
+#define C23_SURFACE 1
+#define C23_PASS_FRONT_STENCIL 1
+
+// [c23:fragment-system-declarations]
+uniform float czm_farDepthFromNearPlusOne;
+uniform float czm_oneOverLog2FarDepthFromNearPlusOne;
+
+// [c23:fragment-varyings]
+in float c23_depthFromNearPlusOne;
+
+// [c23:fragment-system-helpers]
+void c23_writeStencilLogDepth(float depthFromNearPlusOne) {
+	if (
+		depthFromNearPlusOne <= 0.9999999 ||
+		depthFromNearPlusOne > czm_farDepthFromNearPlusOne
+	) {
+		discard;
+	}
+	gl_FragDepth = log2(depthFromNearPlusOne) * czm_oneOverLog2FarDepthFromNearPlusOne;
+}
+
+// [c23:fragment-stencil-main]
+void main() {
+	// Color writes are disabled by render state, but a defined output keeps the
+	// GLSL3 fragment interface complete on strict WebGL2 drivers.
+	out_FragColor = vec4(1.0);
+	c23_writeStencilLogDepth(c23_depthFromNearPlusOne);
+}
+",
+  "vertexShader": "// [c23:vertex-precision]
+precision highp float;
+precision highp int;
+
+// [c23:pipeline-defines]
+#define C23_SURFACE 1
+#define C23_PASS_FRONT_STENCIL 1
+
+// [c23:vertex-system-declarations]
+uniform mat4 czm_modelViewRelativeToEye;
+uniform mat4 czm_modelViewProjectionRelativeToEye;
+uniform vec3 czm_encodedCameraPositionMCHigh;
+uniform vec3 czm_encodedCameraPositionMCLow;
+uniform float czm_geometricToleranceOverMeter;
+uniform float czm_sceneMode;
+uniform vec3 czm_currentFrustum;
+uniform float c23_globeMinimumAltitude;
+
+// [c23:vertex-attributes]
+in vec3 position3DHigh;
+in vec3 position3DLow;
+in float batchId;
+in vec3 extrudeDirection;
+
+// [c23:vertex-varyings]
+out float c23_depthFromNearPlusOne;
+
+// [c23:vertex-system-helpers]
+vec4 c23_translateRelativeToEye(vec3 high, vec3 low) {
+	vec3 highDifference = high - czm_encodedCameraPositionMCHigh;
+	vec3 lowDifference = low - czm_encodedCameraPositionMCLow;
+	return vec4(highDifference + lowDifference, 1.0);
+}
+
+void c23_writeVertexLogDepth() {
+	c23_depthFromNearPlusOne = (gl_Position.w - czm_currentFrustum.x) + 1.0;
+	gl_Position.z = clamp(gl_Position.z / gl_Position.w, -1.0, 1.0) * gl_Position.w;
+}
+
+// [c23:vertex-main]
+void main() {
+	vec4 positionRte = c23_translateRelativeToEye(position3DHigh, position3DLow);
+	float extrusionDelta = min(
+		c23_globeMinimumAltitude,
+		czm_geometricToleranceOverMeter * length(positionRte.xyz)
+	);
+	extrusionDelta *= czm_sceneMode == 3.0 ? 1.0 : 0.0;
+	positionRte.xyz += extrudeDirection * extrusionDelta;
+
+	// Keep the ABI-prescribed batch attribute live without changing the single-instance result.
+	positionRte.w += batchId * 0.0;
+	gl_Position = czm_modelViewProjectionRelativeToEye * positionRte;
+	c23_writeVertexLogDepth();
+}
+",
+}
+`;
