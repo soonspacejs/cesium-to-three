@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import { createGroundClassificationStencilShaders } from '../../../src/lib/ground/material/ground-system-shaders';
+import { CesiumGroundMaterial } from '../../../src/lib/ground/material/CesiumGroundMaterial';
+import {
+	createGroundClassificationColorShaders,
+	createGroundClassificationStencilShaders,
+} from '../../../src/lib/ground/material/ground-system-shaders';
+
+const COLOR_MATERIAL = new CesiumGroundMaterial( {
+	type: 'SystemShaderColorFixture',
+	fragmentShader: /* glsl */ `
+c23_material c23_getMaterial(c23_materialInput input) {
+	c23_material result;
+	result.diffuse = input.baseColor.rgb;
+	result.emission = vec3(0.0);
+	result.alpha = input.baseColor.a;
+	return result;
+}
+`,
+} );
 
 describe( 'Ground classification stencil system shaders', () => {
 	it( 'locks the complete front-stencil source pair', () => {
@@ -33,5 +50,32 @@ describe( 'Ground classification stencil system shaders', () => {
 		expect( fragmentShader ).toContain( 'discard;' );
 		expect( fragmentShader ).toContain( 'gl_FragDepth = log2(depthFromNearPlusOne)' );
 		expect( fragmentShader ).not.toContain( 'c23_getMaterial' );
+	} );
+
+	it( 'locks the full surface color evaluation and safe finalizer source', () => {
+		const source = createGroundClassificationColorShaders(
+			'surface',
+			COLOR_MATERIAL,
+			true,
+		);
+		expect( source ).toMatchSnapshot();
+		expect( source.fragmentShader ).toContain( 'c23_evaluateRectangle(evaluation)' );
+		expect( source.fragmentShader ).toContain( 'c23_evaluatePolygon(evaluation)' );
+		expect( source.fragmentShader ).toContain( 'c23_evaluateCircle(evaluation)' );
+		expect( source.fragmentShader ).toContain( 'c23_systemCoverage = c23_surface.coverage' );
+		expect( source.fragmentShader ).not.toContain( 'discard;' );
+		expect( source.fragmentShader ).not.toContain( 'gl_FragDepth' );
+	} );
+
+	it( 'uses decal footprint inputs without enabling surface shape branches', () => {
+		const source = createGroundClassificationColorShaders(
+			'decal',
+			COLOR_MATERIAL,
+			false,
+		);
+		expect( source.fragmentShader ).toContain( '#define C23_DECAL 1' );
+		expect( source.fragmentShader ).not.toContain( '#define C23_FRAGMENT_CULL 1' );
+		expect( source.fragmentShader ).toContain( 'c23_input.st = c23_surface.st' );
+		expect( source.fragmentShader ).not.toContain( 'discard;' );
 	} );
 } );
