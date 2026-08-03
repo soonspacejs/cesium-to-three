@@ -266,6 +266,12 @@ export class CesiumGroundRectanglePrimitive {
 			alpha,
 			options.renderOrder ?? 10,
 			options.fragmentCull ?? true,
+			{
+				// Stage 4 首个运行时切换点：矩形仅把 color pass 交给显式
+				// Material compiler；classification 内部仍保留原 front/back
+				// stencil 材质、三个 Mesh、共享 wrapper 和命令顺序。
+				useMaterialPipeline: true,
+			},
 		);
 		this.classification.group.visible = options.visible;
 		this.classification.setClassificationType( options.classificationType );
