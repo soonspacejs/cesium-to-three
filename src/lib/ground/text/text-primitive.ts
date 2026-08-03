@@ -55,7 +55,7 @@ export class CesiumGroundTextPrimitive {
 	/**
 	 * 共享 classification（front / back stencil + color command）。公开以便宿主
 	 * 单独切命令显隐（setCommandVisibility）等高级用法，与 rectangle/circle 同形。
-	 * setText 会替换为新实例；外部不应缓存其引用。
+	 * setText 原位更新固定拓扑；外部可安全缓存 group、geometry 和 Appearance 引用。
 	 */
 	public classification: CesiumClassificationPrimitive;
 	private resolved: ResolvedPlotTextOptions;
@@ -114,11 +114,11 @@ export class CesiumGroundTextPrimitive {
 	}
 
 	/**
-	 * 局部更新文本/样式/摆放：重 resolve → 重画纹理 → 重算足迹 → 重建几何 + extents。
-	 * 几何/extents 变化需重建 classification（uniforms 持有 extents 引用），
-	 * 故 dispose 旧 classification 再建新的，纹理可复用 canvas 句柄。
+	 * Transactionally updates text/layout in the existing fixed-topology command
+	 * set. A candidate canvas, footprint and geometry are completed first; only
+	 * then are live attribute arrays, extents and the same CanvasTexture updated.
 	 *
-	 * @param partial 要覆盖的字段（与 PlotTextOptions 同形，points 用原锚点若不传）。
+	 * @param partial Fields to merge; omitted points retain the current anchor.
 	 */
 	public setText( partial: Partial<PlotTextOptions> ): void {
 		this.ensureNotDisposed();
@@ -132,27 +132,35 @@ export class CesiumGroundTextPrimitive {
 			],
 		};
 
-		this.resolved = resolvePlotTextOptions( merged );
-		this.renderOrder = this.resolved.renderOrder;
+		const nextResolved = resolvePlotTextOptions( merged );
+		const nextPainted = paintTextToCanvas( nextResolved, null );
+		const nextFootprint = computeTextFootprint( nextResolved, nextPainted.layout );
+		const candidateGeometry = buildTextShadowVolumeGeometry( {
+			swEcef: nextFootprint.swEcef,
+			seEcef: nextFootprint.seEcef,
+			neEcef: nextFootprint.neEcef,
+			nwEcef: nextFootprint.nwEcef,
+			minimumHeight: nextResolved.minimumHeight ?? undefined,
+			maximumHeight: nextResolved.maximumHeight ?? undefined,
+		} );
+		const nextExtents = computeTextPlanarExtents( nextFootprint );
+		try {
+			this.classification.updateGeometryAndPlanarExtents( candidateGeometry, nextExtents );
+		} finally {
+			// Candidate arrays have been copied into the live BufferGeometry; this
+			// temporary object never becomes part of the scene or owns a GPU program.
+			candidateGeometry.dispose();
+		}
 
-		// 重画纹理（复用 canvas 句柄；尺寸变了 paint 内部会 resize）
-		this.painted = paintTextToCanvas( this.resolved, this.painted.canvas );
+		this.resolved = nextResolved;
+		this.renderOrder = nextResolved.renderOrder;
+		this.painted = nextPainted;
+		this.footprint = nextFootprint;
+		this.texture.image = nextPainted.canvas;
 		this.texture.needsUpdate = true;
-
-		// 重算足迹（geometry + extents 会用到）
-		this.footprint = computeTextFootprint( this.resolved, this.painted.layout );
-
-		// classification 的 uniforms 持有旧 extents 引用，几何也变了 → 重建。
-		const parent = this.group.parent;
-		this.classification.dispose();
-		parent?.remove( this.classification.group );
-
-		this.classification = this.buildClassification();
-		this.classification.group.visible = this.resolved.visible;
-		// 复用同一引用：把新 group 接回原 parent，并更新本对象的 group 字段。
-		this.group = this.classification.group;
-		this.group.name = 'CesiumGroundTextPrimitive';
-		parent?.add( this.group );
+		this.classification.setRenderOrder( nextResolved.renderOrder );
+		this.classification.setClassificationType( nextResolved.classificationType );
+		this.group.visible = nextResolved.visible;
 	}
 
 	/** Returns the exact logical Appearance currently bound to the text decal. */

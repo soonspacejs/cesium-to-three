@@ -73,8 +73,8 @@ function fromClassification(
 
 function fromDirectGroup( primitive: GroundFixturePrimitive ): GroundFixturePrimitive {
 	return {
-		// Text replaces its public group during setText(); keep this adapter live
-		// instead of copying the initial node and later disposing a stale group.
+		// Text keeps its public group during setText(); this getter remains live for
+		// compatibility with fixtures that intentionally re-read the command set.
 		get group() {
 			return primitive.group;
 		},
@@ -403,11 +403,11 @@ function exerciseLegacySetters(
 	const textBefore = classificationMeshes( bundle.text );
 	const textGroup = bundle.text.group;
 	const textTexture = ( textBefore.color.material as RawShaderMaterial )
-		.uniforms.u_decalTexture.value;
+		.uniforms.u_texture.value;
 	bundle.text.setText( { content: 'C23 UPDATED' } );
 	const textAfter = classificationMeshes( bundle.text );
 	const updatedTextTexture = ( textAfter.color.material as RawShaderMaterial )
-		.uniforms.u_decalTexture.value;
+		.uniforms.u_texture.value;
 
 	bundle.rectangle.classification.group.visible = false;
 	bundle.rectangle.setRenderOrder( 125 );

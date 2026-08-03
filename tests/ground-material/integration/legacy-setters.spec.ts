@@ -28,8 +28,8 @@ test( 'records legacy setter, rebuild, visibility and dispose identities', async
 		arrowMaterialReplaced: true,
 	} );
 	expect( report.textUpdate ).toEqual( {
-		groupReplaced: true,
-		geometryReplaced: true,
+		groupReplaced: false,
+		geometryReplaced: false,
 		textureStable: true,
 	} );
 	expect( report.visibilityAndOrder ).toEqual( {
