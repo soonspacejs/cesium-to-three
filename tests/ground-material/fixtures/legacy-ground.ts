@@ -107,6 +107,7 @@ export interface LegacyGroundFixtureApi {
 	measureLowAngleSky(): LegacyGroundSkyReport;
 	measureAppearanceSwitchFrames(): LegacyGroundAppearanceSwitchReport;
 	measureAnimationKeyframes(): LegacyGroundAnimationReport;
+	measureMutationFrames(): LegacyGroundMutationFrameReport;
 	dispose(): LegacyGroundResourceSnapshot;
 }
 
@@ -135,6 +136,24 @@ export interface LegacyGroundAnimationReport {
 	pulse: LegacyGroundAnimationSeries;
 	scalePlain: LegacyGroundAnimationSeries;
 	scaleTextured: LegacyGroundAnimationSeries;
+}
+
+export interface LegacyGroundMutationFrameReport {
+	fragmentCull: {
+		disabledEnergy: number;
+		enabledEnergy: number;
+	};
+	text: {
+		beforeEnergy: number;
+		afterEnergy: number;
+		changedPixels: number;
+	};
+	arrow: {
+		noneEnergy: number;
+		bothEnergy: number;
+		noneToBothChangedPixels: number;
+		solidToOpenChangedPixels: number;
+	};
 }
 
 export interface LegacyGroundStabilityReport {
@@ -861,6 +880,78 @@ async function createFixture(): Promise<LegacyGroundFixtureApi> {
 			);
 
 			return { flow, pulse, scalePlain, scaleTextured };
+		},
+		measureMutationFrames() {
+			for ( const primitive of primitives ) primitive.group.visible = false;
+			const gl = renderer.getContext();
+			const readFrame = (): Uint8Array => {
+				renderOneFrame();
+				const pixels = new Uint8Array( WIDTH * HEIGHT * 4 );
+				gl.readPixels( 0, 0, WIDTH, HEIGHT, gl.RGBA, gl.UNSIGNED_BYTE, pixels );
+				return pixels;
+			};
+			const baseline = readFrame();
+			const energyFromBaseline = ( pixels: Uint8Array ): number => {
+				let energy = 0;
+				for ( let index = 0; index < pixels.length; index += 4 ) {
+					energy += Math.abs( pixels[ index ] - baseline[ index ] );
+					energy += Math.abs( pixels[ index + 1 ] - baseline[ index + 1 ] );
+					energy += Math.abs( pixels[ index + 2 ] - baseline[ index + 2 ] );
+				}
+				return energy;
+			};
+			const changedPixels = ( left: Uint8Array, right: Uint8Array ): number => {
+				let count = 0;
+				for ( let index = 0; index < left.length; index += 4 ) {
+					if (
+						left[ index ] !== right[ index ] ||
+						left[ index + 1 ] !== right[ index + 1 ] ||
+						left[ index + 2 ] !== right[ index + 2 ] ||
+						left[ index + 3 ] !== right[ index + 3 ]
+					) count += 1;
+				}
+				return count;
+			};
+
+			bundle.rectangle.classification.group.visible = true;
+			bundle.rectangle.classification.setFragmentCulling( false );
+			const cullDisabled = readFrame();
+			bundle.rectangle.classification.setFragmentCulling( true );
+			const cullEnabled = readFrame();
+			bundle.rectangle.classification.group.visible = false;
+
+			bundle.text.group.visible = true;
+			const textBefore = readFrame();
+			bundle.text.setText( { content: 'FRAME UPDATE' } );
+			const textAfter = readFrame();
+			bundle.text.group.visible = false;
+
+			bundle.solidPolyline.group.visible = true;
+			bundle.solidPolyline.setArrowMode( 'none' );
+			const arrowNone = readFrame();
+			bundle.solidPolyline.setArrowMode( 'both' );
+			bundle.solidPolyline.setArrowStyles( 'solid', 'solid' );
+			const arrowSolid = readFrame();
+			bundle.solidPolyline.setArrowStyles( 'open', 'open' );
+			const arrowOpen = readFrame();
+
+			return {
+				fragmentCull: {
+					disabledEnergy: energyFromBaseline( cullDisabled ),
+					enabledEnergy: energyFromBaseline( cullEnabled ),
+				},
+				text: {
+					beforeEnergy: energyFromBaseline( textBefore ),
+					afterEnergy: energyFromBaseline( textAfter ),
+					changedPixels: changedPixels( textBefore, textAfter ),
+				},
+				arrow: {
+					noneEnergy: energyFromBaseline( arrowNone ),
+					bothEnergy: energyFromBaseline( arrowSolid ),
+					noneToBothChangedPixels: changedPixels( arrowNone, arrowSolid ),
+					solidToOpenChangedPixels: changedPixels( arrowSolid, arrowOpen ),
+				},
+			};
 		},
 		dispose() {
 			if ( disposed ) return snapshotResources();
