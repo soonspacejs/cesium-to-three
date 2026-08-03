@@ -998,6 +998,20 @@ export class CesiumGroundPolylinePrimitive {
 	private compiledArrowMaterial?: GroundCompiledMaterial;
 	private arrowColorExplicit = false;
 	private disposed = false;
+	private appearanceInvalidated = false;
+	private arrowAppearanceInvalidated = false;
+	private readonly onAppearanceChange = (): void => {
+		this.appearanceInvalidated = true;
+	};
+	private readonly onAppearanceDispose = (): void => {
+		this.appearanceInvalidated = true;
+	};
+	private readonly onArrowAppearanceChange = (): void => {
+		this.arrowAppearanceInvalidated = true;
+	};
+	private readonly onArrowAppearanceDispose = (): void => {
+		this.arrowAppearanceInvalidated = true;
+	};
 	/** Distinguishes factory claims without using object identity as a cache key. */
 	private static nextMaterialPrimitiveId = 1;
 	/** Stable owner id reused by every candidate rebuild for this primitive. */
@@ -1109,6 +1123,8 @@ export class CesiumGroundPolylinePrimitive {
 				throw error;
 			}
 		}
+		this.subscribeAppearance( this.appearanceState, false );
+		this.subscribeAppearance( this.arrowAppearanceState, true );
 	}
 
 	/**
@@ -1159,6 +1175,7 @@ export class CesiumGroundPolylinePrimitive {
 		this.arrowGeometry = nextGeometry;
 		this.compiledArrowMaterial = compiled;
 		this.arrowMaterial = compiled.material;
+		this.arrowAppearanceInvalidated = false;
 		this.arrowMesh = new Mesh( nextGeometry, compiled.material );
 		this.arrowMesh.name = 'CesiumGroundPolylineArrowCommand';
 		this.arrowMesh.frustumCulled = false;
@@ -1255,11 +1272,15 @@ export class CesiumGroundPolylinePrimitive {
 		const nextMaterial = nextCompiled.material;
 
 		const previousMaterial = this.material;
+		const previousAppearance = this.appearanceState;
 		this.appearanceState = nextAppearance;
 		this.compiledMaterial = nextCompiled;
+		this.appearanceInvalidated = false;
 		this.material = nextMaterial;
 		this.mesh.material = nextMaterial;
 		if ( previousMaterial !== nextMaterial ) previousMaterial.dispose();
+		this.unsubscribeAppearance( previousAppearance, false );
+		this.subscribeAppearance( nextAppearance, false );
 	}
 
 	/** Returns the exact logical Appearance selected for the arrow pass. */
@@ -1285,7 +1306,11 @@ export class CesiumGroundPolylinePrimitive {
 		const nextAppearance = appearance ?? this.defaultArrowAppearance;
 		if ( nextAppearance === this.arrowAppearanceState ) return;
 		if ( this.arrowMesh === undefined ) {
+			const previousAppearance = this.arrowAppearanceState;
 			this.arrowAppearanceState = nextAppearance;
+			this.arrowAppearanceInvalidated = false;
+			this.unsubscribeAppearance( previousAppearance, true );
+			this.subscribeAppearance( nextAppearance, true );
 			return;
 		}
 
@@ -1293,22 +1318,30 @@ export class CesiumGroundPolylinePrimitive {
 		// leave the old arrow and its logical Appearance fully usable.
 		const nextCompiled = this.compileArrowAppearance( nextAppearance );
 		const previousMaterial = this.arrowMaterial;
+		const previousAppearance = this.arrowAppearanceState;
 		this.arrowAppearanceState = nextAppearance;
 		this.compiledArrowMaterial = nextCompiled;
+		this.arrowAppearanceInvalidated = false;
 		this.arrowMaterial = nextCompiled.material;
 		this.arrowMesh.material = nextCompiled.material;
 		if ( previousMaterial !== undefined && previousMaterial !== nextCompiled.material ) {
 			previousMaterial.dispose();
 		}
+		this.unsubscribeAppearance( previousAppearance, true );
+		this.subscribeAppearance( nextAppearance, true );
 	}
 
 	/** Rebuilds a compiled pass only after the logical Appearance revision changes. */
 	private reconcileMaterialAppearance(): void {
-		if ( this.compiledMaterial.appearanceVersion === this.appearanceState.version ) return;
+		if (
+			! this.appearanceInvalidated &&
+			this.compiledMaterial.appearanceVersion === this.appearanceState.version
+		) return;
 
 		const nextCompiled = this.compileAppearance( this.appearanceState );
 		const previousMaterial = this.material;
 		this.compiledMaterial = nextCompiled;
+		this.appearanceInvalidated = false;
 		this.material = nextCompiled.material;
 		this.mesh.material = nextCompiled.material;
 		if ( previousMaterial !== nextCompiled.material ) previousMaterial.dispose();
@@ -1317,11 +1350,15 @@ export class CesiumGroundPolylinePrimitive {
 	/** Recompiles only the arrow pass when its logical Appearance revision changes. */
 	private reconcileArrowMaterialAppearance(): void {
 		if ( this.arrowMesh === undefined || this.compiledArrowMaterial === undefined ) return;
-		if ( this.compiledArrowMaterial.appearanceVersion === this.arrowAppearanceState.version ) return;
+		if (
+			! this.arrowAppearanceInvalidated &&
+			this.compiledArrowMaterial.appearanceVersion === this.arrowAppearanceState.version
+		) return;
 
 		const nextCompiled = this.compileArrowAppearance( this.arrowAppearanceState );
 		const previousMaterial = this.arrowMaterial;
 		this.compiledArrowMaterial = nextCompiled;
+		this.arrowAppearanceInvalidated = false;
 		this.arrowMaterial = nextCompiled.material;
 		this.arrowMesh.material = nextCompiled.material;
 		if ( previousMaterial !== undefined && previousMaterial !== nextCompiled.material ) {
@@ -1602,11 +1639,39 @@ export class CesiumGroundPolylinePrimitive {
 		if ( this.disposed ) {
 			return;
 		}
+		this.unsubscribeAppearance( this.appearanceState, false );
+		this.unsubscribeAppearance( this.arrowAppearanceState, true );
 		this.disposeArrowMesh();
 		this._group.remove( this.mesh );
 		this.geometry.dispose();
 		this.material.dispose();
 		this.disposed = true;
+	}
+
+	/** Subscribes the line or arrow consumer to its user-owned logical source. */
+	private subscribeAppearance( appearance: CesiumGroundAppearance, arrow: boolean ): void {
+		const change = arrow ? this.onArrowAppearanceChange : this.onAppearanceChange;
+		const dispose = arrow ? this.onArrowAppearanceDispose : this.onAppearanceDispose;
+		if ( appearance instanceof CesiumGroundMaterialAppearance ) {
+			appearance.material.addEventListener( 'change', change );
+			appearance.material.addEventListener( 'dispose', dispose );
+			return;
+		}
+		appearance.addEventListener( 'change', change );
+		appearance.addEventListener( 'dispose', dispose );
+	}
+
+	/** Detaches this consumer without disposing the shared logical source. */
+	private unsubscribeAppearance( appearance: CesiumGroundAppearance, arrow: boolean ): void {
+		const change = arrow ? this.onArrowAppearanceChange : this.onAppearanceChange;
+		const dispose = arrow ? this.onArrowAppearanceDispose : this.onAppearanceDispose;
+		if ( appearance instanceof CesiumGroundMaterialAppearance ) {
+			appearance.material.removeEventListener( 'change', change );
+			appearance.material.removeEventListener( 'dispose', dispose );
+			return;
+		}
+		appearance.removeEventListener( 'change', change );
+		appearance.removeEventListener( 'dispose', dispose );
 	}
 }
 

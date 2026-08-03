@@ -175,6 +175,28 @@ describe( 'polyline ABI and Appearance integration', () => {
 		primitive.dispose();
 	} );
 
+	it( 'releases and recompiles a still-bound line Material after dispose', () => {
+		const appearance = createGradientAppearance();
+		const primitive = createPolyline( { appearance } );
+		const line = lineMesh( primitive );
+		const before = line.material as RawShaderMaterial;
+		const dispose = vi.fn();
+		before.addEventListener( 'dispose', dispose );
+
+		appearance.material.dispose();
+		primitive.update( {
+			depthTexture: null,
+			width: 960,
+			height: 640,
+			camera: new PerspectiveCamera( 45, 1.5, 1, 10000000 ),
+		} );
+
+		expect( primitive.appearance ).toBe( appearance );
+		expect( line.material ).not.toBe( before );
+		expect( dispose ).toHaveBeenCalledOnce();
+		primitive.dispose();
+	} );
+
 	it( 'keeps the live line intact when a Raw switch candidate fails', () => {
 		const primitive = createPolyline( { arrowMode: 'right' } );
 		const line = lineMesh( primitive );
@@ -269,6 +291,31 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 		expect( primitive.arrowAppearance ).toBe( arrowAppearance );
 		primitive.setArrowMode( 'right' );
 		expect( passes ).toEqual( [ 'arrow:arrow', 'arrow:arrow' ] );
+		primitive.dispose();
+	} );
+
+	it( 'releases and recompiles a still-bound Raw arrow after dispose', () => {
+		const passes: string[] = [];
+		const arrowAppearance = createRawArrowAppearance( passes );
+		const primitive = createPolyline( { arrowMode: 'right', arrowAppearance } );
+		const arrow = primitive.group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+		if ( ! ( arrow instanceof Mesh ) ) throw new Error( 'Polyline arrow Mesh is missing.' );
+		const before = arrow.material as RawShaderMaterial;
+		const dispose = vi.fn();
+		before.addEventListener( 'dispose', dispose );
+
+		arrowAppearance.dispose();
+		primitive.update( {
+			depthTexture: null,
+			width: 960,
+			height: 640,
+			camera: new PerspectiveCamera( 45, 1.5, 1, 10000000 ),
+		} );
+
+		expect( primitive.arrowAppearance ).toBe( arrowAppearance );
+		expect( arrow.material ).not.toBe( before );
+		expect( passes ).toEqual( [ 'arrow:arrow', 'arrow:arrow' ] );
+		expect( dispose ).toHaveBeenCalledOnce();
 		primitive.dispose();
 	} );
 
