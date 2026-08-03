@@ -103,3 +103,14 @@ export class CesiumGroundRawShaderAppearance extends EventDispatcher<
 export type CesiumGroundAppearance =
 	| CesiumGroundMaterialAppearance
 	| CesiumGroundRawShaderAppearance;
+
+/** Common option fragment mixed into every public Appearance-enabled primitive. */
+export interface CesiumGroundAppearanceOptions {
+	appearance?: CesiumGroundAppearance;
+}
+
+/** Structural owner contract shared by all public Ground primitive classes. */
+export interface CesiumGroundAppearanceOwner {
+	readonly appearance: CesiumGroundAppearance;
+	setAppearance( appearance?: CesiumGroundAppearance ): void;
+}

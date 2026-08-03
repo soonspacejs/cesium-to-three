@@ -7,6 +7,9 @@
 // ============================================================
 
 export * from './cesium-ground-adapter';
+// Stage 13 public Material ABI. The root entry re-exports this file, so the
+// exact same symbols are available from both package entry points.
+export * from './material';
 export { CesiumGroundTextPrimitive } from './text';
 export type {
 	PlotTextOptions,

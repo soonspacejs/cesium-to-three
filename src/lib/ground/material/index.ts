@@ -1,15 +1,48 @@
-// Internal Material subsystem barrel. Public package exports are intentionally
-// added only after primitive integration and package smoke tests are complete.
-export * from './CesiumGroundMaterial';
-export * from './appearances';
-export * from './builtins';
-export * from './compiler';
-export * from './errors';
-export * from './ground-system-shaders';
-export * from './logical-key';
-export * from './shader-abi';
-export * from './shader-assembler';
-export * from './system-uniforms';
-export * from './types';
-export * from './uniforms';
-export * from './validation';
+// Public Material subsystem barrel. Compiler internals and legacy adapters stay
+// private; only the stable ABI, logical strategies, public types, and built-in
+// factories cross the package boundary.
+export { C23_GROUND_SHADER_ABI_VERSION } from './shader-abi';
+export {
+	CesiumGroundMaterial,
+	type CesiumGroundMaterialEventMap,
+	type CesiumGroundMaterialOptions,
+} from './CesiumGroundMaterial';
+export {
+	CesiumGroundMaterialAppearance,
+	CesiumGroundRawShaderAppearance,
+	type CesiumGroundAppearance,
+	type CesiumGroundAppearanceOptions,
+	type CesiumGroundAppearanceOwner,
+	type CesiumGroundMaterialAppearanceOptions,
+	type CesiumGroundRawShaderAppearanceEventMap,
+	type CesiumGroundRawShaderAppearanceOptions,
+} from './appearances';
+export {
+	createColorGroundMaterial,
+	createTexturedDecalMaterial,
+	createPolylineDashMaterial,
+	createFlowLineMaterial,
+	createPulsePointMaterial,
+	createScalePulseMaterial,
+	type ColorGroundMaterialOptions,
+	type TexturedDecalMaterialOptions,
+	type PolylineDashMaterialOptions,
+	type FlowLineMaterialOptions,
+	type PulsePointMaterialOptions,
+	type ScalePulseMaterialOptions,
+	type GroundColorInput,
+} from './builtins';
+export {
+	CesiumGroundMaterialError,
+	type CesiumGroundMaterialErrorCode,
+} from './errors';
+export type {
+	GroundDefineValue,
+	GroundDefines,
+	GroundUserUniforms,
+	GroundSystemUniforms,
+	GroundPrimitiveKind,
+	GroundRenderPass,
+	GroundRawShaderBuildContext,
+	GroundMaterialFactory,
+} from './types';
