@@ -26,6 +26,12 @@ test( 'links one safe surface Appearance on rectangle, polygon, and circle', asy
 	expect( report.customUniformBound ).toEqual( [ true, true, true, false ] );
 	expect( report.stencilMaterialCallsMaterial ).toEqual( [ false, false, false, false ] );
 	expect( report.rawPasses ).toEqual( [ 'frontStencil', 'backStencil', 'color' ] );
+	expect( report.valueUpdateProgramSetStable ).toBe( true );
+	expect( report.structuralProgramSetSizes ).toEqual( [ 4, 4, 4 ] );
+	// Each revision removes one old safe color program and adds one replacement;
+	// the two fixed stencil programs and Raw color program stay identical.
+	expect( report.structuralProgramSetChanges ).toEqual( [ 2, 2, 2 ] );
+	expect( report.geometryStableAcrossRebuilds ).toBe( true );
 	// Stage 14 routes safe and Raw stencil defaults through the same canonical
 	// compiler sources. Three therefore shares front/back programs across both
 	// Appearance kinds; only custom-safe and Raw-default color remain distinct.

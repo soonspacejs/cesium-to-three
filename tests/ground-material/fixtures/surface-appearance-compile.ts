@@ -11,6 +11,7 @@ import {
 	PerspectiveCamera,
 	RawShaderMaterial,
 	Scene,
+	DataTexture,
 	WebGLRenderer,
 	Vector4,
 } from 'three';
@@ -32,6 +33,10 @@ export interface SurfaceAppearanceCompileReport {
 	customUniformBound: boolean[];
 	stencilMaterialCallsMaterial: boolean[];
 	rawPasses: string[];
+	valueUpdateProgramSetStable: boolean;
+	structuralProgramSetSizes: number[];
+	structuralProgramSetChanges: number[];
+	geometryStableAcrossRebuilds: boolean;
 	errors: string[];
 }
 
@@ -117,6 +122,63 @@ function compileSurfaceAppearances(): SurfaceAppearanceCompileReport {
 	camera.updateProjectionMatrix();
 	camera.updateMatrixWorld( true );
 	renderer.compile( scene, camera );
+	const safePrimitives = [ rectangle, polygon, circle ];
+	const safeGeometries = safePrimitives.map( primitive =>
+		primitive.classification.group.getObjectByName( 'CesiumClassificationColorCommand' )!.geometry,
+	);
+	const depthTexture = new DataTexture( new Uint8Array( [ 0, 0, 0, 255 ] ), 1, 1 );
+	depthTexture.needsUpdate = true;
+	const updateSafePrimitives = (): void => {
+		for ( const primitive of safePrimitives ) {
+			primitive.update( { depthTexture, width: 64, height: 64, camera } );
+		}
+		renderer.compile( scene, camera );
+	};
+	const programSet = () => new Set( renderer.info.programs ?? [] );
+	const symmetricDifferenceSize = ( before: Set<unknown>, after: Set<unknown> ): number =>
+		[ ...before ].filter( program => ! after.has( program ) ).length +
+		[ ...after ].filter( program => ! before.has( program ) ).length;
+	const warmPrograms = programSet();
+	appearance.material.setUniform( 'u_tint', new Vector4( 0.8, 0.7, 1, 0.85 ) );
+	updateSafePrimitives();
+	const valuePrograms = programSet();
+	const valueUpdateProgramSetStable =
+		warmPrograms.size === valuePrograms.size &&
+		[ ...warmPrograms ].every( program => valuePrograms.has( program ) );
+
+	const structuralProgramSetSizes: number[] = [];
+	const structuralProgramSetChanges: number[] = [];
+	let previousPrograms = valuePrograms;
+	const rebuild = ( mutate: () => void ): void => {
+		mutate();
+		appearance.material.needsUpdate = true;
+		updateSafePrimitives();
+		const nextPrograms = programSet();
+		structuralProgramSetSizes.push( nextPrograms.size );
+		structuralProgramSetChanges.push( symmetricDifferenceSize( previousPrograms, nextPrograms ) );
+		previousPrograms = nextPrograms;
+	};
+	rebuild( () => {
+		appearance.material.fragmentShader = appearance.material.fragmentShader.replace(
+			'result.emission = vec3(0.0);',
+			'result.emission = vec3(0.05);',
+		);
+	} );
+	rebuild( () => { appearance.material.defines.ACCEPTANCE_VARIANT = 1; } );
+	rebuild( () => {
+		appearance.material.uniforms.u_extra = { value: 0.02 };
+		appearance.material.fragmentShader = appearance.material.fragmentShader.replace(
+			'uniform vec4 u_tint;',
+			'uniform vec4 u_tint;\nuniform float u_extra;',
+		).replace(
+			'result.emission = vec3(0.05);',
+			'result.emission = vec3(0.05 + u_extra);',
+		);
+	} );
+	const geometryStableAcrossRebuilds = safePrimitives.every(
+		( primitive, index ) => primitive.classification.group
+			.getObjectByName( 'CesiumClassificationColorCommand' )!.geometry === safeGeometries[ index ],
+	);
 
 	const colorMaterialNames: string[] = [];
 	const customUniformBound: boolean[] = [];
@@ -152,10 +214,15 @@ function compileSurfaceAppearances(): SurfaceAppearanceCompileReport {
 		customUniformBound,
 		stencilMaterialCallsMaterial,
 		rawPasses,
+		valueUpdateProgramSetStable,
+		structuralProgramSetSizes,
+		structuralProgramSetChanges,
+		geometryStableAcrossRebuilds,
 		errors,
 	};
 
 	for ( const primitive of primitives ) primitive.dispose();
+	depthTexture.dispose();
 	renderer.dispose();
 	return report;
 }
