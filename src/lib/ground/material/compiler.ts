@@ -90,6 +90,17 @@ export interface GroundCompiledMaterial {
 	readonly compileKey: string;
 }
 
+/** Diagnostic metadata retained on every compiled Three material. */
+export interface GroundCompiledMaterialDiagnostic {
+	readonly kind: GroundPrimitiveKind;
+	readonly pass: GroundRenderPass;
+	readonly abiVersion: typeof C23_GROUND_SHADER_ABI_VERSION;
+	readonly appearanceKind: CesiumGroundAppearance['kind'];
+	readonly appearanceVersion: number;
+	readonly materialType?: string;
+	readonly primitiveId: string | number;
+}
+
 interface RawMaterialClaimMetadata {
 	primitiveId: string | number;
 	kind: GroundPrimitiveKind;
@@ -519,6 +530,18 @@ export function compileGroundPass( options: CompileGroundPassOptions ): GroundCo
 			options.pipelineState,
 		),
 	};
+	const diagnostic: GroundCompiledMaterialDiagnostic = Object.freeze( {
+		kind: options.primitiveKind,
+		pass: options.pass,
+		abiVersion: C23_GROUND_SHADER_ABI_VERSION,
+		appearanceKind: options.appearance.kind,
+		appearanceVersion: options.appearance.version,
+		materialType: options.appearance instanceof CesiumGroundMaterialAppearance
+			? options.appearance.material.type
+			: undefined,
+		primitiveId: options.pipelineState.primitiveId,
+	} );
+	compiled.userData.c23Ground = diagnostic;
 	if ( materialVersion !== undefined ) {
 		return Object.freeze( { ...record, materialVersion } );
 	}

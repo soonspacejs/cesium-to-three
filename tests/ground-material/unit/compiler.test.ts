@@ -7,6 +7,7 @@ import {
 	GLSL3,
 	IncrementWrapStencilOp,
 	LessEqualDepth,
+	MeshBasicMaterial,
 	NotEqualStencilFunc,
 	RawShaderMaterial,
 	ZeroStencilOp,
@@ -95,6 +96,16 @@ describe( 'Ground pass compiler', () => {
 		expect( first.compileKey ).toBe( second.compileKey );
 		expect( first.materialVersion ).toBe( 0 );
 		expect( Object.isFrozen( first ) ).toBe( true );
+		expect( first.material.userData.c23Ground ).toEqual( {
+			kind: 'surface',
+			pass: 'color',
+			abiVersion: 1,
+			appearanceKind: 'material',
+			appearanceVersion: 0,
+			materialType: 'CompilerFixture',
+			primitiveId: 'primitive-A',
+		} );
+		expect( Object.isFrozen( first.material.userData.c23Ground ) ).toBe( true );
 	} );
 
 	it( 'keeps value, UUID, type, and version changes out of a stable compile key', () => {
@@ -316,6 +327,7 @@ describe( 'Ground pass compiler', () => {
 		const invalidFactories = [
 			() => null,
 			() => Promise.resolve( new RawShaderMaterial() ),
+			() => new MeshBasicMaterial(),
 			() => new RawShaderMaterial(),
 			( context: Parameters<CesiumGroundRawShaderAppearance['factory']>[0] ) => new RawShaderMaterial( {
 				glslVersion: GLSL3,
@@ -326,7 +338,7 @@ describe( 'Ground pass compiler', () => {
 			const raw = new CesiumGroundRawShaderAppearance( { factory: factory as never } );
 			expectCompilerError(
 				() => compileGroundPass( createCompileOptions( { appearance: raw } ) ),
-				factory === invalidFactories[ 3 ]
+				factory === invalidFactories[ 4 ]
 					? 'GROUND_UNIFORM_CONFLICT'
 					: 'GROUND_RAW_FACTORY_RESULT_INVALID',
 			);
