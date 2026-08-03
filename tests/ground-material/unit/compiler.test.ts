@@ -306,6 +306,46 @@ describe( 'Ground pass compiler', () => {
 		expect( compiled.material.uniforms.u_opacity ).toBe( rawWrapper );
 	} );
 
+	it( 'preserves expert Raw render-state overrides without silently repairing them', () => {
+		const modifiedDefault = new CesiumGroundRawShaderAppearance( {
+			factory( context ) {
+				const candidate = context.createDefaultMaterial();
+				candidate.colorWrite = true;
+				candidate.stencilWrite = false;
+				candidate.depthTest = false;
+				return candidate;
+			},
+		} );
+		const modified = compileGroundPass( createCompileOptions( {
+			pass: 'frontStencil',
+			appearance: modifiedDefault,
+		} ) ).material;
+		expect( modified.colorWrite ).toBe( true );
+		expect( modified.stencilWrite ).toBe( false );
+		expect( modified.depthTest ).toBe( false );
+
+		const completeReplacement = new CesiumGroundRawShaderAppearance( {
+			factory: () => new RawShaderMaterial( {
+				glslVersion: GLSL3,
+				colorWrite: false,
+				depthTest: true,
+				depthWrite: true,
+				stencilWrite: false,
+				transparent: true,
+				vertexShader: 'in vec3 position; void main(){gl_Position=vec4(position,1.0);}',
+				fragmentShader: 'precision highp float; out vec4 out_FragColor; void main(){out_FragColor=vec4(1.0);}',
+			} ),
+		} );
+		const replacement = compileGroundPass( createCompileOptions( {
+			appearance: completeReplacement,
+		} ) ).material;
+		expect( replacement.colorWrite ).toBe( false );
+		expect( replacement.depthTest ).toBe( true );
+		expect( replacement.depthWrite ).toBe( true );
+		expect( replacement.stencilWrite ).toBe( false );
+		expect( replacement.transparent ).toBe( true );
+	} );
+
 	it( 'rejects an unversioned Raw schema edit and accepts it after needsUpdate', () => {
 		const raw = new CesiumGroundRawShaderAppearance( {
 			uniforms: { u_gain: { value: 1 } },
