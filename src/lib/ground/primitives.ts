@@ -60,13 +60,16 @@ import {
 	buildArrowHeadGeometry,
 } from './line/line-arrowhead';
 import { LineWidthMode } from './line/line-types';
-import { createArrowHeadMaterial, createPolylineMaterial } from './materials';
+import { createArrowHeadMaterial } from './materials';
 import {
 	CesiumGroundMaterialAppearance,
 	CesiumGroundRawShaderAppearance,
 	type CesiumGroundAppearance,
 } from './material/appearances';
-import { createColorGroundMaterial } from './material/builtins';
+import {
+	createColorGroundMaterial,
+	createPolylineDashMaterial,
+} from './material/builtins';
 import {
 	compileGroundPass,
 	type GroundCompiledMaterial,
@@ -971,18 +974,16 @@ export class CesiumGroundPolylinePrimitive {
 	private readonly mesh: Mesh;
 	/** The currently bound compiled or legacy compatibility material. */
 	private material: RawShaderMaterial;
-	/** Internal logical default; its wrappers are borrowed by compiled passes. */
-	private readonly defaultMaterial = createColorGroundMaterial();
-	/** Stable default Appearance returned by `appearance` when no user object is bound. */
-	private readonly defaultAppearance = new CesiumGroundMaterialAppearance( {
-		material: this.defaultMaterial,
-	} );
+	/** Internal Color or Dash default; compiled passes borrow but never dispose it. */
+	private readonly defaultMaterial: ReturnType<typeof createColorGroundMaterial>;
+	/** Stable default Appearance restored by `setAppearance(undefined)`. */
+	private readonly defaultAppearance: CesiumGroundMaterialAppearance;
 	/** Canonical aliases retain the exact SharedUniform wrapper identities. */
 	private readonly systemUniforms: GroundSystemUniforms;
 	/** Logical strategy currently selected for the line body. */
 	private appearanceState: CesiumGroundAppearance;
-	/** Compiler record is absent only for the temporary legacy dash branch. */
-	private compiledMaterial?: GroundCompiledMaterial;
+	/** Every line body, including the compatibility dash default, uses one compiled record. */
+	private compiledMaterial: GroundCompiledMaterial;
 	private geometry: ReturnType<typeof buildLineShadowVolumeGeometry>;
 	private readonly options: ResolvedLineOptions;
 	private readonly cameraHigh = new Vector3();
@@ -1010,6 +1011,19 @@ export class CesiumGroundPolylinePrimitive {
 	public constructor( options: CesiumGroundPolylineOptions ) {
 		this.options = resolvePublicLineOptions( options );
 		this.classificationType = options.classificationType ?? ClassificationType.BOTH;
+		// Legacy dash options remain the public compatibility entry, but now select
+		// a logical Dash Material instead of a separate system-shader branch. The
+		// same internal default is restored after a temporary explicit Appearance.
+		this.defaultMaterial = this.options.dashEnabled
+			? createPolylineDashMaterial( {
+				dashLengthMeters: this.options.dashLengthMeters,
+				gapLengthMeters: this.options.gapLengthMeters,
+				offsetMeters: 0.0,
+			} )
+			: createColorGroundMaterial();
+		this.defaultAppearance = new CesiumGroundMaterialAppearance( {
+			material: this.defaultMaterial,
+		} );
 		if (
 			options.appearance !== undefined &&
 			! ( options.appearance instanceof CesiumGroundMaterialAppearance ) &&
@@ -1046,26 +1060,17 @@ export class CesiumGroundPolylinePrimitive {
 		// not allocate a new uniform object or invalidate a Three program.
 		this.systemUniforms = createCanonicalGroundSystemUniforms( this.uniforms, 'polyline' );
 		this.appearanceState = options.appearance ?? this.defaultAppearance;
-		const usesLegacyDashCompatibility =
-			options.appearance === undefined && this.options.dashEnabled;
-		if ( usesLegacyDashCompatibility ) {
-			// Stage 8 moves dash/gap into a built-in Material. Until then, preserve
-			// the established shader exactly for the historical no-Appearance dash
-			// option; an explicit Appearance always selects the new ABI.
-			this.material = createPolylineMaterial( this.uniforms, this.options.debugVolume );
-		} else {
-			try {
-				this.compiledMaterial = this.compileAppearance( this.appearanceState );
-			} catch ( error ) {
-				// Geometry exists before Material compilation because its userData
-				// supplies lineTotalMeters. A constructor that fails synchronously has
-				// no primitive instance whose dispose() can be called, so release this
-				// sole owned GPU resource before preserving the original error.
-				this.geometry.dispose();
-				throw error;
-			}
-			this.material = this.compiledMaterial.material;
+		try {
+			this.compiledMaterial = this.compileAppearance( this.appearanceState );
+		} catch ( error ) {
+			// Geometry exists before Material compilation because its userData
+			// supplies lineTotalMeters. A constructor that fails synchronously has
+			// no primitive instance whose dispose() can be called, so release this
+			// sole owned GPU resource before preserving the original error.
+			this.geometry.dispose();
+			throw error;
 		}
+		this.material = this.compiledMaterial.material;
 		this.mesh = new Mesh( this.geometry, this.material );
 		this.mesh.name = 'CesiumGroundPolylineColorCommand';
 		// 几何无 `position` 属性 → boundingSphere 空 → 必须关闭视锥剔除（doc 04 §11）。
@@ -1152,10 +1157,10 @@ export class CesiumGroundPolylinePrimitive {
 	 * Compiles one line-body candidate without mutating the live Mesh.
 	 *
 	 * The default Appearance is intentionally compiled through the same ABI as a
-	 * user safe Appearance. This keeps the no-Appearance and custom-Material
-	 * paths structurally identical once the temporary legacy dash branch is no
-	 * longer needed in Stage 8. Raw factories receive the same canonical wrappers
-	 * and the default logical Material required by `createDefaultMaterial()`.
+	 * user safe Appearance. This keeps solid, dash, and custom-Material paths
+	 * structurally identical. Raw factories receive the same canonical wrappers
+	 * and the primitive's Color-or-Dash default required by
+	 * `createDefaultMaterial()`.
 	 */
 	private compileAppearance( appearance: CesiumGroundAppearance ): GroundCompiledMaterial {
 		return compileGroundPass( {
@@ -1197,16 +1202,8 @@ export class CesiumGroundPolylinePrimitive {
 		const nextAppearance = appearance ?? this.defaultAppearance;
 		if ( nextAppearance === this.appearanceState ) return;
 
-		let nextCompiled: GroundCompiledMaterial | undefined;
-		let nextMaterial: RawShaderMaterial;
-		if ( nextAppearance === this.defaultAppearance && this.options.dashEnabled ) {
-			// Restoring the internal default while legacy dash compatibility is active
-			// must restore the old dash shader, not silently turn the line solid.
-			nextMaterial = createPolylineMaterial( this.uniforms, this.options.debugVolume );
-		} else {
-			nextCompiled = this.compileAppearance( nextAppearance );
-			nextMaterial = nextCompiled.material;
-		}
+		const nextCompiled = this.compileAppearance( nextAppearance );
+		const nextMaterial = nextCompiled.material;
 
 		const previousMaterial = this.material;
 		this.appearanceState = nextAppearance;
@@ -1218,7 +1215,6 @@ export class CesiumGroundPolylinePrimitive {
 
 	/** Rebuilds a compiled pass only after the logical Appearance revision changes. */
 	private reconcileMaterialAppearance(): void {
-		if ( this.compiledMaterial === undefined ) return;
 		if ( this.compiledMaterial.appearanceVersion === this.appearanceState.version ) return;
 
 		const nextCompiled = this.compileAppearance( this.appearanceState );

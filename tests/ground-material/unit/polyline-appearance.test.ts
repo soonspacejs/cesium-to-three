@@ -83,12 +83,17 @@ describe( 'polyline ABI and Appearance integration', () => {
 		primitive.dispose();
 	} );
 
-	it( 'keeps the historical dash shader only for the compatibility default', () => {
+	it( 'routes historical dash options through the built-in Dash Material', () => {
 		const primitive = createPolyline( { dashLengthMeters: 10, gapLengthMeters: 5 } );
 		const material = lineMesh( primitive ).material as RawShaderMaterial;
+		const appearance = primitive.appearance as CesiumGroundMaterialAppearance;
 
-		expect( material.fragmentShader ).toContain( 'CESIUM_THREE_POLYLINE' );
-		expect( material.fragmentShader ).not.toContain( '// [c23:ground-material-abi]' );
+		expect( appearance.material.type ).toBe( 'PolylineDashGroundMaterial' );
+		expect( material.fragmentShader ).toContain( '// [c23:ground-material-abi]' );
+		expect( material.fragmentShader ).toContain( 'u_dashLengthMeters' );
+		expect( material.uniforms.u_dashLengthMeters.value ).toBe( 10 );
+		expect( material.uniforms.u_gapLengthMeters.value ).toBe( 5 );
+		expect( material.uniforms.u_lineDashEnabled ).toBeUndefined();
 		primitive.dispose();
 	} );
 
