@@ -10,6 +10,7 @@ export * from './cesium-ground-adapter';
 export { CesiumGroundTextPrimitive } from './text';
 export type {
 	PlotTextOptions,
+	CesiumGroundTextPrimitiveOptions,
 	PlotTextAlign,
 	PlotTextVerticalAlign,
 	PlotTextAnchorX,

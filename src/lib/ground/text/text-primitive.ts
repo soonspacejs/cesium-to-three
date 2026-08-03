@@ -21,7 +21,13 @@ import {
 } from 'three';
 
 import { CesiumClassificationPrimitive } from '../classification';
-import { createTextColorMaterial } from '../materials';
+import {
+	CesiumGroundMaterialAppearance,
+	CesiumGroundRawShaderAppearance,
+	type CesiumGroundAppearance,
+} from '../material/appearances';
+import { createTexturedDecalMaterial } from '../material/builtins';
+import type { CesiumGroundMaterial } from '../material/CesiumGroundMaterial';
 import type { CesiumGroundFrameState, ClassificationType } from '../types';
 
 import { paintTextToCanvas, type PaintedTextCanvas } from './text-canvas';
@@ -29,7 +35,11 @@ import { resolvePlotTextOptions } from './text-defaults';
 import { computeTextPlanarExtents } from './text-extents';
 import { computeTextFootprint, type TextFootprint } from './text-placement';
 import { buildTextShadowVolumeGeometry } from './text-shadow-volume';
-import type { PlotTextOptions, ResolvedPlotTextOptions } from './text-types';
+import type {
+	CesiumGroundTextPrimitiveOptions,
+	PlotTextOptions,
+	ResolvedPlotTextOptions,
+} from './text-types';
 
 // 各向异性过滤上限：贴地纹理常被斜视，提高斜向锐度。Three 会按 GPU 能力 clamp，
 // 16 是绝大多数桌面 GPU 的实际上限，传大值安全。
@@ -51,6 +61,12 @@ export class CesiumGroundTextPrimitive {
 	private resolved: ResolvedPlotTextOptions;
 	private painted: PaintedTextCanvas;
 	private texture: CanvasTexture;
+	/** One logical decal Material reused across every setText rebuild. */
+	private readonly decalMaterial: CesiumGroundMaterial;
+	/** Exact logical Appearance retained when classification commands are rebuilt. */
+	private appearanceState: CesiumGroundAppearance;
+	/** Stable default wrapper restored by `setAppearance(undefined)`. */
+	private readonly defaultAppearance: CesiumGroundMaterialAppearance;
 	private footprint: TextFootprint;
 	private renderOrder: number;
 	private disposed: boolean;
@@ -58,13 +74,21 @@ export class CesiumGroundTextPrimitive {
 	/**
 	 * @param options 外部选项（lon/lat 锚点 + 内容 + 外观 + 贴地摆放）。
 	 */
-	public constructor( options: PlotTextOptions ) {
+	public constructor( options: CesiumGroundTextPrimitiveOptions ) {
 		this.disposed = false;
 
 		// A 层：解析 → 画 canvas → 纹理
 		this.resolved = resolvePlotTextOptions( options );
 		this.painted = paintTextToCanvas( this.resolved, null );
 		this.texture = createTextTexture( this.painted.canvas );
+		this.decalMaterial = createTexturedDecalMaterial( {
+			texture: this.texture,
+			flipY: true,
+		} );
+		this.defaultAppearance = new CesiumGroundMaterialAppearance( {
+			material: this.decalMaterial,
+		} );
+		this.appearanceState = options.appearance ?? this.defaultAppearance;
 
 		// B 层：足迹 4 角点
 		this.footprint = computeTextFootprint( this.resolved, this.painted.layout );
@@ -129,6 +153,27 @@ export class CesiumGroundTextPrimitive {
 		this.group = this.classification.group;
 		this.group.name = 'CesiumGroundTextPrimitive';
 		parent?.add( this.group );
+	}
+
+	/** Returns the exact logical Appearance currently bound to the text decal. */
+	public get appearance(): CesiumGroundAppearance {
+		return this.appearanceState;
+	}
+
+	/** Switches only the text color pass; the CanvasTexture remains borrowed and stable. */
+	public setAppearance( appearance?: CesiumGroundAppearance ): void {
+		this.ensureNotDisposed();
+		if (
+			appearance !== undefined &&
+			! ( appearance instanceof CesiumGroundMaterialAppearance ) &&
+			! ( appearance instanceof CesiumGroundRawShaderAppearance )
+		) {
+			throw new TypeError( 'Ground text appearance is not a supported Ground Appearance.' );
+		}
+		const nextAppearance = appearance ?? this.defaultAppearance;
+		if ( nextAppearance === this.appearanceState ) return;
+		this.classification.setAppearance( nextAppearance );
+		this.appearanceState = nextAppearance;
 	}
 
 	/**
@@ -206,11 +251,10 @@ export class CesiumGroundTextPrimitive {
 			this.renderOrder,
 			true, // fragmentCull：裁足迹 + 丢弃无地形 fragment
 			{
-				colorMaterialFactory: createTextColorMaterial,
-				extraUniforms: {
-					u_decalTexture: { value: this.texture },
-					u_decalOpacity: { value: 1.0 },
-				},
+				useMaterialPipeline: true,
+				primitiveKind: 'decal',
+				defaultMaterial: this.decalMaterial,
+				appearance: this.appearanceState,
 			},
 		);
 		// 文字也支持贴地形 / 贴模型 / 二者：把解析出的分类目标传给 classification。

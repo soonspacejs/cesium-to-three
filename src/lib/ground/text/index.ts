@@ -11,6 +11,7 @@ export { CesiumGroundTextPrimitive } from './text-primitive';
 
 export type {
 	PlotTextOptions,
+	CesiumGroundTextPrimitiveOptions,
 	PlotTextAlign,
 	PlotTextVerticalAlign,
 	PlotTextAnchorX,
