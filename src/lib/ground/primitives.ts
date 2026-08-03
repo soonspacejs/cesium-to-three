@@ -1576,6 +1576,10 @@ function createPolylineUniforms(
 		u_lineWidthPixels: { value: options.widthPixels ?? LINE_DEFAULT_WIDTH_PIXELS },
 		u_lineWidthMode: { value: options.widthMode === LineWidthMode.WORLD ? 1.0 : 0.0 },
 		u_lineWidthMeters: { value: options.widthMeters },
+		// Deprecated dash wrappers stay in SharedUniforms for one compatibility
+		// cycle. They are intentionally absent from the canonical system map and
+		// compiled shader; the internal Dash Material owns its independent user
+		// wrappers with the ABI names u_dashLengthMeters/u_gapLengthMeters.
 		u_lineDashEnabled: { value: options.dashEnabled ? 1.0 : 0.0 },
 		u_lineDashLengthMeters: { value: options.dashLengthMeters },
 		u_lineGapLengthMeters: { value: options.gapLengthMeters },

@@ -407,7 +407,8 @@ ${ cesiumGammaCorrect }
 
 ${ LOG_DEPTH_FRAGMENT_HELPERS }
 
-// ── 贴地线 FS 专用 czm 量 + 线 / 虚线 uniform。仅在 polyline 材质中编译。
+// ── 贴地线 FS 专用 czm 量 + 线体/箭头 system uniform。仅在旧 polyline
+//    材质中编译；dash/gap 已迁入逻辑 PolylineDashGroundMaterial user uniforms。
 //    czm_viewport / czm_frustumPlanes / czm_currentFrustum 已在 FS prefix
 //    基础块里；这里只补 czm_sceneMode（FS 原本没有，metersPerPixel 依赖）、
 //    czm_pixelRatio 等线专属量，以及 u_color（基础 FS prefix 不含——其它
@@ -423,9 +424,6 @@ uniform vec4 u_color;
 uniform float u_lineWidthMode;
 uniform float u_lineWidthMeters;
 uniform float u_lineWidthPixels;
-uniform float u_lineDashEnabled;
-uniform float u_lineDashLengthMeters;
-uniform float u_lineGapLengthMeters;
 uniform float u_lineTotalMeters;
 // 线 + 箭头共享 uniform
 uniform float u_arrowWidthMode;
@@ -1204,8 +1202,8 @@ void main() {
 `;
 
 /**
- * 贴地线 FS 主体。深度重建分类法 + 三平面距离裁切 + 沿线 s/t 归一 +
- * PER_INSTANCE_COLOR 纯色 / 材质虚线两路。
+ * 旧贴地线 FS 主体。仅保留深度重建、三平面裁切、沿线 s/t 和纯色输出，
+ * 作为阶段 14 删除整个旧 assembler 路径前的可回退实现；虚线着色已迁出。
  */
 const POLYLINE_FS = /* glsl */ `
 in vec4 v_startPlaneNormalEcAndHalfWidth;
@@ -1382,19 +1380,9 @@ void main() {
 
 	vec4 col = u_color;
 
-	// 10) 虚线：沿线米相位 mod(along, period) > dash → discard。
-	if ( u_lineDashEnabled > 0.5 && u_lineTotalMeters > 0.0 ) {
-		float along = s * u_lineTotalMeters;
-		float period = u_lineDashLengthMeters + u_lineGapLengthMeters;
-		if ( period > 0.0 ) {
-			float phase = mod( along, period );
-			if ( phase > u_lineDashLengthMeters ) {
-				discard;
-			}
-		}
-	}
-
-	// 11) 预乘 alpha（与 polygon colorMesh 一致，配合 blendSrc=ONE）。
+	// 10) 预乘 alpha（与 polygon colorMesh 一致，配合 blendSrc=ONE）。
+	// Dash coverage is now owned by createPolylineDashMaterial and reaches this
+	// equivalent output as alpha zero rather than a legacy system-level discard.
 	col.rgb *= col.a;
 	out_FragColor = col;
 
@@ -1412,7 +1400,7 @@ void main() {
  *
  * @param uniforms     共享 uniforms 映射(必须包含 `czm_projection`,
  *                     `czm_pixelRatio`, `u_lineWidthPixels`, `u_lineWidthMode`,
- *                     `u_lineWidthMeters`, dash uniforms, `u_lineTotalMeters`).
+ *                     `u_lineWidthMeters`, `u_lineTotalMeters`).
  * @param debugVolume  When true，FS 用半透红色直接绘制盒子的所有像素（不做
  *                     terrain depth 重建 / 平面距离裁切），方便诊断「盒子有没有
  *                     盖到该屏幕区域」「FS 是不是被裁切掉」这类几何 / 着色器问题。
