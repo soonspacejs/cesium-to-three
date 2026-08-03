@@ -10,6 +10,7 @@
 import {
 	AmbientLight,
 	Box3,
+	Clock,
 	Color,
 	DirectionalLight,
 	Group,
@@ -17,6 +18,7 @@ import {
 	PerspectiveCamera,
 	Scene,
 	Vector3,
+	Vector4,
 	WebGLRenderer,
 	type Material,
 	type Object3D,
@@ -35,6 +37,12 @@ import {
 	CesiumGroundPolylinePrimitive,
 	CesiumGroundRectanglePrimitive,
 	CesiumGroundTextPrimitive,
+	CesiumGroundMaterial,
+	CesiumGroundMaterialAppearance,
+	CesiumGroundRawShaderAppearance,
+	createFlowLineMaterial,
+	createPulsePointMaterial,
+	createScalePulseMaterial,
 	CESIUM_GLOBE_MINIMUM_ALTITUDE,
 	CESIUM_GROUND_NON_PICKABLE_LAYER,
 	LINE_DEFAULT_GRANULARITY,
@@ -489,6 +497,23 @@ export function runGroundDemo(): void {
 		renderer.domElement.width,
 		renderer.domElement.height,
 	);
+
+	// The material system deliberately has no private animation loop. The demo
+	// owns one host Clock and forwards this single, coherent frame snapshot to
+	// every ground primitive, so all materials observe identical time,
+	// delta-time, viewport, camera, and globe-depth inputs during a frame.
+	const hostClock = new Clock();
+	let hostFrameNumber = 0;
+	const hostFrameState = {
+		depthTexture: globeDepth.target.texture,
+		width: renderer.domElement.width,
+		height: renderer.domElement.height,
+		camera,
+		timeSeconds: 0,
+		deltaSeconds: 0,
+		frameNumber: 0,
+		pixelRatio: renderer.getPixelRatio(),
+	};
 
 	// 椭球面兜底深度：让贴地标绘与瓦片加载解耦。无此兜底时，相机下方一旦没有
 	// 加载到瓦片(放大超过最深层级 / 瓦片仍在下载)，主深度缓冲与 packed 深度纹理
@@ -1364,6 +1389,96 @@ export function runGroundDemo(): void {
  *
 	 * @returns 已接入 classification 与调试路径的贴地矩形图元。
 	 */
+	// -------------------------------------------------------------------------
+	// Stage 13 Material showcase. These logical objects are created once and
+	// reused whenever GUI geometry rebuilds occur; compiled pass materials remain
+	// primitive-owned, while uniform values stay shared and update in place.
+	// -------------------------------------------------------------------------
+	const flowLineMaterial = createFlowLineMaterial( {
+		color: '#39d9ff',
+		backgroundColor: new Vector4( 0.02, 0.04, 0.08, 0.18 ),
+		speed: 0.65,
+		repeat: 4.0,
+		trailFraction: 0.32,
+		direction: 1,
+	} );
+	const flowLineAppearance = new CesiumGroundMaterialAppearance( {
+		material: flowLineMaterial,
+	} );
+
+	const PULSE_POINT_FOOTPRINT_SCALE = 1.25;
+	const SCALE_PULSE_FOOTPRINT_SCALE = 1.3;
+	const pulsePointMaterial = createPulsePointMaterial( {
+		color: '#ff5533',
+		periodSeconds: 1.8,
+		minScale: 0.55,
+		maxScale: PULSE_POINT_FOOTPRINT_SCALE,
+		minOpacity: 0.2,
+		maxOpacity: 0.95,
+		phase: 0.0,
+	} );
+	const pulsePointAppearance = new CesiumGroundMaterialAppearance( {
+		material: pulsePointMaterial,
+	} );
+
+	const scalePulseMaterial = createScalePulseMaterial( {
+		tint: '#66aaff',
+		opacity: 0.9,
+		periodSeconds: 1.6,
+		minScale: 0.78,
+		maxScale: SCALE_PULSE_FOOTPRINT_SCALE,
+		phase: 0.25,
+	} );
+	const scalePulseAppearance = new CesiumGroundMaterialAppearance( {
+		material: scalePulseMaterial,
+	} );
+
+	const customMaterial = new CesiumGroundMaterial( {
+		type: 'GroundDemoTimeGradient',
+		uniforms: {
+			u_hot: { value: new Color( '#ff3d00' ) },
+			u_cold: { value: new Color( '#17345f' ) },
+			u_frequency: { value: 1.5 },
+		},
+		fragmentShader: /* glsl */ `
+uniform vec3 u_hot;
+uniform vec3 u_cold;
+uniform float u_frequency;
+
+c23_material c23_getMaterial(c23_materialInput materialInput) {
+	float wave = 0.5 + 0.5 * sin(
+		6.28318530718 * (c23_time * u_frequency + materialInput.st.x)
+	);
+	c23_material material;
+	material.diffuse = mix(u_cold, u_hot, wave);
+	material.emission = vec3(0.0);
+	material.alpha = materialInput.baseColor.a;
+	return material;
+}
+`,
+	} );
+	const customAppearance = new CesiumGroundMaterialAppearance( { material: customMaterial } );
+
+	const completeRawAppearance = new CesiumGroundRawShaderAppearance( {
+		factory: context => {
+			// Returning the context-owned default once per pass preserves all fixed
+			// vertex/stencil/depth state while proving front/back/color dispatch.
+			const material = context.createDefaultMaterial();
+			material.name = `GroundDemoRaw/${ context.primitiveKind }/${ context.pass }`;
+			material.userData.groundDemoRawPass = context.pass;
+			return material;
+		},
+	} );
+
+	const effectSettings = {
+		animate: true,
+		timeScale: 1.0,
+		flowSpeed: 0.65,
+		pulsePhase: 0.0,
+		scalePhase: 0.25,
+		customFrequency: 1.5,
+	};
+
 	function createGroundRectangle(): CesiumGroundRectanglePrimitive {
 		return new CesiumGroundRectanglePrimitive( {
 			points: debugSettings.points,
@@ -1378,6 +1493,7 @@ export function runGroundDemo(): void {
 			debugSurface: true,
 			debugSurfaceHeight: debugSettings.debugSurfaceHeight,
 			debugSurfaceOpacity: debugSettings.debugSurfaceOpacity,
+			appearance: completeRawAppearance,
 		} );
 	}
 
@@ -1434,6 +1550,7 @@ export function runGroundDemo(): void {
 			holes: debugSettings.polygonHole ? debugSettings.polygonHoles : [],
 			renderOrder: plotOrderToRenderOrder( debugSettings.polygonPlotOrder ),
 			fragmentCull: debugSettings.fragmentCull,
+			appearance: customAppearance,
 		} );
 	}
 
@@ -1594,7 +1711,7 @@ export function runGroundDemo(): void {
 		return new CesiumGroundPointPrimitive( {
 			position: [ debugSettings.pointCircleCenterLon, debugSettings.pointCircleCenterLat ],
 			shape: debugSettings.pointCircleShape,
-			size: debugSettings.pointCircleSize,
+			size: debugSettings.pointCircleSize * PULSE_POINT_FOOTPRINT_SCALE,
 			strokeColor: debugSettings.pointCircleStrokeColor,
 			strokeWidth: debugSettings.pointCircleStrokeWidth,
 			strokeOpacity: debugSettings.pointCircleStrokeOpacity,
@@ -1603,6 +1720,7 @@ export function runGroundDemo(): void {
 			visible: debugSettings.pointCircleVisible,
 			renderOrder: plotOrderToRenderOrder( debugSettings.pointCirclePlotOrder ),
 			fragmentCull: debugSettings.fragmentCull,
+			appearance: pulsePointAppearance,
 		} );
 	}
 
@@ -1613,7 +1731,7 @@ export function runGroundDemo(): void {
 		return new CesiumGroundPointPrimitive( {
 			position: [ debugSettings.pointSquareCenterLon, debugSettings.pointSquareCenterLat ],
 			shape: debugSettings.pointSquareShape,
-			size: debugSettings.pointSquareSize,
+			size: debugSettings.pointSquareSize * SCALE_PULSE_FOOTPRINT_SCALE,
 			strokeColor: debugSettings.pointSquareStrokeColor,
 			strokeWidth: debugSettings.pointSquareStrokeWidth,
 			strokeOpacity: debugSettings.pointSquareStrokeOpacity,
@@ -1622,6 +1740,7 @@ export function runGroundDemo(): void {
 			visible: debugSettings.pointSquareVisible,
 			renderOrder: plotOrderToRenderOrder( debugSettings.pointSquarePlotOrder ),
 			fragmentCull: debugSettings.fragmentCull,
+			appearance: scalePulseAppearance,
 		} );
 	}
 
@@ -1695,6 +1814,7 @@ export function runGroundDemo(): void {
 			arrowWidthPixels: debugSettings.polylineArrowWidthPixels,
 			arrowLengthMeters: debugSettings.polylineArrowLengthMeters,
 			arrowWidthMeters: debugSettings.polylineArrowWidthMeters,
+			appearance: flowLineAppearance,
 		} );
 	}
 
@@ -2492,6 +2612,34 @@ export function runGroundDemo(): void {
 		pointSquareFolder.addColor( debugSettings, 'pointSquareFillColor' ).name( 'fillColor' ).onChange( applyGroundDebugSettings );
 		pointSquareFolder.add( debugSettings, 'pointSquareFillOpacity', 0.0, 100.0, 1.0 ).name( 'fillOpacity' ).onChange( applyGroundDebugSettings );
 
+		// Material Effects exposes only logical material controls. Geometry
+		// rebuilds keep these objects alive, which demonstrates that setUniform
+		// and setAppearance update the existing render pipeline in place.
+		const effectsFolder = gui.addFolder( 'Material Effects' );
+		effectsFolder.add( effectSettings, 'animate' ).name( 'animate host time' );
+		effectsFolder.add( effectSettings, 'timeScale', 0.0, 4.0, 0.05 ).name( 'time scale' );
+		effectsFolder.add( effectSettings, 'flowSpeed', 0.0, 3.0, 0.05 )
+			.name( 'FlowLine speed' )
+			.onChange( ( value: number ) => {
+				flowLineMaterial.setUniform( 'u_speed', value );
+			} );
+		effectsFolder.add( effectSettings, 'pulsePhase', - 1.0, 1.0, 0.01 )
+			.name( 'PulsePoint phase' )
+			.onChange( ( value: number ) => {
+				pulsePointMaterial.setUniform( 'u_phase', value );
+			} );
+		effectsFolder.add( effectSettings, 'scalePhase', - 1.0, 1.0, 0.01 )
+			.name( 'ScalePulse phase' )
+			.onChange( ( value: number ) => {
+				scalePulseMaterial.setUniform( 'u_phase', value );
+			} );
+		effectsFolder.add( effectSettings, 'customFrequency', 0.0, 4.0, 0.05 )
+			.name( 'custom frequency' )
+			.onChange( ( value: number ) => {
+				customMaterial.setUniform( 'u_frequency', value );
+			} );
+		effectsFolder.close();
+
 		// 折线 1:1：4 段 zig-zag，与 polygon/circle/text/point 同 1:1 比例尺。
 		// 拖 strokeWidth 滑杆 → 直接 setWidth；切 arcType / loop / widthMode →
 		// rebuildGroundPolyline 重建几何（与点 / 文字 rebuild 同模式）。
@@ -2780,6 +2928,16 @@ export function runGroundDemo(): void {
 	window.addEventListener( 'resize', resize );
 
 	function renderFrame(): void {
+		// Advance the host clock once. Every material receives this same snapshot,
+		// preventing visible phase drift between the rectangle, polygon, point,
+		// polyline, and arrow examples.
+		const deltaSeconds = Math.min( hostClock.getDelta(), 0.25 );
+		hostFrameState.deltaSeconds = deltaSeconds;
+		hostFrameState.frameNumber = ++ hostFrameNumber;
+		if ( effectSettings.animate ) {
+			hostFrameState.timeSeconds += deltaSeconds * effectSettings.timeScale;
+		}
+
 		controls.update();
 		camera.updateMatrixWorld();
 		tilesRenderer.setResolutionFromRenderer( camera, renderer );
@@ -2800,104 +2958,32 @@ export function runGroundDemo(): void {
 			includeFallbackDepth: ! debugSettings.useTilesDepth,
 		} );
 		tilesRenderer.group.visible = debugSettings.showTiles;
-		groundRectangle.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
-		groundPolygon.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
-		groundCircle.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
-		groundPointCircle.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
-		groundPointSquare.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
-		largeGroundRectangle.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
-		largeGroundPolygon.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
-		largeGroundCircle.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
-		largeGroundPointCircle.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
-		largeGroundPointSquare.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
+		hostFrameState.depthTexture = globeDepth.target.texture;
+		hostFrameState.width = renderer.domElement.width;
+		hostFrameState.height = renderer.domElement.height;
+		hostFrameState.pixelRatio = renderer.getPixelRatio();
+
+		groundRectangle.update( hostFrameState );
+		groundPolygon.update( hostFrameState );
+		groundCircle.update( hostFrameState );
+		groundPointCircle.update( hostFrameState );
+		groundPointSquare.update( hostFrameState );
+		largeGroundRectangle.update( hostFrameState );
+		largeGroundPolygon.update( hostFrameState );
+		largeGroundCircle.update( hostFrameState );
+		largeGroundPointCircle.update( hostFrameState );
+		largeGroundPointSquare.update( hostFrameState );
 		// 贴地线必须填 pixelRatio——czm_metersPerPixel 内部要乘它，HiDPI 下
 		// 漏掉会让屏宽差 2×（doc 09 §4.2 / doc 10 §15）。
-		groundPolyline.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-			pixelRatio: renderer.getPixelRatio(),
-		} );
-		largeGroundPolyline.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-			pixelRatio: renderer.getPixelRatio(),
-		} );
-		groundText.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
-		largeGroundText.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
+		groundPolyline.update( hostFrameState );
+		largeGroundPolyline.update( hostFrameState );
+		groundText.update( hostFrameState );
+		largeGroundText.update( hostFrameState );
 
 		// Forward the host's frame state to every arrow primitive so the
 		// arrows participate in the same depth + viewport classification path
 		// the rectangle / polygon / circle primitives use above.
-		arrowSubsystem?.update( {
-			depthTexture: globeDepth.target.texture,
-			width: renderer.domElement.width,
-			height: renderer.domElement.height,
-			camera,
-		} );
+		arrowSubsystem?.update( hostFrameState );
 
 		renderer.render( scene, camera );
 		if ( glbModelAnchor.visible && glbModelAnchor.children.length > 0 ) {
