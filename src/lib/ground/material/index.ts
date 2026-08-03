@@ -5,6 +5,7 @@ export * from './appearances';
 export * from './errors';
 export * from './logical-key';
 export * from './shader-abi';
+export * from './shader-assembler';
 export * from './system-uniforms';
 export * from './types';
 export * from './uniforms';

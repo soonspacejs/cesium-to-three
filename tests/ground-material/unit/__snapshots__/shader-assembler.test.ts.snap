@@ -1,0 +1,146 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`explicit Ground shader assembler > assembles a fixed stencil shader without injecting the Material ABI 1`] = `
+"// [c23:fragment-precision-output]
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+
+out vec4 out_FragColor;
+
+// [c23:pipeline-defines]
+#define C23_DECAL 1
+#define C23_PASS_FRONT_STENCIL 1
+
+// [c23:fragment-system-declarations]
+uniform float c23_testDepth;
+
+// [c23:fragment-varyings]
+
+// [c23:fragment-system-helpers]
+float c23_depth() { return c23_testDepth; }
+
+// [c23:fragment-stencil-main]
+void main() { gl_FragDepth = c23_depth(); out_FragColor = vec4(0.0); }
+"
+`;
+
+exports[`explicit Ground shader assembler > assembles deterministic named vertex sections without rewriting source 1`] = `
+"// [c23:vertex-precision]
+precision highp float;
+precision highp int;
+
+// [c23:pipeline-defines]
+#define C23_SURFACE 1
+#define C23_PASS_COLOR 1
+#define C23_TEST_SYSTEM 7
+
+// [c23:vertex-system-declarations]
+uniform mat4 c23_testProjection;
+
+// [c23:vertex-attributes]
+in vec3 position3DHigh;
+
+// [c23:vertex-varyings]
+out vec2 v_testUv;
+
+// [c23:vertex-system-helpers]
+vec3 c23_testHelper(vec3 p) { return p; }
+
+// [c23:vertex-main]
+void main() { gl_Position = vec4(c23_testHelper(position3DHigh), 1.0); }
+"
+`;
+
+exports[`explicit Ground shader assembler > assembles safe Material after system sections with one owned finalizer 1`] = `
+"// [c23:fragment-precision-output]
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+
+out vec4 out_FragColor;
+
+// [c23:pipeline-defines]
+#define C23_POLYLINE 1
+#define C23_PASS_POLYLINE 1
+
+// [c23:fragment-system-declarations]
+uniform vec4 c23_lineColor;
+
+// [c23:fragment-varyings]
+in float v_distanceAlong;
+
+// [c23:fragment-system-helpers]
+float c23_membership() { return 1.0; }
+
+// [c23:ground-material-abi]
+#define C23_GROUND_SHADER_ABI_VERSION 1
+
+uniform float c23_time;
+uniform float c23_deltaTime;
+uniform float c23_frameNumber;
+
+struct c23_materialInput {
+	vec2 st;
+	vec2 localMeters;
+	vec4 baseColor;
+	float isStroke;
+	vec3 positionEC;
+	vec3 positionToEyeEC;
+	vec3 normalEC;
+	float distanceAlongMeters;
+	float distanceAcrossMeters;
+	float lineTotalMeters;
+	float metersPerPixel;
+};
+
+struct c23_material {
+	vec3 diffuse;
+	vec3 emission;
+	float alpha;
+};
+
+// [c23:ground-user-defines]
+#define A_FIRST 1
+#define Z_LAST 2
+
+// [c23:ground-user-material]
+uniform float u_opacity;
+
+c23_material c23_getMaterial(c23_materialInput input) {
+	c23_material result;
+	result.diffuse = input.baseColor.rgb;
+	result.emission = vec3(0.0);
+	result.alpha = input.baseColor.a * u_opacity;
+	return result;
+}
+
+// [c23:fragment-safe-main]
+void main() {
+	// Coverage is separate from Material alpha so classification always reaches cleanup.
+	float c23_systemCoverage = 1.0;
+c23_materialInput c23_input;
+c23_input.st = vec2(0.0);
+c23_input.localMeters = vec2(0.0);
+c23_input.baseColor = vec4(0.0);
+c23_input.isStroke = 0.0;
+c23_input.positionEC = vec3(0.0);
+c23_input.positionToEyeEC = vec3(0.0);
+c23_input.normalEC = vec3(0.0);
+c23_input.distanceAlongMeters = 0.0;
+c23_input.distanceAcrossMeters = 0.0;
+c23_input.lineTotalMeters = 0.0;
+c23_input.metersPerPixel = 0.0;
+// [c23:fragment-main-system-prologue]
+c23_systemCoverage = c23_membership();
+// [c23:fragment-main-input-assignments]
+c23_input.baseColor = c23_lineColor;
+c23_input.distanceAlongMeters = v_distanceAlong;
+c23_material c23_surfaceMaterial = c23_getMaterial(c23_input);
+float c23_finalAlpha = c23_surfaceMaterial.alpha * c23_systemCoverage;
+vec3 c23_straightRgb = c23_surfaceMaterial.diffuse + c23_surfaceMaterial.emission;
+out_FragColor = vec4(c23_straightRgb * c23_finalAlpha, c23_finalAlpha);
+// [c23:fragment-main-epilogue]
+}
+"
+`;
