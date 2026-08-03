@@ -95,8 +95,16 @@ export interface LegacyGroundFixtureApi {
 	frameNumber: number;
 	resourceSnapshot: LegacyGroundResourceSnapshot;
 	exerciseLegacySetters(): LegacyGroundSetterReport;
+	measureFrameStability( count: number ): LegacyGroundStabilityReport;
 	renderFrames( count: number ): LegacyGroundResourceSnapshot;
 	dispose(): LegacyGroundResourceSnapshot;
+}
+
+export interface LegacyGroundStabilityReport {
+	framesRendered: number;
+	programObjectSetStable: boolean;
+	before: LegacyGroundResourceSnapshot;
+	after: LegacyGroundResourceSnapshot;
 }
 
 export interface LegacyGroundSetterReport {
@@ -596,6 +604,22 @@ async function createFixture(): Promise<LegacyGroundFixtureApi> {
 		},
 		exerciseLegacySetters() {
 			return exerciseLegacySetters( bundle );
+		},
+		measureFrameStability( count: number ) {
+			const beforePrograms = new Set( renderer.info.programs ?? [] );
+			const before = snapshotResources();
+			const safeCount = Math.max( 0, Math.floor( count ) );
+			for ( let index = 0; index < safeCount; index += 1 ) renderOneFrame();
+			const afterPrograms = new Set( renderer.info.programs ?? [] );
+			const programObjectSetStable =
+				beforePrograms.size === afterPrograms.size &&
+				[ ...beforePrograms ].every( program => afterPrograms.has( program ) );
+			return {
+				framesRendered: safeCount,
+				programObjectSetStable,
+				before,
+				after: snapshotResources(),
+			};
 		},
 		renderFrames( count: number ) {
 			const safeCount = Math.max( 0, Math.floor( count ) );
