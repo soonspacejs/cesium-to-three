@@ -4,6 +4,8 @@ export * from './CesiumGroundMaterial';
 export * from './appearances';
 export * from './errors';
 export * from './logical-key';
+export * from './shader-abi';
+export * from './system-uniforms';
 export * from './types';
 export * from './uniforms';
 export * from './validation';
