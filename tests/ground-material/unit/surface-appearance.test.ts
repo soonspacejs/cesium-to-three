@@ -1,5 +1,5 @@
 import { RawShaderMaterial, Vector4 } from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
 	CesiumGroundCirclePrimitive,
@@ -11,6 +11,7 @@ import {
 	CesiumGroundMaterialAppearance,
 	CesiumGroundRawShaderAppearance,
 } from '../../../src/lib/ground/material/appearances';
+import { CesiumGroundMaterialError } from '../../../src/lib/ground/material/errors';
 
 /** A valid surface Material used to prove public option/getter forwarding. */
 function createSurfaceAppearance(): CesiumGroundMaterialAppearance {
@@ -119,6 +120,70 @@ describe( 'surface primitive safe Appearance forwarding', () => {
 
 		circle.setAppearance( undefined );
 		expect( circle.appearance ).not.toBe( raw );
+		passes.length = 0;
+		circle.setAppearance( raw );
+		expect( circle.appearance ).toBe( raw );
+		expect( passes ).toEqual( [ 'frontStencil', 'backStencil', 'color' ] );
+		circle.setAppearance( undefined );
+		circle.dispose();
+	} );
+
+	it( 'keeps the live safe pass set when a Raw third-pass factory throws', () => {
+		const circle = new CesiumGroundCirclePrimitive( {
+			center: [ 121.4, 31.2 ],
+			radius: 50,
+			strokeColor: '#ffffff',
+			strokeWidth: 2,
+			strokeOpacity: 100,
+			fillColor: '#44aa66',
+			fillOpacity: 80,
+			visible: true,
+		} );
+		const front = circle.classification.group.getObjectByName(
+			'CesiumClassificationFrontStencilDepthCommand',
+		)?.material;
+		const back = circle.classification.group.getObjectByName(
+			'CesiumClassificationBackStencilDepthCommand',
+		)?.material;
+		const color = circle.classification.group.getObjectByName(
+			'CesiumClassificationColorCommand',
+		)?.material;
+		const candidateDisposes = [ vi.fn(), vi.fn() ];
+		let successfulCandidates = 0;
+		const failingRaw = new CesiumGroundRawShaderAppearance( {
+			factory: context => {
+				if ( context.pass === 'color' ) throw new Error( 'third pass failed' );
+				const candidate = context.createDefaultMaterial();
+				candidate.addEventListener( 'dispose', candidateDisposes[ successfulCandidates ] );
+				successfulCandidates += 1;
+				return candidate;
+			},
+		} );
+
+		let thrown: unknown;
+		try {
+			circle.setAppearance( failingRaw );
+		} catch ( error ) {
+			thrown = error;
+		}
+		expect( thrown ).toBeInstanceOf( CesiumGroundMaterialError );
+		expect(( thrown as CesiumGroundMaterialError ).code )
+			.toBe( 'GROUND_RAW_FACTORY_RESULT_INVALID' );
+		expect(( thrown as CesiumGroundMaterialError ).detail?.pass ).toBe( 'color' );
+		expect(( thrown as CesiumGroundMaterialError ).detail?.cause )
+			.toEqual( expect.objectContaining( { message: 'third pass failed' } ) );
+		expect( circle.appearance ).not.toBe( failingRaw );
+		expect( circle.classification.group.getObjectByName(
+			'CesiumClassificationFrontStencilDepthCommand',
+		)?.material ).toBe( front );
+		expect( circle.classification.group.getObjectByName(
+			'CesiumClassificationBackStencilDepthCommand',
+		)?.material ).toBe( back );
+		expect( circle.classification.group.getObjectByName(
+			'CesiumClassificationColorCommand',
+		)?.material ).toBe( color );
+		expect( candidateDisposes[ 0 ] ).toHaveBeenCalledOnce();
+		expect( candidateDisposes[ 1 ] ).toHaveBeenCalledOnce();
 		circle.dispose();
 	} );
 } );

@@ -892,14 +892,15 @@ export class CesiumClassificationPrimitive {
 	}
 
 	/**
-	 * Atomically swaps a safe surface Appearance without touching geometry or the
-	 * fixed stencil meshes. `undefined` restores the constructor-created default
-	 * Appearance; user-owned logical materials are never disposed here.
+	 * Atomically swaps a safe or Raw surface Appearance without touching geometry
+	 * or command Mesh identities. `undefined` restores the constructor-created
+	 * safe default; user-owned logical materials are never disposed here.
 	 */
 	public setAppearance( appearance?: CesiumGroundAppearance ): void {
 		if (
 			appearance !== undefined &&
-			! ( appearance instanceof CesiumGroundMaterialAppearance )
+			! ( appearance instanceof CesiumGroundMaterialAppearance ) &&
+			! ( appearance instanceof CesiumGroundRawShaderAppearance )
 		) {
 			throw new TypeError( 'Classification surface appearance is not a supported Ground Appearance.' );
 		}
