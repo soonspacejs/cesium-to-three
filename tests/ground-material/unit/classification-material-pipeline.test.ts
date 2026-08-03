@@ -312,6 +312,48 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 		frameState.depthTexture.dispose();
 	} );
 
+	it( 'isolates shared Material release notifications and detaches disposed consumers', () => {
+		const appearance = createSafeAppearance( 0.8 );
+		const createPrimitive = () => new CesiumClassificationPrimitive(
+			new BufferGeometry(), createExtents(), new Color( '#d34c61' ), 0.75, 12, true,
+			{ appearance },
+		);
+		const first = createPrimitive();
+		const second = createPrimitive();
+		const firstOld = getCommands( first ).color.material as RawShaderMaterial;
+		const secondOld = getCommands( second ).color.material as RawShaderMaterial;
+		const firstOldDispose = vi.fn();
+		const secondOldDispose = vi.fn();
+		firstOld.addEventListener( 'dispose', firstOldDispose );
+		secondOld.addEventListener( 'dispose', secondOldDispose );
+		const frameState = createFrameState();
+
+		appearance.material.dispose();
+		first.update( frameState );
+		expect( firstOldDispose ).toHaveBeenCalledOnce();
+		expect( secondOldDispose ).not.toHaveBeenCalled();
+		second.update( frameState );
+		expect( secondOldDispose ).toHaveBeenCalledOnce();
+
+		const firstRebuilt = getCommands( first ).color.material as RawShaderMaterial;
+		const secondRebuilt = getCommands( second ).color.material as RawShaderMaterial;
+		const firstRebuiltDispose = vi.fn();
+		const secondRebuiltDispose = vi.fn();
+		firstRebuilt.addEventListener( 'dispose', firstRebuiltDispose );
+		secondRebuilt.addEventListener( 'dispose', secondRebuiltDispose );
+		first.dispose();
+		expect( firstRebuiltDispose ).toHaveBeenCalledOnce();
+
+		appearance.material.dispose();
+		second.update( frameState );
+		expect( firstRebuiltDispose ).toHaveBeenCalledOnce();
+		expect( secondRebuiltDispose ).toHaveBeenCalledOnce();
+		expect( getCommands( second ).color.material ).not.toBe( secondRebuilt );
+
+		second.dispose();
+		frameState.depthTexture.dispose();
+	} );
+
 	it( 'releases and recompiles all still-bound Raw passes after dispose', () => {
 		const passes: string[] = [];
 		const raw = new CesiumGroundRawShaderAppearance( {
