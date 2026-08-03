@@ -38,13 +38,12 @@ test( 'records legacy setter, rebuild, visibility and dispose identities', async
 		backOrder: 126,
 		colorOrder: 127,
 	} );
-	// This is the pre-migration behavior captured by stage 1. The final design
-	// deliberately changes primitive disposal to be idempotent, at which point
-	// this expectation will be updated to one event per owned GPU object.
+	// The final lifecycle contract is idempotent: a repeated public dispose must
+	// not emit a second release for any primitive-owned GPU object.
 	expect( report.doubleDispose ).toEqual( {
-		geometryDisposeEvents: 2,
-		frontMaterialDisposeEvents: 2,
-		backMaterialDisposeEvents: 2,
-		colorMaterialDisposeEvents: 2,
+		geometryDisposeEvents: 1,
+		frontMaterialDisposeEvents: 1,
+		backMaterialDisposeEvents: 1,
+		colorMaterialDisposeEvents: 1,
 	} );
 } );
