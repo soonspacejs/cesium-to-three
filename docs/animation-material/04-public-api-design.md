@@ -1,6 +1,6 @@
 # 04 · 公共 API 设计
 
-> 状态：**Implemented**。本篇类型已进入当前 `0.1.9` 工作树，并由源码类型测试、构建后 ESM 导入和 pack smoke 共同锁定。  
+> 状态：**Implemented**。本篇类型已进入当前 `0.1.9` 工作树，并由源码类型测试、构建后 ESM 导入和 pack smoke 共同锁定。
 > 源码基线：当前项目 `32a6b244b7c0cb731ca35165c46e8fe31248c718`；Three `2a005fdbad6b8503a8a70edfdd279b79c5e04b49`；Cesium `effe290c08dc340a7a6bd4435367a7d092c6b2b9`。  
 > 前置阅读：[03 · 目标架构](./03-target-architecture.md)  
 > API 事实源：本篇；Shader 字段语义以 [05 · Shader ABI](./05-shader-abi.md) 为准；资源语义以 [08 · 生命周期、缓存与资源](./08-lifecycle-cache-resources.md) 为准。
