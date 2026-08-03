@@ -55,6 +55,22 @@ describe( 'canonical Ground system uniforms', () => {
 		expect( second.c23_time ).not.toBe( first.c23_time );
 	} );
 
+	it( 'reuses pre-existing time wrappers when building the canonical map', () => {
+		const existing = createGroundTimeUniforms();
+		const legacy = {
+			c23_time: existing.c23_time,
+			c23_deltaTime: existing.c23_deltaTime,
+			c23_frameNumber: existing.c23_frameNumber,
+		} as unknown as SharedUniforms;
+		const replacement = createGroundTimeUniforms();
+		const canonical = createCanonicalGroundSystemUniforms( legacy, 'surface', replacement );
+
+		expect( canonical.c23_time ).toBe( existing.c23_time );
+		expect( canonical.c23_deltaTime ).toBe( existing.c23_deltaTime );
+		expect( canonical.c23_frameNumber ).toBe( existing.c23_frameNumber );
+		expect( legacy.c23_time ).toBe( existing.c23_time );
+	} );
+
 	it( 'merges into a new map while preserving all system and user wrappers', () => {
 		const systemWrapper = { value: 1 };
 		const userWrapper = { value: 2 };

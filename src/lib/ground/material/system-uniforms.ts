@@ -120,11 +120,23 @@ export function createCanonicalGroundSystemUniforms(
 	kind: GroundPrimitiveKind,
 	timeUniforms: GroundTimeUniforms = createGroundTimeUniforms(),
 ): GroundSystemUniforms {
+	// Keep the same wrappers in the compatibility map and the canonical map.
+	// updateFrameStateUniforms still accepts SharedUniforms, so this bridge lets
+	// it update animation values without replacing either map or wrapper object.
+	const resolvedTimeUniforms: GroundTimeUniforms = {
+		c23_time: legacy.c23_time ?? timeUniforms.c23_time,
+		c23_deltaTime: legacy.c23_deltaTime ?? timeUniforms.c23_deltaTime,
+		c23_frameNumber: legacy.c23_frameNumber ?? timeUniforms.c23_frameNumber,
+	};
+	legacy.c23_time = resolvedTimeUniforms.c23_time;
+	legacy.c23_deltaTime = resolvedTimeUniforms.c23_deltaTime;
+	legacy.c23_frameNumber = resolvedTimeUniforms.c23_frameNumber;
+
 	const canonical: Record<string, IUniform> = {};
 	appendAliases( canonical, legacy, COMMON_ALIASES );
-	canonical.c23_time = timeUniforms.c23_time;
-	canonical.c23_deltaTime = timeUniforms.c23_deltaTime;
-	canonical.c23_frameNumber = timeUniforms.c23_frameNumber;
+	canonical.c23_time = resolvedTimeUniforms.c23_time;
+	canonical.c23_deltaTime = resolvedTimeUniforms.c23_deltaTime;
+	canonical.c23_frameNumber = resolvedTimeUniforms.c23_frameNumber;
 
 	if ( kind === 'surface' || kind === 'decal' ) {
 		appendAliases( canonical, legacy, LEGACY_SURFACE_UNIFORM_ALIASES );

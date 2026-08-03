@@ -433,6 +433,12 @@ export interface CesiumGroundFrameState {
 	width: number;
 	height: number;
 	camera: PerspectiveCamera;
+	/** Absolute host time in seconds; omitted values intentionally map to zero. */
+	timeSeconds?: number;
+	/** Host-reported elapsed time in seconds; omitted values intentionally map to zero. */
+	deltaSeconds?: number;
+	/** Host frame counter; omitted values intentionally map to zero. */
+	frameNumber?: number;
 	/**
 	 * 物理像素与 CSS 像素的比值，由宿主每帧填入（典型：renderer.getPixelRatio()）。
 	 * 仅 CesiumGroundPolylinePrimitive 在意——`czm_metersPerPixel` 内部要乘它。
@@ -494,6 +500,10 @@ export interface PlanarBounds {
 
 export interface SharedUniforms {
 	[ uniform: string ]: { value: unknown } | undefined;
+	/** Canonical animation wrappers are attached by the migrated Material map. */
+	c23_time?: { value: number };
+	c23_deltaTime?: { value: number };
+	c23_frameNumber?: { value: number };
 	czm_encodedCameraPositionMCHigh: { value: Vector3 };
 	czm_encodedCameraPositionMCLow: { value: Vector3 };
 	czm_modelViewRelativeToEye: { value: Matrix4 };

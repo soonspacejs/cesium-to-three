@@ -246,4 +246,52 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 		primitive.dispose();
 		depthTexture.dispose();
 	} );
+
+	it( 'updates canonical time wrappers in place and defaults missing values to zero', () => {
+		const appearance = createSafeAppearance( 0.8 );
+		const primitive = new CesiumClassificationPrimitive(
+			new BufferGeometry(),
+			createExtents(),
+			new Color( '#d34c61' ),
+			0.75,
+			12,
+			true,
+			{ useMaterialPipeline: true, appearance },
+		);
+		const colorMaterial = getCommands( primitive ).color.material as RawShaderMaterial;
+		const time = colorMaterial.uniforms.c23_time;
+		const delta = colorMaterial.uniforms.c23_deltaTime;
+		const frame = colorMaterial.uniforms.c23_frameNumber;
+		const version = appearance.material.version;
+		const camera = new PerspectiveCamera( 45, 1, 1, 1000 );
+		camera.updateProjectionMatrix();
+		const depthTexture = new DataTexture( new Uint8Array( [ 0, 0, 0, 255 ] ), 1, 1 );
+
+		primitive.update( {
+			depthTexture,
+			width: 64,
+			height: 64,
+			camera,
+			timeSeconds: 12.5,
+			deltaSeconds: 1 / 60,
+			frameNumber: 42,
+		} );
+
+		expect( colorMaterial.uniforms.c23_time ).toBe( time );
+		expect( colorMaterial.uniforms.c23_deltaTime ).toBe( delta );
+		expect( colorMaterial.uniforms.c23_frameNumber ).toBe( frame );
+		expect( time.value ).toBe( 12.5 );
+		expect( delta.value ).toBeCloseTo( 1 / 60 );
+		expect( frame.value ).toBe( 42 );
+		expect( appearance.material.version ).toBe( version );
+
+		primitive.update( { depthTexture, width: 64, height: 64, camera } );
+		expect( time.value ).toBe( 0 );
+		expect( delta.value ).toBe( 0 );
+		expect( frame.value ).toBe( 0 );
+		expect( appearance.material.version ).toBe( version );
+
+		primitive.dispose();
+		depthTexture.dispose();
+	} );
 } );

@@ -473,6 +473,21 @@ export function updateFrameStateUniforms( frameState: CesiumGroundFrameState, un
 		( uniforms.czm_pixelRatio as { value: number } ).value =
 			frameState.pixelRatio !== undefined ? frameState.pixelRatio : 1.0;
 	}
+
+	// Animation remains host-driven: this function owns no clock, timer, or RAF.
+	// Missing and non-finite values intentionally resolve to the documented static
+	// zero, while each existing wrapper object is updated in place.
+	const finiteOrZero = ( value: number | undefined ): number =>
+		value !== undefined && Number.isFinite( value ) ? value : 0.0;
+	if ( uniforms.c23_time !== undefined ) {
+		uniforms.c23_time.value = finiteOrZero( frameState.timeSeconds );
+	}
+	if ( uniforms.c23_deltaTime !== undefined ) {
+		uniforms.c23_deltaTime.value = finiteOrZero( frameState.deltaSeconds );
+	}
+	if ( uniforms.c23_frameNumber !== undefined ) {
+		uniforms.c23_frameNumber.value = finiteOrZero( frameState.frameNumber );
+	}
 }
 
 /**
