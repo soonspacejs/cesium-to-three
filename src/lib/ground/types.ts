@@ -248,6 +248,8 @@ export type CesiumGroundPointOptions = CesiumGroundPointCommonOptions & (
  * fillOpacity，不绘制背景或描边。
  */
 export type CesiumGroundImagePrimitiveOptions = CesiumGroundPointCommonOptions & {
+	/** Optional safe/Raw Appearance for the decal color pass. */
+	appearance?: CesiumGroundAppearance;
 	imageUrl: string;
 	imageWidth: number;
 	imageHeight: number;

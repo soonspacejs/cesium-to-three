@@ -1,7 +1,9 @@
-import { Color, Group } from 'three';
+import { Color, Group, type IUniform } from 'three';
 
 import { CesiumClassificationPrimitive } from '../classification';
-import { createTexturedDecalColorMaterial } from '../materials';
+import type { CesiumGroundAppearance } from '../material/appearances';
+import { createTexturedDecalMaterial } from '../material/builtins';
+import type { CesiumGroundMaterial } from '../material/CesiumGroundMaterial';
 import {
 	buildTexturedDecalShadowVolumeGeometry,
 	computeTexturedDecalFootprint,
@@ -32,7 +34,8 @@ export class CesiumGroundImagePrimitive {
 	public readonly rotation: number;
 
 	private readonly textureHandle: ImageTextureHandle;
-	private readonly opacityUniform: { value: number };
+	private readonly defaultMaterial: CesiumGroundMaterial;
+	private readonly opacityUniform: IUniform<number>;
 	private disposed = false;
 
 	/** 校验公共参数、获取共享纹理并一次性建立不依赖图片解码尺寸的地面足迹。 */
@@ -49,7 +52,12 @@ export class CesiumGroundImagePrimitive {
 		this.imageHeight = requirePositive( options.imageHeight, 'imageHeight' );
 		this.rotation = Number.isFinite( options.rotation ) ? options.rotation ?? 0.0 : 0.0;
 		this.textureHandle = acquireImageTexture( this.imageUrl );
-		this.opacityUniform = { value: normalizeOpacity( options.fillOpacity ) };
+		this.defaultMaterial = createTexturedDecalMaterial( {
+			texture: this.textureHandle.texture,
+			opacity: normalizeOpacity( options.fillOpacity ),
+			flipY: true,
+		} );
+		this.opacityUniform = this.defaultMaterial.uniforms.u_opacity as IUniform<number>;
 
 		try {
 			const footprint = computeTexturedDecalFootprint( {
@@ -75,11 +83,10 @@ export class CesiumGroundImagePrimitive {
 				options.renderOrder ?? 10,
 				options.fragmentCull ?? true,
 				{
-					colorMaterialFactory: createTexturedDecalColorMaterial,
-					extraUniforms: {
-						u_decalTexture: { value: this.textureHandle.texture },
-						u_decalOpacity: this.opacityUniform,
-					},
+					useMaterialPipeline: true,
+					primitiveKind: 'decal',
+					defaultMaterial: this.defaultMaterial,
+					appearance: options.appearance,
 				},
 			);
 		} catch ( error ) {
@@ -109,6 +116,17 @@ export class CesiumGroundImagePrimitive {
 	public setClassificationType( classificationType?: ClassificationType ): void {
 		this.ensureActive();
 		this.classification.setClassificationType( classificationType );
+	}
+
+	/** Returns the exact logical Appearance bound to the decal color pass. */
+	public get appearance(): CesiumGroundAppearance {
+		return this.classification.appearance;
+	}
+
+	/** Atomically switches only the decal color Appearance; geometry and texture stay put. */
+	public setAppearance( appearance?: CesiumGroundAppearance ): void {
+		this.ensureActive();
+		this.classification.setAppearance( appearance );
 	}
 
 	/** 设置场景节点显隐。 */
