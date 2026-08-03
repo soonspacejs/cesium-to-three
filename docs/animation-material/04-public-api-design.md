@@ -1,6 +1,6 @@
 # 04 · 公共 API 设计
 
-> 状态：**Proposed API**。本篇中的类型尚未存在于当前 `0.1.9` 包。  
+> 状态：**Implemented**。本篇类型已进入当前 `0.1.9` 工作树，并由源码类型测试、构建后 ESM 导入和 pack smoke 共同锁定。  
 > 源码基线：当前项目 `32a6b244b7c0cb731ca35165c46e8fe31248c718`；Three `2a005fdbad6b8503a8a70edfdd279b79c5e04b49`；Cesium `effe290c08dc340a7a6bd4435367a7d092c6b2b9`。  
 > 前置阅读：[03 · 目标架构](./03-target-architecture.md)  
 > API 事实源：本篇；Shader 字段语义以 [05 · Shader ABI](./05-shader-abi.md) 为准；资源语义以 [08 · 生命周期、缓存与资源](./08-lifecycle-cache-resources.md) 为准。
@@ -27,11 +27,11 @@
 
 ## 设计过程
 
-本篇先从当前六类 Ground 构造选项、FrameState 和导出路径确定兼容面，再把 [03](./03-target-architecture.md) 的四层职责压缩为可声明的 TypeScript 类型；随后用 [05](./05-shader-abi.md) 的 kind/pass 矩阵约束安全入口与 Raw 工厂，并以 [08](./08-lifecycle-cache-resources.md) 的 ownership、clone、version 和 dispose 语义校正方法签名。最后把旧 setter、默认材质和根/子路径导出逐项映射到 Proposed API，保证接口可以直接进入分阶段实现和类型验收。
+本篇先从六类 Ground 构造选项、FrameState 和导出路径确定兼容面，再把 [03](./03-target-architecture.md) 的四层职责压缩为可声明的 TypeScript 类型；随后用 [05](./05-shader-abi.md) 的 kind/pass 矩阵约束安全入口与 Raw 工厂，并以 [08](./08-lifecycle-cache-resources.md) 的 ownership、clone、version 和 dispose 语义校正方法签名。最后把旧 setter、默认材质和根/子路径导出逐项映射到现行 API，并以 [10](./10-test-and-acceptance.md) 的自动矩阵持续验证。
 
-## 1. Current API 与新增边界
+## 1. 兼容 API 与新增边界
 
-当前构造选项只有几何、样式和分类字段，没有公开 appearance：
+原有几何、样式和分类字段全部保留，并已在相同 options 上增量加入公开 `appearance`：
 
 - rectangle：`D:\my\code\cesium-to-three\src\lib\ground\types.ts:115-130`
 - polygon：`D:\my\code\cesium-to-three\src\lib\ground\types.ts:138-163`
@@ -40,7 +40,7 @@
 - polyline：`D:\my\code\cesium-to-three\src\lib\ground\types.ts:313-402`
 - frame state：`D:\my\code\cesium-to-three\src\lib\ground\types.ts:404-428`
 
-当前内部已有 `ClassificationColorInjection.colorMaterialFactory` 与 `extraUniforms`，但它只供文字/图片内部使用，不是稳定公共 ABI（`classification.ts:463-474`）。Proposed API 不直接公开这个接口，而是在其上建立 Material / Appearance 层。
+迁移前的 `ClassificationColorInjection.colorMaterialFactory` 与 `extraUniforms` 从未成为稳定公共 ABI；Stage 14 已删除该旧拼接入口，所有 Ground 路径统一通过 Material / Appearance compiler。
 
 公开构建已经同时生成根入口和 `ground` 子路径（`vite.lib.config.ts:22-26`），根入口又 `export * from './lib/ground'`（`src/cesium-three-ground.ts:9`）。因此新增符号只需从 `src/lib/ground/index.ts` 导出，就必须同时出现在：
 
@@ -53,7 +53,7 @@ import { CesiumGroundMaterial } from 'cesium-to-three/ground';
 
 ## 2. 公共类型总览
 
-以下代码块是完整 Proposed 声明骨架。实现可以拆文件，但导出的名称、字段、只读性和方法语义不得改变。
+以下代码块是完整公开声明契约。实现虽按职责拆文件，但导出的名称、字段、只读性和方法语义由类型 smoke 锁定。
 
 ```ts
 import { EventDispatcher } from 'three';
@@ -472,7 +472,7 @@ export type CesiumGroundTextPrimitiveOptions =
 
 ### 8.3 point delegate 必须透传
 
-`CesiumGroundPointPrimitive` 当前根据 `shape` 委托 circle、rectangle 或 image（`types.ts:202-236`，`primitives.ts:722-873`）。Proposed 行为：
+`CesiumGroundPointPrimitive` 根据 `shape` 委托 circle、rectangle 或 image，并实现以下现行行为：
 
 | point shape | delegate | `appearance` 对应 kind |
 | --- | --- | --- |
@@ -874,7 +874,7 @@ line.setArrowAppearance(undefined);
 
 没有传 `appearance` 时，构造结果必须与当前视觉一致：
 
-| 当前路径 | Proposed 内部默认 Material |
+| 兼容路径 | 当前内部默认 Material |
 | --- | --- |
 | surface 纯色填充/描边 | `createColorGroundMaterial`，`baseColor/isStroke` 保留现有分支 |
 | circle ring/sector | shape 阶段先裁切并选 baseColor，再调用 Color Material |
@@ -888,7 +888,7 @@ line.setArrowAppearance(undefined);
 - 所有旧 options 和 setter 保留；
 - 默认 renderOrder、非拾取 layer、transparent flag、混合因子不变；
 - `SharedUniforms` 继续导出一个兼容周期，但扩展注释标记 `@deprecated`：用户不得把新增 key 当稳定扩展点；
-- 现有 `ClassificationColorInjection` 降为内部 adapter，迁移完成后不作为公开 Proposed API；
+- 已删除 `ClassificationColorInjection` 旧 adapter；公开扩展只使用 Material / Appearance API；
 - 根入口与 `./ground` 导出一致；`./arrow` 不导出 Ground Material API；
 - `plot` 不进 library bundle 的事实不变。
 
@@ -952,19 +952,19 @@ createScalePulseMaterial
 
 ## 验收清单
 
-- [ ] TypeScript 声明包含 Material、安全 Appearance、Raw Appearance、上下文和工厂的全部字段。
-- [ ] `setUniform()` 只写既有 `.value`，未知 key 抛错且不改变 version。
-- [ ] `needsUpdate=true` 的递增语义与 uniform runtime 变化严格分开。
-- [ ] Raw factory context 只有锁定的五项，并为每个 pass 返回独立材质。
-- [ ] `createDefaultMaterial()` 每次 factory 至多调用一次；调用后必须返回该实例，完整替换则零调用。
-- [ ] 所有 Ground options 都有 `appearance?`；polyline 另有 `arrowAppearance?`。
-- [ ] 所有实例都有 getter/`setAppearance()`；polyline 有 `setArrowAppearance()`。
-- [ ] point 三种 delegate 完整透传同一 Appearance 引用。
-- [ ] frame state 三个时间字段及缺省/规范化规则明确。
-- [ ] preset 签名、默认值与 [07](./07-built-in-effects.md) 一致。
-- [ ] 保留前缀、uniform 合并和稳定错误 code 已定义。
-- [ ] 默认路径继续接受全部旧 options/setter 并保持视觉结果。
-- [ ] 新符号可从根入口和 `cesium-to-three/ground` 导入。
+- [x] TypeScript 声明包含 Material、安全 Appearance、Raw Appearance、上下文和工厂的全部字段。
+- [x] `setUniform()` 只写既有 `.value`，未知 key 抛错且不改变 version。
+- [x] `needsUpdate=true` 的递增语义与 uniform runtime 变化严格分开。
+- [x] Raw factory context 只有锁定的五项，并为每个 pass 返回独立材质。
+- [x] `createDefaultMaterial()` 每次 factory 至多调用一次；调用后必须返回该实例，完整替换则零调用。
+- [x] 所有 Ground options 都有 `appearance?`；polyline 另有 `arrowAppearance?`。
+- [x] 所有实例都有 getter/`setAppearance()`；polyline 有 `setArrowAppearance()`。
+- [x] point 三种 delegate 完整透传同一 Appearance 引用。
+- [x] frame state 三个时间字段及缺省/规范化规则明确。
+- [x] preset 签名、默认值与 [07](./07-built-in-effects.md) 一致。
+- [x] 保留前缀、uniform 合并和稳定错误 code 已定义。
+- [x] 默认路径继续接受全部旧 options/setter 并保持视觉结果。
+- [x] 新符号可从根入口和 `cesium-to-three/ground` 导入。
 
 ---
 
