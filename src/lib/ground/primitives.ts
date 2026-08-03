@@ -60,7 +60,6 @@ import {
 	buildArrowHeadGeometry,
 } from './line/line-arrowhead';
 import { LineWidthMode } from './line/line-types';
-import { createArrowHeadMaterial } from './materials';
 import {
 	CesiumGroundMaterialAppearance,
 	CesiumGroundRawShaderAppearance,
@@ -978,6 +977,10 @@ export class CesiumGroundPolylinePrimitive {
 	private readonly defaultMaterial: ReturnType<typeof createColorGroundMaterial>;
 	/** Stable default Appearance restored by `setAppearance(undefined)`. */
 	private readonly defaultAppearance: CesiumGroundMaterialAppearance;
+	/** Arrow owns a separate logical default so line and arrow compilation stay independent. */
+	private readonly defaultArrowMaterial: ReturnType<typeof createColorGroundMaterial>;
+	/** Stable default restored by `setArrowAppearance(undefined)`. */
+	private readonly defaultArrowAppearance: CesiumGroundMaterialAppearance;
 	/** Canonical aliases retain the exact SharedUniform wrapper identities. */
 	private readonly systemUniforms: GroundSystemUniforms;
 	/** Logical strategy currently selected for the line body. */
@@ -994,6 +997,10 @@ export class CesiumGroundPolylinePrimitive {
 	private arrowMesh?: Mesh;
 	private arrowMaterial?: RawShaderMaterial;
 	private arrowGeometry?: BufferGeometry;
+	/** Logical arrow strategy is retained even while arrowMode is `none`. */
+	private arrowAppearanceState: CesiumGroundAppearance;
+	/** Compiled arrow pass; absent while arrowMode is `none`. */
+	private compiledArrowMaterial?: GroundCompiledMaterial;
 	private arrowColorExplicit = false;
 	private disposed = false;
 	/** Distinguishes factory claims without using object identity as a cache key. */
@@ -1024,6 +1031,10 @@ export class CesiumGroundPolylinePrimitive {
 		this.defaultAppearance = new CesiumGroundMaterialAppearance( {
 			material: this.defaultMaterial,
 		} );
+		this.defaultArrowMaterial = createColorGroundMaterial();
+		this.defaultArrowAppearance = new CesiumGroundMaterialAppearance( {
+			material: this.defaultArrowMaterial,
+		} );
 		if (
 			options.appearance !== undefined &&
 			! ( options.appearance instanceof CesiumGroundMaterialAppearance ) &&
@@ -1031,6 +1042,14 @@ export class CesiumGroundPolylinePrimitive {
 		) {
 			throw new TypeError( 'Ground polyline appearance is not a supported Ground Appearance.' );
 		}
+		if (
+			options.arrowAppearance !== undefined &&
+			! ( options.arrowAppearance instanceof CesiumGroundMaterialAppearance ) &&
+			! ( options.arrowAppearance instanceof CesiumGroundRawShaderAppearance )
+		) {
+			throw new TypeError( 'Ground polyline arrowAppearance is not a supported Ground Appearance.' );
+		}
+		this.arrowAppearanceState = options.arrowAppearance ?? this.defaultArrowAppearance;
 
 		// 1. 几何（line-shadow-volume facade）。一次性、纯 CPU。
 		this.geometry = buildLineShadowVolumeGeometry(
@@ -1084,7 +1103,16 @@ export class CesiumGroundPolylinePrimitive {
 		// 4. 可选的箭头 mesh：与线共用 uniform 表，材质换 shader + 加
 		//    ARROW define。renderOrder=line+1 让箭头画在线之上。
 		if ( this.options.arrowMode !== ARROW_MODE.NONE ) {
-			this.buildArrowMesh( userData );
+			try {
+				this.buildArrowMesh( userData );
+			} catch ( error ) {
+				// Construction cannot be followed by a caller-owned dispose call, so
+				// release every command resource created before the failed arrow pass.
+				this.disposeArrowMesh();
+				this.geometry.dispose();
+				this.material.dispose();
+				throw error;
+			}
 		}
 	}
 
@@ -1116,7 +1144,7 @@ export class CesiumGroundPolylinePrimitive {
 			);
 		}
 
-		this.arrowGeometry = buildArrowHeadGeometry(
+		const nextGeometry = buildArrowHeadGeometry(
 			userData.startFrame,
 			userData.endFrame,
 			this.options.arrowMode,
@@ -1124,11 +1152,19 @@ export class CesiumGroundPolylinePrimitive {
 			this.options.arrowEndStyle,
 		);
 		// 单材质即可：两端样式由几何顶点属性 arrowStyleId 携带，FS 按 id 分派。
-		this.arrowMaterial = createArrowHeadMaterial(
-			this.uniforms,
-			this.options.debugVolume,
-		);
-		this.arrowMesh = new Mesh( this.arrowGeometry, this.arrowMaterial );
+		let compiled: GroundCompiledMaterial;
+		try {
+			compiled = this.compileArrowAppearance( this.arrowAppearanceState );
+		} catch ( error ) {
+			// Geometry is independent from the shader candidate and must be released
+			// when validation or a Raw factory rejects that candidate.
+			nextGeometry.dispose();
+			throw error;
+		}
+		this.arrowGeometry = nextGeometry;
+		this.compiledArrowMaterial = compiled;
+		this.arrowMaterial = compiled.material;
+		this.arrowMesh = new Mesh( nextGeometry, compiled.material );
 		this.arrowMesh.name = 'CesiumGroundPolylineArrowCommand';
 		this.arrowMesh.frustumCulled = false;
 		this.arrowMesh.renderOrder = this.options.renderOrder + 1;
@@ -1151,6 +1187,24 @@ export class CesiumGroundPolylinePrimitive {
 		this.arrowMesh = undefined;
 		this.arrowGeometry = undefined;
 		this.arrowMaterial = undefined;
+		this.compiledArrowMaterial = undefined;
+	}
+
+	/** Compiles only the independent arrow pass with the canonical arrow ABI. */
+	private compileArrowAppearance( appearance: CesiumGroundAppearance ): GroundCompiledMaterial {
+		return compileGroundPass( {
+			primitiveKind: 'arrow',
+			pass: 'arrow',
+			appearance,
+			systemUniforms: this.systemUniforms,
+			defaultMaterial: this.defaultArrowMaterial,
+			pipelineState: {
+				fragmentCull: false,
+				debugVolume: this.options.debugVolume,
+				attributeLayoutKey: 'ground-polyline-arrow-v1',
+				primitiveId: this.materialPrimitiveId,
+			},
+		} );
 	}
 
 	/**
@@ -1213,6 +1267,46 @@ export class CesiumGroundPolylinePrimitive {
 		if ( previousMaterial !== nextMaterial ) previousMaterial.dispose();
 	}
 
+	/** Returns the exact logical Appearance selected for the arrow pass. */
+	public get arrowAppearance(): CesiumGroundAppearance {
+		return this.arrowAppearanceState;
+	}
+
+	/**
+	 * Atomically replaces only the live arrow material. With arrowMode=`none`
+	 * the selection is stored without compiling; re-enabling the mode compiles
+	 * this same object and therefore preserves every user uniform wrapper.
+	 */
+	public setArrowAppearance( appearance?: CesiumGroundAppearance ): void {
+		if ( this.disposed ) return;
+		if (
+			appearance !== undefined &&
+			! ( appearance instanceof CesiumGroundMaterialAppearance ) &&
+			! ( appearance instanceof CesiumGroundRawShaderAppearance )
+		) {
+			throw new TypeError( 'Ground polyline arrowAppearance is not a supported Ground Appearance.' );
+		}
+
+		const nextAppearance = appearance ?? this.defaultArrowAppearance;
+		if ( nextAppearance === this.arrowAppearanceState ) return;
+		if ( this.arrowMesh === undefined ) {
+			this.arrowAppearanceState = nextAppearance;
+			return;
+		}
+
+		// Compile before mutating the live mesh so Raw validation/factory failures
+		// leave the old arrow and its logical Appearance fully usable.
+		const nextCompiled = this.compileArrowAppearance( nextAppearance );
+		const previousMaterial = this.arrowMaterial;
+		this.arrowAppearanceState = nextAppearance;
+		this.compiledArrowMaterial = nextCompiled;
+		this.arrowMaterial = nextCompiled.material;
+		this.arrowMesh.material = nextCompiled.material;
+		if ( previousMaterial !== undefined && previousMaterial !== nextCompiled.material ) {
+			previousMaterial.dispose();
+		}
+	}
+
 	/** Rebuilds a compiled pass only after the logical Appearance revision changes. */
 	private reconcileMaterialAppearance(): void {
 		if ( this.compiledMaterial.appearanceVersion === this.appearanceState.version ) return;
@@ -1223,6 +1317,21 @@ export class CesiumGroundPolylinePrimitive {
 		this.material = nextCompiled.material;
 		this.mesh.material = nextCompiled.material;
 		if ( previousMaterial !== nextCompiled.material ) previousMaterial.dispose();
+	}
+
+	/** Recompiles only the arrow pass when its logical Appearance revision changes. */
+	private reconcileArrowMaterialAppearance(): void {
+		if ( this.arrowMesh === undefined || this.compiledArrowMaterial === undefined ) return;
+		if ( this.compiledArrowMaterial.appearanceVersion === this.arrowAppearanceState.version ) return;
+
+		const nextCompiled = this.compileArrowAppearance( this.arrowAppearanceState );
+		const previousMaterial = this.arrowMaterial;
+		this.compiledArrowMaterial = nextCompiled;
+		this.arrowMaterial = nextCompiled.material;
+		this.arrowMesh.material = nextCompiled.material;
+		if ( previousMaterial !== undefined && previousMaterial !== nextCompiled.material ) {
+			previousMaterial.dispose();
+		}
 	}
 
 	/** 把图元挂到场景：`scene.add(primitive.group)`。 */
@@ -1238,6 +1347,7 @@ export class CesiumGroundPolylinePrimitive {
 		// Reconcile before the visibility early-return so a hidden primitive does
 		// not render one stale frame after its logical source changes.
 		this.reconcileMaterialAppearance();
+		this.reconcileArrowMaterialAppearance();
 		if ( ! this.mesh.visible ) return;
 		// 先把相机位置编码到 high/low（与 CesiumClassificationPrimitive 完全一致）。
 		// 漏掉这一步线就被 RTE 解码到 ECEF 原点附近，全帧不可见。

@@ -66,6 +66,19 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 	} );
 }
 
+/** Raw arrow fixture records pass invocations while retaining the canonical wrappers. */
+function createRawArrowAppearance( passes: string[] ): CesiumGroundRawShaderAppearance {
+	return new CesiumGroundRawShaderAppearance( {
+		uniforms: { u_arrowFixtureTint: { value: new Vector4( 0.8, 0.2, 0.1, 1 ) } },
+		factory: context => {
+			passes.push( `${ context.primitiveKind }:${ context.pass }` );
+			const material = context.createDefaultMaterial();
+			material.name = 'RawArrowFixture';
+			return material;
+		},
+	} );
+}
+
 describe( 'polyline ABI and Appearance integration', () => {
 	it( 'uses the compiler-backed Color Material for solid default lines', () => {
 		const primitive = createPolyline();
@@ -202,5 +215,109 @@ describe( 'polyline ABI and Appearance integration', () => {
 		expect( () => createPolyline( { appearance: invalidAppearance } ) ).toThrow();
 		expect( geometryDispose ).toHaveBeenCalledTimes( 1 );
 		geometryDispose.mockRestore();
+	} );
+
+	it( 'keeps line and arrow Appearances independent', () => {
+		const lineAppearance = createGradientAppearance();
+		const arrowAppearance = new CesiumGroundMaterialAppearance( {
+			material: new CesiumGroundMaterial( {
+				type: 'ArrowGradientFixture',
+				uniforms: { u_arrowTint: { value: new Vector4( 0.2, 0.8, 0.3, 1 ) } },
+				fragmentShader: /* glsl */ `
+uniform vec4 u_arrowTint;
+c23_material c23_getMaterial(c23_materialInput materialInput) {
+	c23_material result;
+	result.diffuse = materialInput.baseColor.rgb * u_arrowTint.rgb;
+	result.emission = vec3(0.0);
+	result.alpha = materialInput.baseColor.a * u_arrowTint.a;
+	return result;
+}
+`,
+			} ),
+		} );
+		const primitive = createPolyline( {
+			arrowMode: 'both',
+			appearance: lineAppearance,
+			arrowAppearance,
+		} );
+		const line = lineMesh( primitive );
+		const arrow = primitive.group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+		if ( ! ( arrow instanceof Mesh ) ) throw new Error( 'Polyline arrow Mesh is missing.' );
+
+		expect( primitive.appearance ).toBe( lineAppearance );
+		expect( primitive.arrowAppearance ).toBe( arrowAppearance );
+		expect( ( line.material as RawShaderMaterial ).fragmentShader ).toContain( 'u_tint' );
+		expect( ( arrow.material as RawShaderMaterial ).fragmentShader ).toContain( 'u_arrowTint' );
+		expect( ( arrow.material as RawShaderMaterial ).vertexShader ).toContain( '#define C23_ARROW 1' );
+		primitive.dispose();
+	} );
+
+	it( 'stores arrow Appearance while disabled and compiles it on re-enable', () => {
+		const passes: string[] = [];
+		const arrowAppearance = createRawArrowAppearance( passes );
+		const primitive = createPolyline( { arrowAppearance } );
+
+		expect( primitive.arrowAppearance ).toBe( arrowAppearance );
+		expect( passes ).toEqual( [] );
+		primitive.setArrowMode( 'both' );
+		expect( passes ).toEqual( [ 'arrow:arrow' ] );
+		const arrow = primitive.group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+		if ( ! ( arrow instanceof Mesh ) ) throw new Error( 'Polyline arrow Mesh is missing.' );
+		expect( arrow.material ).toBeInstanceOf( RawShaderMaterial );
+		expect( ( arrow.material as RawShaderMaterial ).name ).toBe( 'RawArrowFixture' );
+		primitive.setArrowMode( 'none' );
+		expect( primitive.arrowAppearance ).toBe( arrowAppearance );
+		primitive.setArrowMode( 'right' );
+		expect( passes ).toEqual( [ 'arrow:arrow', 'arrow:arrow' ] );
+		primitive.dispose();
+	} );
+
+	it( 'rolls back a failed arrow Appearance candidate without touching the live command', () => {
+		const primitive = createPolyline( { arrowMode: 'right' } );
+		const arrow = primitive.group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+		if ( ! ( arrow instanceof Mesh ) ) throw new Error( 'Polyline arrow Mesh is missing.' );
+		const originalAppearance = primitive.arrowAppearance;
+		const originalMaterial = arrow.material;
+		const originalGeometry = arrow.geometry;
+		let candidateDisposeEvents = 0;
+		const brokenRaw = new CesiumGroundRawShaderAppearance( {
+			factory: context => {
+				const candidate = context.createDefaultMaterial();
+				candidate.addEventListener( 'dispose', () => { candidateDisposeEvents += 1; } );
+				throw new Error( 'intentional arrow Raw failure' );
+			},
+		} );
+
+		expect( () => primitive.setArrowAppearance( brokenRaw ) ).toThrow();
+		expect( candidateDisposeEvents ).toBe( 1 );
+		expect( primitive.arrowAppearance ).toBe( originalAppearance );
+		expect( arrow.material ).toBe( originalMaterial );
+		expect( arrow.geometry ).toBe( originalGeometry );
+		primitive.dispose();
+	} );
+
+	it( 'preserves arrow Appearance and user wrapper identity across geometry rebuilds', () => {
+		const passes: string[] = [];
+		const arrowAppearance = createRawArrowAppearance( passes );
+		const primitive = createPolyline( { arrowMode: 'both', arrowAppearance } );
+		const arrow = primitive.group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+		if ( ! ( arrow instanceof Mesh ) ) throw new Error( 'Polyline arrow Mesh is missing.' );
+		const userWrapper = arrow.material instanceof RawShaderMaterial
+			? arrow.material.uniforms.u_arrowFixtureTint
+			: undefined;
+		const line = lineMesh( primitive );
+		const lineGeometry = line.geometry;
+
+		primitive.setArrowStyles( 'open', 'solid' );
+		primitive.setArrowMode( 'left' );
+
+		const rebuiltArrow = primitive.group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+		if ( ! ( rebuiltArrow instanceof Mesh ) ) throw new Error( 'Rebuilt arrow Mesh is missing.' );
+		expect( primitive.arrowAppearance ).toBe( arrowAppearance );
+		expect( rebuiltArrow ).not.toBe( arrow );
+		expect( ( rebuiltArrow.material as RawShaderMaterial ).uniforms.u_arrowFixtureTint )
+			.toBe( userWrapper );
+		expect( line.geometry ).toBe( lineGeometry );
+		primitive.dispose();
 	} );
 } );
