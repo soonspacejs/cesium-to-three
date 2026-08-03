@@ -9,6 +9,8 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { CesiumGroundMaterial } from '../../../src/lib/ground/material/CesiumGroundMaterial';
+import { CesiumGroundMaterialAppearance } from '../../../src/lib/ground/material/appearances';
+import { compileGroundPass } from '../../../src/lib/ground/material/compiler';
 import { CesiumGroundMaterialError } from '../../../src/lib/ground/material/errors';
 
 const SOURCE = `
@@ -88,6 +90,80 @@ describe( 'CesiumGroundMaterial', () => {
 		expect( disposeCount ).toBe( 2 );
 		expect( material.uniforms.u_phase.value ).toBe( 0.5 );
 		expect( material.version ).toBe( 1 );
+	} );
+
+	it( 'shares wrapper values and revisions through independent safe appearances', () => {
+		const material = new CesiumGroundMaterial( {
+			uniforms: { u_phase: { value: 0 } },
+			fragmentShader: SOURCE.replace(
+				'c23_material c23_getMaterial',
+				'uniform float u_phase;\nc23_material c23_getMaterial',
+			).replace(
+				'materialInput.baseColor.a)',
+				'materialInput.baseColor.a * (1.0 - u_phase))',
+			),
+		} );
+		const first = new CesiumGroundMaterialAppearance( { material } );
+		const second = new CesiumGroundMaterialAppearance( { material } );
+
+		material.setUniform( 'u_phase', 0.25 );
+		expect( first.material.uniforms.u_phase ).toBe( second.material.uniforms.u_phase );
+		expect( second.material.uniforms.u_phase.value ).toBe( 0.25 );
+		material.needsUpdate = true;
+		expect( first.version ).toBe( 1 );
+		expect( second.version ).toBe( 1 );
+	} );
+
+	it( 'never disposes user textures and can clone and compile again after dispose', () => {
+		const texture = new Texture();
+		const textureDispose = vi.fn();
+		texture.addEventListener( 'dispose', textureDispose );
+		const material = new CesiumGroundMaterial( {
+			uniforms: {
+				u_texture: { value: texture },
+				u_phase: { value: 0 },
+			},
+			fragmentShader: /* glsl */ `
+uniform sampler2D u_texture;
+uniform float u_phase;
+c23_material c23_getMaterial(c23_materialInput materialInput) {
+	c23_material result;
+	result.diffuse = texture(u_texture, materialInput.st).rgb;
+	result.emission = vec3(0.0);
+	result.alpha = materialInput.baseColor.a * (1.0 - u_phase);
+	return result;
+}
+`,
+		} );
+
+		material.dispose();
+		material.dispose();
+		material.setUniform( 'u_phase', 0.5 );
+		const clone = material.clone();
+		material.needsUpdate = true;
+		const appearance = new CesiumGroundMaterialAppearance( { material } );
+		const compiled = compileGroundPass( {
+			primitiveKind: 'decal',
+			pass: 'color',
+			appearance,
+			systemUniforms: {},
+			defaultMaterial: material,
+			pipelineState: {
+				fragmentCull: true,
+				debugVolume: false,
+				attributeLayoutKey: 'decal-v1',
+				primitiveId: 'material-reuse-fixture',
+			},
+		} );
+
+		expect( material.uniforms.u_texture.value ).toBe( texture );
+		expect( clone.uniforms.u_texture.value ).not.toBe( texture );
+		expect( compiled.material.uniforms.u_texture ).toBe( material.uniforms.u_texture );
+		expect( textureDispose ).not.toHaveBeenCalled();
+		compiled.material.dispose();
+		clone.dispose();
+		material.dispose();
+		expect( textureDispose ).not.toHaveBeenCalled();
 	} );
 
 	it( 'clones Three values, Three-object arrays, wrappers, and defines independently', () => {
