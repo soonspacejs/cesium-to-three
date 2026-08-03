@@ -61,6 +61,27 @@ export interface TexturedDecalMaterialOptions {
 	flipY?: boolean;
 }
 
+export interface PulsePointMaterialOptions {
+	/** Straight-RGB multiplier applied after the point's base color. */
+	color?: ColorRepresentation;
+	/** Animation period in seconds; must be strictly positive. */
+	periodSeconds?: number;
+	/** Minimum nominal radius multiplier; must be positive. */
+	minScale?: number;
+	/** Maximum nominal radius multiplier; must be >= minScale. */
+	maxScale?: number;
+	/** Minimum straight-alpha multiplier in [0, 1]. */
+	minOpacity?: number;
+	/** Maximum straight-alpha multiplier in [0, 1]. */
+	maxOpacity?: number;
+	/** Phase offset measured in cycles. */
+	phase?: number;
+	/** Radial edge softness in normalized footprint units, [0, 0.5]. */
+	edgeSoftness?: number;
+	/** Preallocated footprint / nominal footprint; must be >= maxScale. */
+	footprintScale?: number;
+}
+
 /** Exact documented GLSL for the cross-kind default Color preset. */
 export const C23_COLOR_GROUND_MATERIAL_SOURCE = /* glsl */ `
 uniform vec4 u_color;
@@ -186,6 +207,56 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 }
 `;
 
+/**
+ * PulsePoint evaluates a deterministic cosine wave from host-provided absolute
+ * time. It only attenuates fragment alpha, so primitive geometry and any legacy
+ * stroke membership remain owned by the point delegate rather than moving in
+ * response to the effect.
+ */
+export const C23_PULSE_POINT_MATERIAL_SOURCE = /* glsl */ `
+uniform vec4 u_color;
+uniform float u_periodSeconds;
+uniform float u_minScale;
+uniform float u_maxScale;
+uniform float u_minOpacity;
+uniform float u_maxOpacity;
+uniform float u_phase;
+uniform float u_edgeSoftness;
+uniform float u_footprintScale;
+
+c23_material c23_getMaterial(c23_materialInput materialInput) {
+	const float twoPi = 6.283185307179586;
+	float phase01 = fract(
+		c23_time / max(u_periodSeconds, 1e-6) + u_phase
+	);
+	float wave = 0.5 - 0.5 * cos(twoPi * phase01);
+	float requestedScale = max(mix(u_minScale, u_maxScale, wave), 1e-4);
+	float footprintScale = max(u_footprintScale, 1e-6);
+	float normalizedScale = clamp(requestedScale / footprintScale, 1e-4, 1.0);
+	float opacity = clamp(mix(u_minOpacity, u_maxOpacity, wave), 0.0, 1.0);
+
+	float radius01 = length((materialInput.st - vec2(0.5)) * 2.0);
+	float edge = max(
+		max(clamp(u_edgeSoftness, 0.0, 0.5), fwidth(radius01)),
+		1e-5
+	);
+	float coverage = 1.0 - smoothstep(
+		max(normalizedScale - edge, 0.0),
+		normalizedScale,
+		radius01
+	);
+
+	vec4 straightColor = clamp(materialInput.baseColor, 0.0, 1.0)
+		* clamp(u_color, 0.0, 1.0);
+
+	c23_material material;
+	material.diffuse = straightColor.rgb;
+	material.emission = vec3(0.0);
+	material.alpha = straightColor.a * opacity * coverage;
+	return material;
+}
+`;
+
 /** Validates a normalized public opacity without silently changing intent. */
 function requireNormalizedOpacity( value: number | undefined, field: string ): number {
 	const resolved = value ?? 1.0;
@@ -216,6 +287,28 @@ function requireFiniteAtLeast(
 function requireFiniteNumber( value: number | undefined, fallback: number, field: string ): number {
 	const resolved = value ?? fallback;
 	if ( ! Number.isFinite( resolved ) ) throw new RangeError( `${ field } must be finite.` );
+	return resolved;
+}
+
+/** Validates a normalized softness parameter shared by radial and UV effects. */
+function requireEdgeSoftness( value: number | undefined, fallback: number, field: string ): number {
+	const resolved = value ?? fallback;
+	if ( ! Number.isFinite( resolved ) || resolved < 0.0 || resolved > 0.5 ) {
+		throw new RangeError( `${ field } must be finite in the inclusive range [0, 0.5].` );
+	}
+	return resolved;
+}
+
+/** Validates the construction-time geometry budget recorded by animated effects. */
+function requireFootprintScale(
+	value: number | undefined,
+	maxScale: number,
+	field: string,
+): number {
+	const resolved = value ?? Math.max( 1.0, maxScale );
+	if ( ! Number.isFinite( resolved ) || resolved <= 0.0 || resolved < maxScale ) {
+		throw new RangeError( `${ field } must be finite, positive, and >= maxScale.` );
+	}
 	return resolved;
 }
 
@@ -262,6 +355,56 @@ export function createTexturedDecalMaterial(
 			u_flipY: { value: options.flipY === false ? 0.0 : 1.0 },
 		},
 		fragmentShader: C23_TEXTURED_DECAL_MATERIAL_SOURCE,
+	} );
+}
+
+/** Creates a shareable radial pulse preset with a fixed nine-uniform schema. */
+export function createPulsePointMaterial(
+	options: PulsePointMaterialOptions = {},
+): CesiumGroundMaterial {
+	if ( options === null || typeof options !== 'object' ) {
+		throw new TypeError( 'Pulse Point Material options must be an object.' );
+	}
+	const color = new Color( options.color ?? 0xffffff );
+	const periodSeconds = requireFiniteAtLeast(
+		options.periodSeconds, 1.5, 0.0, 'Pulse Point periodSeconds', true,
+	);
+	const minScale = requireFiniteAtLeast(
+		options.minScale, 0.65, 0.0, 'Pulse Point minScale', true,
+	);
+	const maxScale = requireFiniteAtLeast(
+		options.maxScale, 1.0, 0.0, 'Pulse Point maxScale', true,
+	);
+	if ( minScale > maxScale ) {
+		throw new RangeError( 'Pulse Point minScale must be <= maxScale.' );
+	}
+	const minOpacity = requireNormalizedOpacity( options.minOpacity ?? 0.25, 'Pulse Point minOpacity' );
+	const maxOpacity = requireNormalizedOpacity( options.maxOpacity ?? 1.0, 'Pulse Point maxOpacity' );
+	if ( minOpacity > maxOpacity ) {
+		throw new RangeError( 'Pulse Point minOpacity must be <= maxOpacity.' );
+	}
+	const phase = requireFiniteNumber( options.phase, 0.0, 'Pulse Point phase' );
+	const edgeSoftness = requireEdgeSoftness(
+		options.edgeSoftness, 0.02, 'Pulse Point edgeSoftness',
+	);
+	const footprintScale = requireFootprintScale(
+		options.footprintScale, maxScale, 'Pulse Point footprintScale',
+	);
+
+	return new CesiumGroundMaterial( {
+		type: 'PulsePointGroundMaterial',
+		uniforms: {
+			u_color: { value: new Vector4( color.r, color.g, color.b, 1.0 ) },
+			u_periodSeconds: { value: periodSeconds },
+			u_minScale: { value: minScale },
+			u_maxScale: { value: maxScale },
+			u_minOpacity: { value: minOpacity },
+			u_maxOpacity: { value: maxOpacity },
+			u_phase: { value: phase },
+			u_edgeSoftness: { value: edgeSoftness },
+			u_footprintScale: { value: footprintScale },
+		},
+		fragmentShader: C23_PULSE_POINT_MATERIAL_SOURCE,
 	} );
 }
 
