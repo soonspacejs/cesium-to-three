@@ -5,7 +5,7 @@
 //          never rebuild source, allocate textures, or start an animation loop.
 // ============================================================
 
-import { Color, Vector4, type ColorRepresentation } from 'three';
+import { Color, Texture, Vector4, type ColorRepresentation } from 'three';
 
 import { CesiumGroundMaterial } from './CesiumGroundMaterial';
 
@@ -47,6 +47,18 @@ export interface FlowLineMaterialOptions {
 	trailFraction?: number;
 	/** Any negative value selects reverse; zero and positives select forward. */
 	direction?: number;
+}
+
+/** Options for the shared transparent-texture decal preset used by text/image. */
+export interface TexturedDecalMaterialOptions {
+	/** Borrowed texture sampled in the decal's normalized planar coordinates. */
+	texture: Texture;
+	/** Additional straight-alpha multiplier in [0, 1]. */
+	opacity?: number;
+	/** Straight-RGB/A tint multiplier; defaults to white/one. */
+	tint?: GroundColorInput;
+	/** Whether the shader flips the V coordinate before sampling. */
+	flipY?: boolean;
 }
 
 /** Exact documented GLSL for the cross-kind default Color preset. */
@@ -144,6 +156,36 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 }
 `;
 
+/**
+ * Textured decals never discard transparent texels. A zero-alpha result still
+ * reaches classification's fixed ZeroStencilOp cleanup, which prevents glyph
+ * padding or transparent image pixels from leaving stale stencil bits.
+ */
+export const C23_TEXTURED_DECAL_MATERIAL_SOURCE = /* glsl */ `
+uniform sampler2D u_texture;
+uniform float u_opacity;
+uniform vec4 u_tint;
+uniform float u_flipY;
+
+c23_material c23_getMaterial(c23_materialInput materialInput) {
+	vec2 uv = vec2(
+		clamp(materialInput.st.x, 0.0, 1.0),
+		u_flipY > 0.5 ? 1.0 - clamp(materialInput.st.y, 0.0, 1.0) : clamp(materialInput.st.y, 0.0, 1.0)
+	);
+	vec4 texel = texture(u_texture, uv);
+	vec4 straightColor = clamp(texel, 0.0, 1.0)
+		* clamp(u_tint, 0.0, 1.0)
+		* clamp(materialInput.baseColor, 0.0, 1.0);
+	straightColor.a *= clamp(u_opacity, 0.0, 1.0);
+
+	c23_material material;
+	material.diffuse = straightColor.rgb;
+	material.emission = vec3(0.0);
+	material.alpha = straightColor.a;
+	return material;
+}
+`;
+
 /** Validates a normalized public opacity without silently changing intent. */
 function requireNormalizedOpacity( value: number | undefined, field: string ): number {
 	const resolved = value ?? 1.0;
@@ -196,6 +238,31 @@ function createGroundColorVector(
 	}
 	const color = new Color( input );
 	return new Vector4( color.r, color.g, color.b, 1.0 );
+}
+
+/** Creates a borrowed-texture decal Material with a fixed, program-stable ABI. */
+export function createTexturedDecalMaterial(
+	options: TexturedDecalMaterialOptions,
+): CesiumGroundMaterial {
+	if ( options === null || typeof options !== 'object' || ! ( options.texture instanceof Texture ) ) {
+		throw new TypeError( 'Textured Decal Material requires a Three Texture.' );
+	}
+	const opacity = requireNormalizedOpacity( options.opacity, 'Textured Decal opacity' );
+	const tint = createGroundColorVector(
+		options.tint,
+		new Vector4( 1, 1, 1, 1 ),
+		'Textured Decal tint',
+	);
+	return new CesiumGroundMaterial( {
+		type: 'TexturedDecalGroundMaterial',
+		uniforms: {
+			u_texture: { value: options.texture },
+			u_opacity: { value: opacity },
+			u_tint: { value: tint },
+			u_flipY: { value: options.flipY === false ? 0.0 : 1.0 },
+		},
+		fragmentShader: C23_TEXTURED_DECAL_MATERIAL_SOURCE,
+	} );
 }
 
 /**

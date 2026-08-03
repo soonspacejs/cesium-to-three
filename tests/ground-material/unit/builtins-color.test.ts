@@ -1,9 +1,10 @@
-import { Color, Vector4 } from 'three';
+import { Color, Texture, Vector4 } from 'three';
 import { describe, expect, it } from 'vitest';
 
 import {
 	C23_COLOR_GROUND_MATERIAL_SOURCE,
 	createColorGroundMaterial,
+	createTexturedDecalMaterial,
 } from '../../../src/lib/ground/material/builtins';
 import { computeLogicalMaterialKey } from '../../../src/lib/ground/material/logical-key';
 import { validateGroundMaterialSource } from '../../../src/lib/ground/material/validation';
@@ -46,5 +47,36 @@ describe( 'Color Ground Material preset', () => {
 		expect( material.uniforms.u_color ).toBe( wrapper );
 		expect( computeLogicalMaterialKey( material ) ).toBe( key );
 		expect( material.version ).toBe( 0 );
+	} );
+} );
+
+describe( 'Textured Decal Ground Material preset', () => {
+	it( 'keeps the borrowed texture and fixed shader schema', () => {
+		const texture = new Texture();
+		const material = createTexturedDecalMaterial( {
+			texture,
+			opacity: 0.6,
+			tint: new Vector4( 0.2, 0.4, 0.8, 0.5 ),
+			flipY: false,
+		} );
+
+		expect( material.type ).toBe( 'TexturedDecalGroundMaterial' );
+		expect( material.uniforms.u_texture.value ).toBe( texture );
+		expect( material.uniforms.u_opacity.value ).toBe( 0.6 );
+		expect( material.uniforms.u_flipY.value ).toBe( 0 );
+		expect( material.fragmentShader ).toContain( 'uniform sampler2D u_texture' );
+		expect( material.fragmentShader ).not.toContain( 'discard' );
+		material.dispose();
+		texture.dispose();
+	} );
+
+	it( 'rejects missing textures and invalid opacity', () => {
+		expect( () => createTexturedDecalMaterial( {
+			texture: null as unknown as Texture,
+		} ) ).toThrow( /Three Texture/ );
+		const texture = new Texture();
+		expect( () => createTexturedDecalMaterial( { texture, opacity: 1.1 } ) )
+			.toThrow( /inclusive range/ );
+		texture.dispose();
 	} );
 } );
