@@ -134,6 +134,11 @@ export class CesiumGroundTextPrimitive {
 
 		const nextResolved = resolvePlotTextOptions( merged );
 		const nextPainted = paintTextToCanvas( nextResolved, null );
+		const liveCanvas = this.painted.canvas;
+		const liveContext = liveCanvas.getContext( '2d' );
+		if ( liveContext === null ) {
+			throw new Error( 'PlotText update: failed to acquire the live 2D context.' );
+		}
 		const nextFootprint = computeTextFootprint( nextResolved, nextPainted.layout );
 		const candidateGeometry = buildTextShadowVolumeGeometry( {
 			swEcef: nextFootprint.swEcef,
@@ -154,9 +159,16 @@ export class CesiumGroundTextPrimitive {
 
 		this.resolved = nextResolved;
 		this.renderOrder = nextResolved.renderOrder;
-		this.painted = nextPainted;
+		// The off-screen candidate has passed layout and fixed-topology validation.
+		// Commit its pixels into the original canvas so both CanvasTexture and
+		// texture.image identities remain stable across every successful setText.
+		liveCanvas.width = nextPainted.canvas.width;
+		liveCanvas.height = nextPainted.canvas.height;
+		liveContext.setTransform( 1, 0, 0, 1, 0, 0 );
+		liveContext.clearRect( 0, 0, liveCanvas.width, liveCanvas.height );
+		liveContext.drawImage( nextPainted.canvas, 0, 0 );
+		this.painted = { ...nextPainted, canvas: liveCanvas };
 		this.footprint = nextFootprint;
-		this.texture.image = nextPainted.canvas;
 		this.texture.needsUpdate = true;
 		this.classification.setRenderOrder( nextResolved.renderOrder );
 		this.classification.setClassificationType( nextResolved.classificationType );

@@ -32,6 +32,12 @@ export interface DecalAppearanceCompileReport {
 	textGroupStable: boolean;
 	textGeometryStable: boolean;
 	textTextureStable: boolean;
+	textCanvasStable: boolean;
+	textMaterialStable: boolean;
+	textAttributesStable: boolean;
+	textIndexStable: boolean;
+	textAppearanceStable: boolean;
+	textFailureAtomic: boolean;
 	imagePointAppearanceForwarded: boolean;
 	imageCacheShared: boolean;
 	imageCacheFirstReleaseDisposals: number;
@@ -186,10 +192,31 @@ async function compileDecalAppearances(): Promise<DecalAppearanceCompileReport> 
 	const beforeGroup = defaultText.group;
 	const beforeGeometry = defaultText.classification.group
 		.getObjectByName( 'CesiumClassificationColorCommand' )!.geometry;
+	const beforeAttributes = Object.values( beforeGeometry.attributes );
+	const beforeIndex = beforeGeometry.getIndex();
+	const beforeMaterial = colors[ 0 ];
+	const beforeAppearance = defaultText.appearance;
 	const beforeTexture = colors[ 0 ].uniforms.u_texture.value;
+	const beforeCanvas = beforeTexture.image;
 	defaultText.setText( { content: 'C23 UPDATED' } );
 	const afterGeometry = defaultText.classification.group
 		.getObjectByName( 'CesiumClassificationColorCommand' )!.geometry;
+	const textMaterialAfter = defaultText.classification.group
+		.getObjectByName( 'CesiumClassificationColorCommand' )!.material;
+	let textFailureAtomic = false;
+	try {
+		defaultText.setText( { fontSize: Number.NaN } );
+	} catch {
+		textFailureAtomic =
+			defaultText.group === beforeGroup &&
+			defaultText.classification.group
+				.getObjectByName( 'CesiumClassificationColorCommand' )!.geometry === beforeGeometry &&
+			defaultText.classification.group
+				.getObjectByName( 'CesiumClassificationColorCommand' )!.material === beforeMaterial &&
+			colors[ 0 ].uniforms.u_texture.value === beforeTexture &&
+			beforeTexture.image === beforeCanvas &&
+			defaultText.appearance === beforeAppearance;
+	}
 	const cacheTextureA = ( cacheImageA.classification.group.getObjectByName(
 		'CesiumClassificationColorCommand',
 	)?.material as RawShaderMaterial ).uniforms.u_texture.value;
@@ -232,6 +259,14 @@ async function compileDecalAppearances(): Promise<DecalAppearanceCompileReport> 
 		textGroupStable: defaultText.group === beforeGroup,
 		textGeometryStable: afterGeometry === beforeGeometry,
 		textTextureStable: colors[ 0 ].uniforms.u_texture.value === beforeTexture,
+		textCanvasStable: beforeTexture.image === beforeCanvas,
+		textMaterialStable: textMaterialAfter === beforeMaterial,
+		textAttributesStable: Object.values( afterGeometry.attributes ).every(
+			( attribute, index ) => attribute === beforeAttributes[ index ],
+		),
+		textIndexStable: afterGeometry.getIndex() === beforeIndex,
+		textAppearanceStable: defaultText.appearance === beforeAppearance,
+		textFailureAtomic,
 		imagePointAppearanceForwarded: imagePoint.appearance === safeAppearance,
 		imageCacheShared: cacheTextureA === cacheTextureB,
 		imageCacheFirstReleaseDisposals,
