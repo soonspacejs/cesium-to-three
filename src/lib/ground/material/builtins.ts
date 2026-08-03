@@ -20,8 +20,8 @@ export interface ColorGroundMaterialOptions {
 export const C23_COLOR_GROUND_MATERIAL_SOURCE = /* glsl */ `
 uniform vec4 u_color;
 
-c23_material c23_getMaterial(c23_materialInput input) {
-	vec4 straightColor = clamp(input.baseColor, 0.0, 1.0)
+c23_material c23_getMaterial(c23_materialInput materialInput) {
+	vec4 straightColor = clamp(materialInput.baseColor, 0.0, 1.0)
 		* clamp(u_color, 0.0, 1.0);
 
 	c23_material material;
@@ -44,7 +44,7 @@ function requireNormalizedOpacity( value: number | undefined, field: string ): n
 /**
  * Creates the default multiplier Material used by surfaces, solid lines,
  * untextured decals, and arrows. White/one is behaviorally transparent: system
- * `input.baseColor` passes through unchanged.
+ * `materialInput.baseColor` passes through unchanged.
  */
 export function createColorGroundMaterial(
 	options: ColorGroundMaterialOptions = {},

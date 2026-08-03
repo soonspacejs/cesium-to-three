@@ -5,12 +5,12 @@ import { CesiumGroundMaterialError } from '../../../src/lib/ground/material/erro
 import { validateGroundMaterialSource } from '../../../src/lib/ground/material/validation';
 
 const ENTRY_BODY = /* glsl */ `
-c23_material c23_getMaterial(c23_materialInput input) {
+c23_material c23_getMaterial(c23_materialInput materialInput) {
 	// Words in comments are not lexical operations: discard; main(); gl_FragDepth.
 	c23_material result;
-	result.diffuse = input.baseColor.rgb;
+	result.diffuse = materialInput.baseColor.rgb;
 	result.emission = vec3(0.0);
-	result.alpha = input.baseColor.a;
+	result.alpha = materialInput.baseColor.a;
 	return result;
 }
 `;
@@ -168,12 +168,12 @@ describe( 'safe Ground Material source validation', () => {
 			'c23_getMaterial',
 		);
 		expectSourceError(
-			ENTRY_BODY.replace( 'c23_materialInput input', 'c23_materialInput materialInput' ),
+			ENTRY_BODY.replace( 'c23_materialInput materialInput', 'c23_materialInput input' ),
 			'GROUND_MATERIAL_FUNCTION_INVALID',
 			'c23_getMaterial',
 		);
 		expectSourceError(
-			`c23_material c23_getMaterial(c23_materialInput input);\n${ ENTRY_BODY }`,
+			`c23_material c23_getMaterial(c23_materialInput materialInput);\n${ ENTRY_BODY }`,
 			'GROUND_MATERIAL_FUNCTION_INVALID',
 			'c23_getMaterial',
 		);

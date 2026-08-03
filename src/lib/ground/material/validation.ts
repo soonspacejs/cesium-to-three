@@ -675,7 +675,11 @@ function validateFunctionCandidate(
 		'c23_getMaterial',
 		'(',
 		'c23_materialInput',
-		'input',
+		// `input` is a reserved future keyword in GLSL ES 3.00 and is rejected
+		// by ANGLE/SwiftShader. Fixing the parameter name here keeps validation
+		// aligned with the actual WebGL2 compiler instead of accepting source that
+		// can only fail later during a render.
+		'materialInput',
 		')',
 	];
 	const signatureMatches =
@@ -688,7 +692,7 @@ function validateFunctionCandidate(
 			context,
 			name,
 			isDefinition ? 'material-entry-signature-invalid' : 'material-entry-must-be-defined',
-			'Ground Material entry must be exactly c23_material c23_getMaterial(c23_materialInput input).',
+			'Ground Material entry must be exactly c23_material c23_getMaterial(c23_materialInput materialInput).',
 		);
 	}
 	return true;

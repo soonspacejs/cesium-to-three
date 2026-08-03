@@ -12,8 +12,8 @@ import { CesiumGroundMaterial } from '../../../src/lib/ground/material/CesiumGro
 import { CesiumGroundMaterialError } from '../../../src/lib/ground/material/errors';
 
 const SOURCE = `
-c23_material c23_getMaterial(c23_materialInput input) {
-	return c23_material(input.baseColor.rgb, input.baseColor.a);
+c23_material c23_getMaterial(c23_materialInput materialInput) {
+	return c23_material(materialInput.baseColor.rgb, materialInput.baseColor.a);
 }`;
 
 describe( 'CesiumGroundMaterial', () => {

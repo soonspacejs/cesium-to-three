@@ -26,11 +26,11 @@ import { CesiumGroundMaterialError } from '../../../src/lib/ground/material/erro
 
 const SAFE_SOURCE = /* glsl */ `
 uniform float u_opacity;
-c23_material c23_getMaterial(c23_materialInput input) {
+c23_material c23_getMaterial(c23_materialInput materialInput) {
 	c23_material result;
-	result.diffuse = input.baseColor.rgb;
+	result.diffuse = materialInput.baseColor.rgb;
 	result.emission = vec3(0.0);
-	result.alpha = input.baseColor.a * u_opacity;
+	result.alpha = materialInput.baseColor.a * u_opacity;
 	return result;
 }
 `;
@@ -142,11 +142,11 @@ describe( 'Ground pass compiler', () => {
 			uniforms: { u_other: { value: 123 } },
 			fragmentShader: /* glsl */ `
 				uniform float u_other;
-				c23_material c23_getMaterial(c23_materialInput input) {
+				c23_material c23_getMaterial(c23_materialInput materialInput) {
 					c23_material result;
 					result.diffuse = vec3(u_other);
 					result.emission = vec3(0.0);
-					result.alpha = input.baseColor.a;
+					result.alpha = materialInput.baseColor.a;
 					return result;
 				}
 			`,

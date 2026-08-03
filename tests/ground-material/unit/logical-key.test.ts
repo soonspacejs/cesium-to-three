@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CesiumGroundMaterial } from '../../../src/lib/ground/material/CesiumGroundMaterial';
 import { computeLogicalMaterialKey } from '../../../src/lib/ground/material/logical-key';
 
-const SOURCE = 'c23_material c23_getMaterial(c23_materialInput input) { return input; }';
+const SOURCE = 'c23_material c23_getMaterial(c23_materialInput materialInput) { return materialInput; }';
 
 describe( 'logical Ground Material key', () => {
 	it( 'is independent of type, UUID, version, insertion order, and uniform values', () => {

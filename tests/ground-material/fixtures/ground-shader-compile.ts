@@ -63,11 +63,11 @@ const TEST_MATERIAL = new CesiumGroundMaterial( {
 	fragmentShader: /* glsl */ `
 uniform float u_gain;
 
-c23_material c23_getMaterial(c23_materialInput input) {
+c23_material c23_getMaterial(c23_materialInput materialInput) {
 	c23_material result;
-	result.diffuse = input.baseColor.rgb * u_gain;
+	result.diffuse = materialInput.baseColor.rgb * u_gain;
 	result.emission = vec3(0.0);
-	result.alpha = input.baseColor.a;
+	result.alpha = materialInput.baseColor.a;
 	return result;
 }
 `,

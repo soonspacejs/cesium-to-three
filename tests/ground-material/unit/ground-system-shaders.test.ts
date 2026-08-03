@@ -11,11 +11,11 @@ import {
 const COLOR_MATERIAL = new CesiumGroundMaterial( {
 	type: 'SystemShaderColorFixture',
 	fragmentShader: /* glsl */ `
-c23_material c23_getMaterial(c23_materialInput input) {
+c23_material c23_getMaterial(c23_materialInput materialInput) {
 	c23_material result;
-	result.diffuse = input.baseColor.rgb;
+	result.diffuse = materialInput.baseColor.rgb;
 	result.emission = vec3(0.0);
-	result.alpha = input.baseColor.a;
+	result.alpha = materialInput.baseColor.a;
 	return result;
 }
 `,
