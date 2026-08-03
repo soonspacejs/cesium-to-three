@@ -34,6 +34,8 @@ import {
 import {
 	CesiumGroundMaterialAppearance,
 	CesiumGroundRawShaderAppearance,
+	commitGroundRawStructureForCompile,
+	prepareGroundRawStructureForCompile,
 	type CesiumGroundAppearance,
 } from './appearances';
 import { CesiumGroundMaterialError } from './errors';
@@ -341,6 +343,10 @@ function compileRawGroundPass(
 	options: CompileGroundPassOptions,
 ): RawShaderMaterial {
 	const appearance = options.appearance as CesiumGroundRawShaderAppearance;
+	const structureKey = prepareGroundRawStructureForCompile(
+		appearance,
+		rawErrorDetail( options, {} ),
+	);
 	const defaultUserUniforms = mergeDefaultAndRawUserUniforms(
 		options.defaultMaterial.uniforms,
 		appearance.uniforms,
@@ -436,6 +442,7 @@ function compileRawGroundPass(
 	try {
 		assertRawUniformWrapperIdentities( result, options );
 		claimRawMaterial( result, options );
+		commitGroundRawStructureForCompile( appearance, structureKey );
 	} catch ( error ) {
 		disposeUnclaimedRawCandidate( result );
 		throw error;

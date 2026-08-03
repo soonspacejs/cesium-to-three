@@ -53,6 +53,20 @@ export interface CesiumGroundRawShaderAppearanceEventMap {
 	dispose: { type: 'dispose' };
 }
 
+interface GroundRawStructureSnapshot {
+	version: number;
+	key: string;
+}
+
+const GROUND_RAW_STRUCTURE_SNAPSHOTS = new WeakMap<
+	CesiumGroundRawShaderAppearance,
+	GroundRawStructureSnapshot
+>();
+
+function computeRawUniformSchemaKey( uniforms: GroundUserUniforms ): string {
+	return JSON.stringify( Object.keys( uniforms ).sort() );
+}
+
 /** Expert strategy that can replace complete GLSL and render state per pass. */
 export class CesiumGroundRawShaderAppearance extends EventDispatcher<
 	CesiumGroundRawShaderAppearanceEventMap
@@ -79,6 +93,10 @@ export class CesiumGroundRawShaderAppearance extends EventDispatcher<
 		// replacements must point at these same objects when they bind a user name.
 		this.uniforms = uniforms;
 		this.factory = options.factory;
+		GROUND_RAW_STRUCTURE_SNAPSHOTS.set( this, {
+			version: this.version,
+			key: computeRawUniformSchemaKey( uniforms ),
+		} );
 	}
 
 	/** Monotonic revision used to rerun every pass factory for a bound primitive. */
@@ -97,6 +115,44 @@ export class CesiumGroundRawShaderAppearance extends EventDispatcher<
 	public dispose(): void {
 		this.dispatchEvent( { type: 'dispose' } );
 	}
+}
+
+/** Validates a prospective Raw compile without accepting it yet. @internal */
+export function prepareGroundRawStructureForCompile(
+	appearance: CesiumGroundRawShaderAppearance,
+	context: Readonly<Record<string, unknown>>,
+): string {
+	assertGroundUserUniforms( appearance.uniforms );
+	const currentKey = computeRawUniformSchemaKey( appearance.uniforms );
+	const accepted = GROUND_RAW_STRUCTURE_SNAPSHOTS.get( appearance );
+	if (
+		accepted !== undefined &&
+		accepted.version === appearance.version &&
+		accepted.key !== currentKey
+	) {
+		throw new CesiumGroundMaterialError(
+			'GROUND_APPEARANCE_INCOMPATIBLE',
+			'Raw Ground Appearance uniform schema changed without needsUpdate=true.',
+			{
+				...context,
+				appearanceKind: appearance.kind,
+				appearanceVersion: appearance.version,
+				reason: 'raw-schema-changed-without-needs-update',
+			},
+		);
+	}
+	return currentKey;
+}
+
+/** Accepts a successfully claimed Raw result for this revision. @internal */
+export function commitGroundRawStructureForCompile(
+	appearance: CesiumGroundRawShaderAppearance,
+	key: string,
+): void {
+	GROUND_RAW_STRUCTURE_SNAPSHOTS.set( appearance, {
+		version: appearance.version,
+		key,
+	} );
 }
 
 /** Public union accepted by every appearance-enabled Ground primitive slot. */

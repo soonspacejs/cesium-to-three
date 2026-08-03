@@ -286,6 +286,32 @@ describe( 'Ground pass compiler', () => {
 		expect( compiled.material.uniforms.u_opacity ).toBe( rawWrapper );
 	} );
 
+	it( 'rejects an unversioned Raw schema edit and accepts it after needsUpdate', () => {
+		const raw = new CesiumGroundRawShaderAppearance( {
+			uniforms: { u_gain: { value: 1 } },
+			factory: context => context.createDefaultMaterial(),
+		} );
+		const options = createCompileOptions( { appearance: raw } );
+		compileGroundPass( options );
+		raw.uniforms.u_extra = { value: 2 };
+
+		const error = expectCompilerError(
+			() => compileGroundPass( options ),
+			'GROUND_APPEARANCE_INCOMPATIBLE',
+		);
+		expect( error.detail ).toEqual( expect.objectContaining( {
+			kind: 'surface',
+			pass: 'color',
+			appearanceVersion: 0,
+			reason: 'raw-schema-changed-without-needs-update',
+		} ) );
+
+		raw.needsUpdate = true;
+		const rebuilt = compileGroundPass( options );
+		expect( rebuilt.appearanceVersion ).toBe( 1 );
+		expect( rebuilt.material.uniforms.u_extra ).toBe( raw.uniforms.u_extra );
+	} );
+
 	it( 'rejects async/non-Raw/GLSL1 results and replaced context wrappers', () => {
 		const invalidFactories = [
 			() => null,
