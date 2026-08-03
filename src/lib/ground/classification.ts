@@ -35,6 +35,14 @@ import {
 } from './constants';
 import { encodeCesiumVector3 } from './geometry';
 import { createColorMaterial, createStencilMaterial } from './materials';
+import { CesiumGroundMaterialAppearance } from './material/appearances';
+import { createColorGroundMaterial } from './material/builtins';
+import {
+	compileGroundPass,
+	type GroundCompiledMaterial,
+} from './material/compiler';
+import { createCanonicalGroundSystemUniforms } from './material/system-uniforms';
+import type { GroundSystemUniforms } from './material/types';
 import {
 	ClassificationType,
 	type CesiumClassificationCommandVisibility,
@@ -471,6 +479,84 @@ export interface ClassificationColorInjection {
 	colorMaterialFactory?: ( uniforms: SharedUniforms, fragmentCull: boolean ) => RawShaderMaterial;
 	/** 材质构建前合并到共享 uniform map 的额外 uniform。 */
 	extraUniforms?: Record<string, { value: unknown }>;
+	/**
+	 * 仅供 Ground primitive 分阶段迁移使用的内部开关。
+	 *
+	 * `true` 时 front/back stencil 仍由历史固定工厂创建，只有 color 命令进入
+	 * Material assembler/compiler。文字和图片贴花当前仍依赖自定义 legacy color
+	 * factory，因此不得同时传入 `colorMaterialFactory`；等 decal 阶段迁移时会改由
+	 * 独立的 `primitiveKind: 'decal'` 管线接管。
+	 */
+	useMaterialPipeline?: boolean;
+}
+
+/**
+ * 一个 classification 实例私有的 color 编译上下文。
+ *
+ * system map、logical Material 和 Appearance 都在构造时只创建一次；后续
+ * `setFragmentCulling()` 只替换 `compiledColor`。这样旧 style setter 写入的
+ * SharedUniform wrapper 会被 canonical map 持续别名引用，既不复制值，也不会
+ * 因重编译丢失 wrapper 身份。
+ */
+interface ClassificationMaterialPipelineRuntime {
+	readonly systemUniforms: GroundSystemUniforms;
+	readonly defaultMaterial: ReturnType<typeof createColorGroundMaterial>;
+	readonly appearance: CesiumGroundMaterialAppearance;
+	readonly primitiveId: number;
+	compiledColor: GroundCompiledMaterial;
+}
+
+/** 每个 primitive 的 Raw factory 所有权诊断必须有稳定且互不相同的身份。 */
+let nextClassificationMaterialPrimitiveId = 1;
+
+/**
+ * 使用同一组 immutable compile inputs 构建一个 surface color pass。
+ * attributeLayoutKey 描述 shadow-volume attribute schema，而不是任何 attribute
+ * 数值；因此颜色、透明度或相机更新不会制造新的 program key。
+ */
+function compileClassificationColor(
+	runtime: Omit<ClassificationMaterialPipelineRuntime, 'compiledColor'>,
+	fragmentCull: boolean,
+): GroundCompiledMaterial {
+	return compileGroundPass( {
+		primitiveKind: 'surface',
+		pass: 'color',
+		appearance: runtime.appearance,
+		systemUniforms: runtime.systemUniforms,
+		defaultMaterial: runtime.defaultMaterial,
+		pipelineState: {
+			fragmentCull,
+			debugVolume: false,
+			attributeLayoutKey: 'classification-shadow-volume-v1',
+			primitiveId: runtime.primitiveId,
+		},
+	} );
+}
+
+/**
+ * 为一个 classification 创建隔离的默认 Color Material 运行时。
+ * canonical system map 只保存 legacy SharedUniform wrapper 的别名；白色 logical
+ * Color Material 是乘法恒等元，所以迁移后的默认结果仍完全由原 fill/stroke
+ * wrappers 决定。
+ */
+function createClassificationMaterialPipelineRuntime(
+	uniforms: SharedUniforms,
+	fragmentCull: boolean,
+): ClassificationMaterialPipelineRuntime {
+	const defaultMaterial = createColorGroundMaterial();
+	const appearance = new CesiumGroundMaterialAppearance( { material: defaultMaterial } );
+	const systemUniforms = createCanonicalGroundSystemUniforms( uniforms, 'surface' );
+	const runtimeWithoutCompiled = {
+		systemUniforms,
+		defaultMaterial,
+		appearance,
+		primitiveId: nextClassificationMaterialPrimitiveId ++,
+	};
+
+	return {
+		...runtimeWithoutCompiled,
+		compiledColor: compileClassificationColor( runtimeWithoutCompiled, fragmentCull ),
+	};
 }
 
 /**
@@ -487,6 +573,8 @@ export class CesiumClassificationPrimitive {
 	private readonly cameraLow = new Vector3();
 	private readonly colorMaterialFactory:
 		( uniforms: SharedUniforms, fragmentCull: boolean ) => RawShaderMaterial;
+	/** null 表示该实例仍完整使用 legacy color factory（当前 text/image 即如此）。 */
+	private readonly materialPipeline: ClassificationMaterialPipelineRuntime | null;
 	private colorFragmentCull: boolean;
 
 	/**
@@ -580,12 +668,23 @@ export class CesiumClassificationPrimitive {
 			}
 		}
 
+		if ( injection?.useMaterialPipeline === true && injection.colorMaterialFactory !== undefined ) {
+			throw new TypeError(
+				'Classification Material pipeline cannot be combined with a legacy colorMaterialFactory.',
+			);
+		}
+
 		// 保存 color material 工厂，使 `setFragmentCulling` 后续重建 color mesh 时
 		// 不会丢失 textured-decal color 注入。
 		this.colorMaterialFactory =
 			injection !== undefined && injection.colorMaterialFactory !== undefined
 				? injection.colorMaterialFactory
 				: createColorMaterial;
+		// 此处只创建 color 编译上下文。front/back 继续在下方调用既有 stencil
+		// 工厂，确保 Stage 4 迁移不会改变它们的 GLSL、render state 或对象身份。
+		this.materialPipeline = injection?.useMaterialPipeline === true
+			? createClassificationMaterialPipelineRuntime( this.uniforms, fragmentCull )
+			: null;
 
 		const frontStencilMaterial = createStencilMaterial(
 			this.uniforms,
@@ -599,7 +698,8 @@ export class CesiumClassificationPrimitive {
 			IncrementWrapStencilOp,
 			'CesiumClassificationBackStencilDepthMaterial',
 		);
-		const colorMaterial = this.colorMaterialFactory( this.uniforms, fragmentCull );
+		const colorMaterial = this.materialPipeline?.compiledColor.material
+			?? this.colorMaterialFactory( this.uniforms, fragmentCull );
 
 		this.stencilMesh = new Mesh( geometry, frontStencilMaterial );
 		this.stencilMesh.name = 'CesiumClassificationFrontStencilDepthCommand';
@@ -792,9 +892,21 @@ export class CesiumClassificationPrimitive {
 			return;
 		}
 
-		this.colorFragmentCull = enabled;
+		// compiler 路径先完整构建候选产物；只有编译期校验全部成功后才改变
+		// 当前开关和 Mesh.material。若未来 safe/Raw appearance 构建抛错，旧 color
+		// command 仍保持可用，不会出现半套命令或一帧空白。
+		const nextCompiled = this.materialPipeline === null
+			? null
+			: compileClassificationColor( this.materialPipeline, enabled );
+		const nextMaterial = nextCompiled?.material
+			?? this.colorMaterialFactory( this.uniforms, enabled );
 		const oldMaterial = this.colorMesh.material as Material;
-		this.colorMesh.material = this.colorMaterialFactory( this.uniforms, enabled );
+
+		this.colorFragmentCull = enabled;
+		this.colorMesh.material = nextMaterial;
+		if ( nextCompiled !== null && this.materialPipeline !== null ) {
+			this.materialPipeline.compiledColor = nextCompiled;
+		}
 		oldMaterial.dispose();
 	}
 
