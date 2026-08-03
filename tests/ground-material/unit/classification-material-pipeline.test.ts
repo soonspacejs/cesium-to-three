@@ -441,4 +441,35 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 		primitive.dispose();
 		depthTexture.dispose();
 	} );
+
+	it( 'normalizes invalid delta and frame values without clamping signed absolute time', () => {
+		const primitive = new CesiumClassificationPrimitive(
+			new BufferGeometry(), createExtents(), new Color(), 1, 0, true,
+			{ appearance: createSafeAppearance() },
+		);
+		const material = getCommands( primitive ).color.material as RawShaderMaterial;
+		const frameState = createFrameState();
+		primitive.update( {
+			...frameState,
+			timeSeconds: -2.5,
+			deltaSeconds: -1 / 60,
+			frameNumber: 42.9,
+		} );
+
+		expect( material.uniforms.c23_time.value ).toBe( -2.5 );
+		expect( material.uniforms.c23_deltaTime.value ).toBe( 0 );
+		expect( material.uniforms.c23_frameNumber.value ).toBe( 42 );
+		primitive.update( {
+			...frameState,
+			timeSeconds: Number.NaN,
+			deltaSeconds: Number.POSITIVE_INFINITY,
+			frameNumber: -1,
+		} );
+		expect( material.uniforms.c23_time.value ).toBe( 0 );
+		expect( material.uniforms.c23_deltaTime.value ).toBe( 0 );
+		expect( material.uniforms.c23_frameNumber.value ).toBe( 0 );
+
+		primitive.dispose();
+		frameState.depthTexture.dispose();
+	} );
 } );
