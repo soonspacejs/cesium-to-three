@@ -997,6 +997,8 @@ export class CesiumGroundPolylinePrimitive {
 	private disposed = false;
 	/** Distinguishes factory claims without using object identity as a cache key. */
 	private static nextMaterialPrimitiveId = 1;
+	/** Stable owner id reused by every candidate rebuild for this primitive. */
+	private readonly materialPrimitiveId = CesiumGroundPolylinePrimitive.nextMaterialPrimitiveId ++;
 
 	/**
 	 * 分类目标：决定 {@link update} 采样哪张 packed 深度纹理（贴地形 / 贴模型 / 二者）。
@@ -1157,7 +1159,7 @@ export class CesiumGroundPolylinePrimitive {
 				fragmentCull: false,
 				debugVolume: this.options.debugVolume,
 				attributeLayoutKey: 'ground-polyline-shadow-volume-v1',
-				primitiveId: CesiumGroundPolylinePrimitive.nextMaterialPrimitiveId ++,
+				primitiveId: this.materialPrimitiveId,
 			},
 		} );
 	}
