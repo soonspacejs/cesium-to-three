@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { CesiumClassificationPrimitive } from '../../../src/lib/ground/classification';
 import { CesiumGroundMaterial } from '../../../src/lib/ground/material/CesiumGroundMaterial';
 import { CesiumGroundMaterialAppearance } from '../../../src/lib/ground/material/appearances';
+import { CesiumGroundRawShaderAppearance } from '../../../src/lib/ground/material/appearances';
 import type { PlanarExtents } from '../../../src/lib/ground/types';
 
 /**
@@ -47,6 +48,23 @@ function getCommands( primitive: CesiumClassificationPrimitive ): {
 		throw new Error( 'Classification command graph is incomplete.' );
 	}
 	return { front, back, color };
+}
+
+function createFrameState(): {
+	camera: PerspectiveCamera;
+	depthTexture: DataTexture;
+	width: number;
+	height: number;
+} {
+	const camera = new PerspectiveCamera( 45, 1, 1, 1_000_000 );
+	camera.updateProjectionMatrix();
+	camera.updateMatrixWorld( true );
+	return {
+		camera,
+		depthTexture: new DataTexture(),
+		width: 64,
+		height: 64,
+	};
 }
 
 /** Creates a valid safe surface shader with one observable user wrapper. */
@@ -261,6 +279,77 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 
 		primitive.dispose();
 		depthTexture.dispose();
+	} );
+
+	it( 'releases and recompiles a still-bound safe Material consumer after dispose', () => {
+		const appearance = createSafeAppearance( 0.8 );
+		const primitive = new CesiumClassificationPrimitive(
+			new BufferGeometry(),
+			createExtents(),
+			new Color( '#d34c61' ),
+			0.75,
+			12,
+			true,
+			{ appearance },
+		);
+		const before = getCommands( primitive );
+		const oldColor = before.color.material as RawShaderMaterial;
+		const oldDispose = vi.fn();
+		oldColor.addEventListener( 'dispose', oldDispose );
+		const frameState = createFrameState();
+
+		appearance.material.dispose();
+		appearance.material.dispose();
+		expect( getCommands( primitive ).color.material ).toBe( oldColor );
+		primitive.update( frameState );
+
+		expect( primitive.appearance ).toBe( appearance );
+		expect( getCommands( primitive ).front.material ).toBe( before.front.material );
+		expect( getCommands( primitive ).back.material ).toBe( before.back.material );
+		expect( getCommands( primitive ).color.material ).not.toBe( oldColor );
+		expect( oldDispose ).toHaveBeenCalledOnce();
+		primitive.dispose();
+		frameState.depthTexture.dispose();
+	} );
+
+	it( 'releases and recompiles all still-bound Raw passes after dispose', () => {
+		const passes: string[] = [];
+		const raw = new CesiumGroundRawShaderAppearance( {
+			factory: context => {
+				passes.push( context.pass );
+				return context.createDefaultMaterial();
+			},
+		} );
+		const primitive = new CesiumClassificationPrimitive(
+			new BufferGeometry(),
+			createExtents(),
+			new Color( '#d34c61' ),
+			0.75,
+			12,
+			true,
+			{ appearance: raw },
+		);
+		const before = getCommands( primitive );
+		const disposeEvents = [ vi.fn(), vi.fn(), vi.fn() ];
+		[ before.front, before.back, before.color ].forEach(( mesh, index ) => {
+			( mesh.material as RawShaderMaterial ).addEventListener( 'dispose', disposeEvents[ index ] );
+		} );
+		const oldMaterials = [ before.front.material, before.back.material, before.color.material ];
+		const frameState = createFrameState();
+
+		raw.dispose();
+		primitive.update( frameState );
+
+		const after = getCommands( primitive );
+		expect( passes ).toEqual( [
+			'frontStencil', 'backStencil', 'color',
+			'frontStencil', 'backStencil', 'color',
+		] );
+		expect( [ after.front.material, after.back.material, after.color.material ] )
+			.not.toEqual( oldMaterials );
+		for ( const dispose of disposeEvents ) expect( dispose ).toHaveBeenCalledOnce();
+		primitive.dispose();
+		frameState.depthTexture.dispose();
 	} );
 
 	it( 'updates canonical time wrappers in place and defaults missing values to zero', () => {

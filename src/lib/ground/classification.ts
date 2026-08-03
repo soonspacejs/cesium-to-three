@@ -651,6 +651,13 @@ export class CesiumClassificationPrimitive {
 	private readonly materialPipeline: ClassificationMaterialPipelineRuntime;
 	private colorFragmentCull: boolean;
 	private disposed = false;
+	private appearanceInvalidated = false;
+	private readonly onAppearanceChange = (): void => {
+		this.appearanceInvalidated = true;
+	};
+	private readonly onAppearanceDispose = (): void => {
+		this.appearanceInvalidated = true;
+	};
 
 	/**
 	 * 分类目标：决定 {@link update} 时采样哪张 packed 深度纹理（贴地形 / 贴模型 / 二者）。
@@ -740,6 +747,7 @@ export class CesiumClassificationPrimitive {
 			throw new Error( 'Classification compiler did not create the fixed stencil pass set.' );
 		}
 		const colorMaterial = this.materialPipeline.compiledColor.material;
+		this.subscribeAppearance( this.materialPipeline.appearance );
 
 		this.stencilMesh = new Mesh( geometry, frontStencilMaterial );
 		this.stencilMesh.name = 'CesiumClassificationFrontStencilDepthCommand';
@@ -928,6 +936,7 @@ export class CesiumClassificationPrimitive {
 		const previousFrontMaterial = this.stencilMesh.material as Material;
 		const previousBackMaterial = this.backStencilMesh.material as Material;
 		const previousColorMaterial = this.colorMesh.material as Material;
+		const previousAppearance = this.materialPipeline.appearance;
 		const nextFrontMaterial = nextCompiled.compiledFront?.material ?? previousFrontMaterial;
 		const nextBackMaterial = nextCompiled.compiledBack?.material ?? previousBackMaterial;
 		this.materialPipeline.appearance = nextAppearance;
@@ -936,12 +945,15 @@ export class CesiumClassificationPrimitive {
 		this.materialPipeline.compiledBack =
 			nextCompiled.compiledBack ?? this.materialPipeline.compiledBack;
 		this.materialPipeline.compiledColor = nextCompiled.compiledColor;
+		this.appearanceInvalidated = false;
 		this.stencilMesh.material = nextFrontMaterial;
 		this.backStencilMesh.material = nextBackMaterial;
 		this.colorMesh.material = nextCompiled.compiledColor.material;
 		if ( nextFrontMaterial !== previousFrontMaterial ) previousFrontMaterial.dispose();
 		if ( nextBackMaterial !== previousBackMaterial ) previousBackMaterial.dispose();
 		if ( nextCompiled.compiledColor.material !== previousColorMaterial ) previousColorMaterial.dispose();
+		this.unsubscribeAppearance( previousAppearance );
+		this.subscribeAppearance( nextAppearance );
 	}
 
 	/**
@@ -1063,7 +1075,10 @@ export class CesiumClassificationPrimitive {
 	 */
 	private reconcileMaterialAppearance(): void {
 		const currentVersion = this.materialPipeline.appearance.version;
-		if ( this.materialPipeline.compiledColor.appearanceVersion === currentVersion ) return;
+		if (
+			! this.appearanceInvalidated &&
+			this.materialPipeline.compiledColor.appearanceVersion === currentVersion
+		) return;
 
 		const nextCompiled = compileClassificationAppearance( this.materialPipeline, this.colorFragmentCull );
 		const previousFrontMaterial = this.stencilMesh.material as Material;
@@ -1076,6 +1091,7 @@ export class CesiumClassificationPrimitive {
 		this.materialPipeline.compiledBack =
 			nextCompiled.compiledBack ?? this.materialPipeline.compiledBack;
 		this.materialPipeline.compiledColor = nextCompiled.compiledColor;
+		this.appearanceInvalidated = false;
 		this.stencilMesh.material = nextFrontMaterial;
 		this.backStencilMesh.material = nextBackMaterial;
 		this.colorMesh.material = nextCompiled.compiledColor.material;
@@ -1145,6 +1161,7 @@ export class CesiumClassificationPrimitive {
 	public dispose(): void {
 		if ( this.disposed ) return;
 		this.disposed = true;
+		this.unsubscribeAppearance( this.materialPipeline.appearance );
 		this.group.remove( this.stencilMesh, this.backStencilMesh, this.colorMesh );
 		this.stencilMesh.geometry.dispose();
 		( this.stencilMesh.material as Material ).dispose();
@@ -1157,5 +1174,27 @@ export class CesiumClassificationPrimitive {
 		if ( this.disposed ) {
 			throw new Error( 'CesiumClassificationPrimitive: instance already disposed.' );
 		}
+	}
+
+	/** Subscribes to the logical owner whose revisions/releases affect this consumer. */
+	private subscribeAppearance( appearance: CesiumGroundAppearance ): void {
+		if ( appearance instanceof CesiumGroundMaterialAppearance ) {
+			appearance.material.addEventListener( 'change', this.onAppearanceChange );
+			appearance.material.addEventListener( 'dispose', this.onAppearanceDispose );
+			return;
+		}
+		appearance.addEventListener( 'change', this.onAppearanceChange );
+		appearance.addEventListener( 'dispose', this.onAppearanceDispose );
+	}
+
+	/** Removes consumer listeners without mutating the user-owned logical object. */
+	private unsubscribeAppearance( appearance: CesiumGroundAppearance ): void {
+		if ( appearance instanceof CesiumGroundMaterialAppearance ) {
+			appearance.material.removeEventListener( 'change', this.onAppearanceChange );
+			appearance.material.removeEventListener( 'dispose', this.onAppearanceDispose );
+			return;
+		}
+		appearance.removeEventListener( 'change', this.onAppearanceChange );
+		appearance.removeEventListener( 'dispose', this.onAppearanceDispose );
 	}
 }
