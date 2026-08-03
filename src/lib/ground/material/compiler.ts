@@ -26,7 +26,11 @@ import {
 } from 'three';
 
 import { CLASSIFICATION_MASK } from '../constants';
-import { CesiumGroundMaterial } from './CesiumGroundMaterial';
+import {
+	CesiumGroundMaterial,
+	commitGroundMaterialStructureForCompile,
+	prepareGroundMaterialStructureForCompile,
+} from './CesiumGroundMaterial';
 import {
 	CesiumGroundMaterialAppearance,
 	CesiumGroundRawShaderAppearance,
@@ -453,6 +457,16 @@ export function compileGroundPass( options: CompileGroundPassOptions ): GroundCo
 	if ( options.appearance instanceof CesiumGroundMaterialAppearance ) {
 		const logicalMaterial = options.appearance.material;
 		const isFixedStencil = options.pass === 'frontStencil' || options.pass === 'backStencil';
+		const structureKey = isFixedStencil
+			? undefined
+			: prepareGroundMaterialStructureForCompile( logicalMaterial, {
+				kind: options.primitiveKind,
+				pass: options.pass,
+				appearanceKind: options.appearance.kind,
+				appearanceVersion: options.appearance.version,
+				primitiveId: options.pipelineState.primitiveId,
+				abiVersion: C23_GROUND_SHADER_ABI_VERSION,
+			} );
 		// Safe stencil is a library-fixed branch. It must not bind or key user
 		// wrappers, source, schema, or Material version; only color/line/arrow
 		// consume the logical Material ABI.
@@ -466,7 +480,10 @@ export function compileGroundPass( options: CompileGroundPassOptions ): GroundCo
 			uniforms,
 			options.pipelineState,
 		);
-		if ( ! isFixedStencil ) materialVersion = logicalMaterial.version;
+		if ( ! isFixedStencil ) {
+			commitGroundMaterialStructureForCompile( logicalMaterial, structureKey as string );
+			materialVersion = logicalMaterial.version;
+		}
 	} else if ( options.appearance instanceof CesiumGroundRawShaderAppearance ) {
 		compiled = compileRawGroundPass( options );
 	} else {

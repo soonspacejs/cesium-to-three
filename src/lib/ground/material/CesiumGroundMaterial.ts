@@ -8,6 +8,7 @@
 import { EventDispatcher, MathUtils } from 'three';
 
 import { CesiumGroundMaterialError } from './errors';
+import { computeLogicalMaterialKey } from './logical-key';
 import type { GroundDefines, GroundUserUniforms } from './types';
 import { cloneGroundUniforms } from './uniforms';
 import { assertGroundDefines, assertGroundUserUniforms } from './validation';
@@ -27,6 +28,21 @@ export interface CesiumGroundMaterialEventMap {
 	change: { type: 'change' };
 	dispose: { type: 'dispose' };
 }
+
+interface GroundMaterialStructureSnapshot {
+	version: number;
+	key: string;
+}
+
+/**
+ * Structure snapshots stay outside the public object shape. Registering the
+ * constructor state catches schema/source/define edits made even before the
+ * first primitive binds the Material.
+ */
+const GROUND_MATERIAL_STRUCTURE_SNAPSHOTS = new WeakMap<
+	CesiumGroundMaterial,
+	GroundMaterialStructureSnapshot
+>();
 
 /**
  * Shareable logical Ground Material. Runtime animation mutates uniform values;
@@ -65,6 +81,10 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
 		this.uniforms = uniforms;
 		this.defines = defines;
 		this.fragmentShader = options.fragmentShader;
+		GROUND_MATERIAL_STRUCTURE_SNAPSHOTS.set( this, {
+			version: this.version,
+			key: computeLogicalMaterialKey( this ),
+		} );
 	}
 
 	/** Monotonic structural revision; uniform values never affect it. */
@@ -115,4 +135,49 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
 	public dispose(): void {
 		this.dispatchEvent( { type: 'dispose' } );
 	}
+}
+
+/**
+ * Validates one prospective compile without accepting a new-version snapshot.
+ * The caller commits the returned key only after source assembly succeeds, so
+ * a failed candidate never makes an invalid edit the accepted structure.
+ *
+ * @internal
+ */
+export function prepareGroundMaterialStructureForCompile(
+	material: CesiumGroundMaterial,
+	context: Readonly<Record<string, unknown>>,
+): string {
+	assertGroundUserUniforms( material.uniforms );
+	assertGroundDefines( material.defines );
+	const currentKey = computeLogicalMaterialKey( material );
+	const accepted = GROUND_MATERIAL_STRUCTURE_SNAPSHOTS.get( material );
+	if (
+		accepted !== undefined &&
+		accepted.version === material.version &&
+		accepted.key !== currentKey
+	) {
+		throw new CesiumGroundMaterialError(
+			'GROUND_APPEARANCE_INCOMPATIBLE',
+			'Ground Material structure changed without needsUpdate=true.',
+			{
+				...context,
+				materialType: material.type,
+				materialVersion: material.version,
+				reason: 'material-structure-changed-without-needs-update',
+			},
+		);
+	}
+	return currentKey;
+}
+
+/** Accepts a successfully assembled structure for this exact revision. @internal */
+export function commitGroundMaterialStructureForCompile(
+	material: CesiumGroundMaterial,
+	key: string,
+): void {
+	GROUND_MATERIAL_STRUCTURE_SNAPSHOTS.set( material, {
+		version: material.version,
+		key,
+	} );
 }

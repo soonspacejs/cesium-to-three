@@ -111,6 +111,63 @@ describe( 'Ground pass compiler', () => {
 		expect( first.compileKey ).toBe( second.compileKey );
 	} );
 
+	it.each( [ 'source', 'defines', 'schema' ] as const )(
+		'rejects a direct %s structural edit until needsUpdate advances the revision',
+		structure => {
+			const options = createCompileOptions();
+			const logical = ( options.appearance as CesiumGroundMaterialAppearance ).material;
+			const first = compileGroundPass( options );
+
+			if ( structure === 'source' ) {
+				logical.fragmentShader = logical.fragmentShader.replace(
+					'result.emission = vec3(0.0);',
+					'result.emission = vec3(0.1);',
+				);
+			} else if ( structure === 'defines' ) {
+				logical.defines.USE_FIXTURE = 1;
+			} else {
+				logical.uniforms.u_extra = { value: 2 };
+				logical.fragmentShader = logical.fragmentShader.replace(
+					'uniform float u_opacity;',
+					'uniform float u_opacity;\nuniform float u_extra;',
+				).replace(
+					'result.emission = vec3(0.0);',
+					'result.emission = vec3(u_extra);',
+				);
+			}
+
+			const error = expectCompilerError(
+				() => compileGroundPass( options ),
+				'GROUND_APPEARANCE_INCOMPATIBLE',
+			);
+			expect( error.detail ).toEqual( expect.objectContaining( {
+				kind: 'surface',
+				pass: 'color',
+				materialVersion: 0,
+				reason: 'material-structure-changed-without-needs-update',
+			} ) );
+
+			logical.needsUpdate = true;
+			const rebuilt = compileGroundPass( options );
+			expect( rebuilt.materialVersion ).toBe( 1 );
+			expect( rebuilt.compileKey ).not.toBe( first.compileKey );
+		} );
+
+	it( 'does not accept a failed new-version source as the revision snapshot', () => {
+		const options = createCompileOptions();
+		const logical = ( options.appearance as CesiumGroundMaterialAppearance ).material;
+		compileGroundPass( options );
+		logical.fragmentShader = 'invalid but explicitly revised';
+		logical.needsUpdate = true;
+
+		expect( () => compileGroundPass( options ) ).toThrow();
+		logical.fragmentShader = SAFE_SOURCE.replace(
+			'result.emission = vec3(0.0);',
+			'result.emission = vec3(0.2);',
+		);
+		expect( () => compileGroundPass( options ) ).not.toThrow();
+	} );
+
 	it( 'applies exact surface/decal stencil and color render states', () => {
 		const front = compileGroundPass( createCompileOptions( { pass: 'frontStencil' } ) ).material;
 		const back = compileGroundPass( createCompileOptions( { pass: 'backStencil' } ) ).material;
