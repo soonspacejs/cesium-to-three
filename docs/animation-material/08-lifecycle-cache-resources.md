@@ -1,6 +1,6 @@
 # 生命周期、Program Cache 与资源所有权
 
-> 状态：**Design / Proposed**。本文定义实现必须遵守的缓存与所有权契约；除明确标为 **[Current]** 的内容外，均未表示当前代码已经具备。
+> 状态：**Implemented**。本文缓存、所有权、重建与释放契约已落地，并由单元、WebGL2、600 帧稳定性及包 smoke 自动验证。
 >
 > 源码基线：当前项目 `32a6b244b7c0cb731ca35165c46e8fe31248c718`；Three `2a005fdbad6b8503a8a70edfdd279b79c5e04b49`；Cesium `effe290c08dc340a7a6bd4435367a7d092c6b2b9`。
 >
@@ -55,7 +55,7 @@
 
 **[Current]** 当前 `CesiumGroundFrameState` 没有时间字段，见 `src/lib/ground/types.ts:404-428`；动画若直接读取 wall clock，只会制造不可测试的隐式状态。
 
-**[Proposed]** 新层必须做到：逻辑材质可共享；系统 uniform 仍按图元隔离；Compiled Material 按 pass 生成；底层 program 由 Three 按相同源码共享；资源释放仍由明确所有者执行。
+**[Implemented]** 新层做到：逻辑材质可共享；系统 uniform 仍按图元隔离；Compiled Material 按 pass 生成；底层 program 由 Three 按相同源码共享；资源释放仍由明确所有者执行。
 
 ## 5. 设计过程与所有权模型
 
@@ -107,7 +107,7 @@ THREE.WebGLRenderer
 
 **[Source]** Three `Material.needsUpdate = true` 只递增 `version`，见 `D:\my\explore\three.js\src\materials\Material.js:1219-1231`；renderer 发现版本变化后重新选择 program，见 `D:\my\explore\three.js\src\renderers\WebGLRenderer.js:2398-2519`。
 
-**[Proposed]** `CesiumGroundMaterial` 采用同一外部语义：
+**[Implemented]** `CesiumGroundMaterial` 采用同一外部语义：
 
 - `version` 初始为 `0`，只读；
 - 写 `needsUpdate = true` 时 `version += 1`；
@@ -154,7 +154,7 @@ class CesiumGroundMaterial {
 
 ### 6.3 `setUniform()` 的稳定引用规则
 
-**[Proposed]** `setUniform(name, value)` 必须：
+**[Implemented]** `setUniform(name, value)`：
 
 1. 只接受构造时或上一次 schema version 中已经存在的 user uniform 名；
 2. 对未知键抛出明确错误，不偷偷扩充 schema；
@@ -192,7 +192,7 @@ material.needsUpdate = true;
 
 ### 7.1 安全 Appearance
 
-**[Proposed]** `CesiumGroundMaterialAppearance.version` 直接取其 `material.version`，不维护第二套需要手动同步的计数。它的 compile identity 还包括 Appearance 自身固定选项；如果将来增加会影响程序结构的 Appearance 选项，该选项必须不可变，或进入额外 appearance version。
+**[Implemented]** `CesiumGroundMaterialAppearance.version` 直接取其 `material.version`，不维护第二套需要手动同步的计数。它的 compile identity 还包括 Appearance 自身固定选项；如果将来增加会影响程序结构的 Appearance 选项，该选项必须不可变，或进入额外 appearance version。
 
 结果：
 
@@ -203,7 +203,7 @@ material.needsUpdate = true;
 
 ### 7.2 Raw Appearance
 
-**[Proposed]** `CesiumGroundRawShaderAppearance` 自己提供 `version/needsUpdate`，因为 factory 可能从闭包、外部模块或 `createDefaultMaterial()` 修改逻辑中生成 Shader，库无法从一个 `CesiumGroundMaterial.version` 推导。
+**[Implemented]** `CesiumGroundRawShaderAppearance` 自己提供 `version/needsUpdate`，因为 factory 可能从闭包、外部模块或 `createDefaultMaterial()` 修改逻辑中生成 Shader，库无法从一个 `CesiumGroundMaterial.version` 推导。
 
 Raw options 的结构为 `{ uniforms?, factory }`：
 
@@ -228,7 +228,7 @@ Raw Appearance version 变化后，图元必须重跑对该图元有效的所有
 
 ### 8.2 安全 Material 的 canonical signature
 
-**[Proposed]** 安全入口的 canonical signature 至少包含：
+**[Implemented]** 安全入口的 canonical signature 包含：
 
 ```text
 c23-ground-assembler-version
@@ -298,7 +298,7 @@ safe Material 的 user defines 禁止 `C23_*`，GLSL 顶层标识符禁止占用
 
 ### 9.2 合并必须复用 wrapper
 
-**[Proposed]** 每个 compiled material 创建新的顶层 map，但 values 是原 wrapper：
+**[Implemented]** 每个 compiled material 创建新的顶层 map，但 values 是原 wrapper：
 
 ```ts
 // [伪代码]
@@ -325,7 +325,7 @@ for (const [name, uniform] of Object.entries(userUniforms)) merged[name] = unifo
 
 ### 10.1 共享同一个 Material
 
-**[Proposed]** 同一 `CesiumGroundMaterial` 可绑定多个图元：
+**[Implemented]** 同一 `CesiumGroundMaterial` 可绑定多个图元：
 
 - user uniform map、wrapper 和 value 均共享；
 - Shader/defines/schema/version 均共享；
@@ -347,7 +347,7 @@ flow.setUniform('u_speed', 0.8); // A、B 同时改变；program 不变
 
 ### 10.2 独立相位使用 `clone()`
 
-**[Proposed]** `CesiumGroundMaterial.clone()` 严格复刻固定 Three 参考提交中 `UniformsUtils.clone()` 的行为（`D:\my\explore\three.js\src\renderers\shaders\UniformsUtils.js:18-65`）：
+**[Implemented]** `CesiumGroundMaterial.clone()` 严格复刻固定 Three 参考提交中 `UniformsUtils.clone()` 的行为（`D:\my\explore\three.js\src\renderers\shaders\UniformsUtils.js:18-65`）：
 
 | value 类型 | clone 结果 |
 | --- | --- |
@@ -390,7 +390,7 @@ Pulse preset 本身没有 Texture，因此这个相位示例无需额外 GPU 资
 
 ### 11.1 `setAppearance()` 原子切换
 
-**[Proposed]** 所有 Ground 图元提供 `setAppearance(next)`：
+**[Implemented]** 所有 Ground 图元提供 `setAppearance(next)`：
 
 1. 先校验 next 的类型、uniform 命名与当前 primitive kind/pass 支持；
 2. 构建所有需要替换的新 compiled material；
@@ -430,7 +430,7 @@ Raw surface 重建全部三 pass 是有意的：factory 可能改变 vertex tran
 
 ### 12.1 factory 调用上下文
 
-**[Proposed]** Raw factory 每次收到：
+**[Implemented]** Raw factory 每次收到：
 
 - `primitiveKind`；
 - 当前 `pass`；
@@ -476,7 +476,7 @@ surface/decal 的 `frontStencil`、`backStencil` 与 `color` 必须描述同一 
 
 ### 13.1 Ground 图元 dispose
 
-**[Proposed]** 图元 `dispose()` 幂等并执行：
+**[Implemented]** 图元 `dispose()` 幂等并执行：
 
 1. 从内部 group 移除/失活 mesh；
 2. dispose 自己拥有的 geometry；共享 geometry 若未来引入引用计数，必须通过 handle 释放；
@@ -489,7 +489,7 @@ Three `Material.dispose()` 通过事件让 WebGLRenderer 释放 program 引用�
 
 ### 13.2 逻辑 Material dispose
 
-**[Proposed]** `CesiumGroundMaterial.dispose()` 严格采用 Three 风格的“释放通知、对象可复用”语义：
+**[Implemented]** `CesiumGroundMaterial.dispose()` 严格采用 Three 风格的“释放通知、对象可复用”语义：
 
 - 每次调用都发出 `dispose` 通知；不增加 `version`，不清空 Shader/defines/uniforms，也不标记永久 disposed；
 - 每个绑定图元监听通知，只释放**自己拥有的**相关 compiled `RawShaderMaterial` 并清空自己的 compiled record；
@@ -560,7 +560,7 @@ Texture `needsUpdate` 是纹理上传语义，不是 Material program 失效。�
 
 ### 15.1 时间 uniform 更新
 
-**[Proposed]** `CesiumGroundFrameState` 的可选值按下列规则写入系统 wrappers：
+**[Implemented]** `CesiumGroundFrameState` 的可选值按下列规则写入系统 wrappers：
 
 | FrameState | GLSL | 缺省 |
 | --- | --- | ---: |
@@ -791,22 +791,22 @@ raw.needsUpdate = true; // 下一次对 surface 三 pass 原子重跑 factory
 
 ## 21. 验收清单
 
-- [ ] 所有权表落实到代码注释与单元测试，用户资源没有隐式 dispose。
-- [ ] 同一 Material 多图元共享 user wrappers，但 system wrappers 按图元隔离。
-- [ ] `setUniform()` 保持 wrapper identity、拒绝未知键且不改变 version。
-- [ ] source/defines/schema 改变只有显式 `needsUpdate=true` 才进入重编译。
-- [ ] compile signature 不含任何 uniform value 或时间值。
-- [ ] 安全 surface Material 变化只重建 color；Raw surface version 变化重跑三 pass。
-- [ ] Raw factory 每次返回独立 `RawShaderMaterial`，重复实例在开发模式被拒绝。
-- [ ] `setAppearance()` 构建失败保留全部旧 pass；成功后才 dispose 旧 compiled materials。
-- [ ] Material clone 与 `UniformsUtils.clone` 的 Texture、RenderTargetTexture、数组和普通对象行为逐项测试。
-- [ ] clone 生成的 Texture 由调用方 dispose；图元/Material 不越权释放。
-- [ ] primitive dispose 幂等并释放所有 compiled Raw/自有 geometry，不释放 logical Material/user Texture/depth texture。
-- [ ] 每帧 uniform 更新不增加 `renderer.info.programs`；结构变化只产生预期 program 变体。
-- [ ] 文字 canvas/图片 value 更新不重编译；appearance 切换不重建 geometry。
-- [ ] 缺省时间为 0；request-render 场景没有隐藏 RAF。
-- [ ] Material dispose 通知可重复；每个消费者只释放自己的 compiled material，仍绑定时下一 update 可重编译且 version 不变。
-- [ ] schema 漏标、保留字冲突和 Raw pass 缺失均有包含 kind/pass/version 的错误。
+- [x] 所有权表落实到代码注释与单元测试，用户资源没有隐式 dispose。
+- [x] 同一 Material 多图元共享 user wrappers，但 system wrappers 按图元隔离。
+- [x] `setUniform()` 保持 wrapper identity、拒绝未知键且不改变 version。
+- [x] source/defines/schema 直接改变会被拒绝，显式 `needsUpdate=true` 后才进入重编译。
+- [x] compile signature 不含任何 uniform value 或时间值。
+- [x] 安全 surface Material 变化只重建 color；Raw surface version 变化重跑三 pass。
+- [x] Raw factory 每次返回独立 `RawShaderMaterial`，重复实例由持久 WeakMap 拒绝。
+- [x] `setAppearance()` 构建失败保留全部旧 pass；成功后才 dispose 旧 compiled materials。
+- [x] Material clone 与 `UniformsUtils.clone` 的 Texture、RenderTargetTexture、数组和普通对象行为逐项测试。
+- [x] clone 生成的 Texture 由调用方 dispose；图元/Material 不越权释放。
+- [x] primitive dispose 幂等并释放所有 compiled Raw/自有 geometry，不释放 logical Material/user Texture/depth texture。
+- [x] 每帧 uniform 更新不增加 `renderer.info.programs`；结构变化只产生预期 program 变体。
+- [x] 文字 canvas/图片 value 更新不重编译；appearance 切换不重建 geometry。
+- [x] 缺省时间为 0；静态扫描证明 Ground 库没有隐藏 RAF/timer/request-render。
+- [x] Material dispose 通知可重复；每个消费者只释放自己的 compiled material，仍绑定时下一 update 可重编译且 version 不变。
+- [x] schema 漏标、保留字冲突和 Raw pass 缺失均有包含 kind/pass/version 的错误。
 
 ---
 
