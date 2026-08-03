@@ -830,6 +830,7 @@ export class CesiumGroundPointPrimitive {
 		if ( options.shape === 'circle' ) {
 			const sizeMeters = this.size as number;
 			this.delegate = new CesiumGroundCirclePrimitive( {
+				appearance: options.appearance,
 				center: this.position,
 				radius: sizeMeters * 0.5,
 				strokeColor: options.strokeColor,
@@ -865,6 +866,7 @@ export class CesiumGroundPointPrimitive {
 			);
 
 			this.delegate = new CesiumGroundRectanglePrimitive( {
+				appearance: options.appearance,
 				points,
 				strokeColor: options.strokeColor,
 				strokeWidth: options.strokeWidth,
@@ -882,6 +884,7 @@ export class CesiumGroundPointPrimitive {
 		} else {
 			const imageOptions = options as CesiumGroundImagePrimitiveOptions & { shape: 'image' };
 			this.delegate = new CesiumGroundImagePrimitive( {
+				appearance: options.appearance,
 				position: this.position,
 				imageUrl: imageOptions.imageUrl,
 				imageWidth: imageOptions.imageWidth,
@@ -926,6 +929,16 @@ export class CesiumGroundPointPrimitive {
 	 */
 	public setClassificationType( classificationType?: ClassificationType ): void {
 		this.delegate.setClassificationType( classificationType );
+	}
+
+	/** Returns the delegate's live Appearance instead of caching wrapper state. */
+	public get appearance(): CesiumGroundAppearance {
+		return this.delegate.appearance;
+	}
+
+	/** Forwards the exact logical object to the selected surface/decal delegate. */
+	public setAppearance( appearance?: CesiumGroundAppearance ): void {
+		this.delegate.setAppearance( appearance );
 	}
 
 	/** 只更新图片点 alpha，不重建几何；圆点和方点调用时保持不变。 */

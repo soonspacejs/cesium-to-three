@@ -264,6 +264,8 @@ export type CesiumGroundImagePrimitiveOptions = CesiumGroundPointCommonOptions &
 };
 
 export type CesiumGroundPointPrimitiveOptions = CesiumGroundPointOptions & {
+	/** Forwarded unchanged to the selected surface/decal delegate. */
+	appearance?: CesiumGroundAppearance;
 	granularityRadians?: number;
 	minimumHeight?: number;
 	maximumHeight?: number;
