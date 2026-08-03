@@ -82,6 +82,29 @@ export interface PulsePointMaterialOptions {
 	footprintScale?: number;
 }
 
+export interface ScalePulseMaterialOptions {
+	/** Optional borrowed texture; omitted uses materialInput.baseColor. */
+	texture?: Texture;
+	/** Straight-RGB/A multiplier applied to the selected source color. */
+	tint?: GroundColorInput;
+	/** Additional straight-alpha multiplier in [0, 1]. */
+	opacity?: number;
+	/** Animation period in seconds; must be strictly positive. */
+	periodSeconds?: number;
+	/** Minimum nominal width/height multiplier; must be positive. */
+	minScale?: number;
+	/** Maximum nominal width/height multiplier; must be >= minScale. */
+	maxScale?: number;
+	/** Phase offset measured in cycles. */
+	phase?: number;
+	/** Source-UV edge softness, [0, 0.5]. */
+	edgeSoftness?: number;
+	/** Whether the sampled texture V coordinate is inverted. */
+	flipY?: boolean;
+	/** Preallocated footprint / nominal footprint; must be >= maxScale. */
+	footprintScale?: number;
+}
+
 /** Exact documented GLSL for the cross-kind default Color preset. */
 export const C23_COLOR_GROUND_MATERIAL_SOURCE = /* glsl */ `
 uniform vec4 u_color;
@@ -257,6 +280,66 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 }
 `;
 
+/**
+ * ScalePulse performs a local UV zoom inside a fixed decal footprint. The
+ * uniform `u_hasTexture` branch deliberately keeps textured and untextured
+ * instances on one shader schema, preserving program reuse and clone behavior.
+ */
+export const C23_SCALE_PULSE_MATERIAL_SOURCE = /* glsl */ `
+uniform sampler2D u_texture;
+uniform float u_hasTexture;
+uniform vec4 u_tint;
+uniform float u_opacity;
+uniform float u_periodSeconds;
+uniform float u_minScale;
+uniform float u_maxScale;
+uniform float u_phase;
+uniform float u_edgeSoftness;
+uniform float u_flipY;
+uniform float u_footprintScale;
+
+c23_material c23_getMaterial(c23_materialInput materialInput) {
+	const float twoPi = 6.283185307179586;
+	float phase01 = fract(
+		c23_time / max(u_periodSeconds, 1e-6) + u_phase
+	);
+	float wave = 0.5 - 0.5 * cos(twoPi * phase01);
+	float requestedScale = mix(u_minScale, u_maxScale, wave);
+	float footprintScale = max(u_footprintScale, 1e-6);
+	float normalizedScale = clamp(requestedScale / footprintScale, 1e-4, 1.0);
+	vec2 sourceSt = (materialInput.st - vec2(0.5)) / normalizedScale + vec2(0.5);
+
+	float edgeDistance = min(
+		min(sourceSt.x, 1.0 - sourceSt.x),
+		min(sourceSt.y, 1.0 - sourceSt.y)
+	);
+	float derivativeWidth = max(fwidth(sourceSt.x), fwidth(sourceSt.y));
+	float edge = max(
+		max(clamp(u_edgeSoftness, 0.0, 0.5), derivativeWidth),
+		1e-5
+	);
+	float coverage = smoothstep(0.0, edge, edgeDistance);
+
+	vec4 sourceColor = materialInput.baseColor;
+	if (u_hasTexture > 0.5) {
+		vec2 sampleSt = sourceSt;
+		if (u_flipY > 0.5) {
+			sampleSt.y = 1.0 - sampleSt.y;
+		}
+		sourceColor = texture(u_texture, sampleSt);
+	}
+
+	vec4 straightColor = sourceColor * clamp(u_tint, 0.0, 1.0);
+	straightColor.a *= clamp(u_opacity, 0.0, 1.0) * coverage;
+
+	c23_material material;
+	material.diffuse = straightColor.rgb;
+	material.emission = vec3(0.0);
+	material.alpha = clamp(straightColor.a, 0.0, 1.0);
+	return material;
+}
+`;
+
 /** Validates a normalized public opacity without silently changing intent. */
 function requireNormalizedOpacity( value: number | undefined, field: string ): number {
 	const resolved = value ?? 1.0;
@@ -405,6 +488,60 @@ export function createPulsePointMaterial(
 			u_footprintScale: { value: footprintScale },
 		},
 		fragmentShader: C23_PULSE_POINT_MATERIAL_SOURCE,
+	} );
+}
+
+/** Creates a fixed-footprint UV scale pulse with an optional borrowed texture. */
+export function createScalePulseMaterial(
+	options: ScalePulseMaterialOptions = {},
+): CesiumGroundMaterial {
+	if ( options === null || typeof options !== 'object' ) {
+		throw new TypeError( 'Scale Pulse Material options must be an object.' );
+	}
+	const tint = createGroundColorVector(
+		options.tint,
+		new Vector4( 1, 1, 1, 1 ),
+		'Scale Pulse tint',
+	);
+	const opacity = requireNormalizedOpacity( options.opacity, 'Scale Pulse opacity' );
+	const periodSeconds = requireFiniteAtLeast(
+		options.periodSeconds, 1.5, 0.0, 'Scale Pulse periodSeconds', true,
+	);
+	const minScale = requireFiniteAtLeast(
+		options.minScale, 0.75, 0.0, 'Scale Pulse minScale', true,
+	);
+	const maxScale = requireFiniteAtLeast(
+		options.maxScale, 1.0, 0.0, 'Scale Pulse maxScale', true,
+	);
+	if ( minScale > maxScale ) {
+		throw new RangeError( 'Scale Pulse minScale must be <= maxScale.' );
+	}
+	const phase = requireFiniteNumber( options.phase, 0.0, 'Scale Pulse phase' );
+	const edgeSoftness = requireEdgeSoftness(
+		options.edgeSoftness, 0.01, 'Scale Pulse edgeSoftness',
+	);
+	const footprintScale = requireFootprintScale(
+		options.footprintScale, maxScale, 'Scale Pulse footprintScale',
+	);
+
+	return new CesiumGroundMaterial( {
+		type: 'ScalePulseGroundMaterial',
+		uniforms: {
+			// Null is a valid Three sampler placeholder because the GLSL branch
+			// never samples it when u_hasTexture is zero.
+			u_texture: { value: options.texture ?? null },
+			u_hasTexture: { value: options.texture !== undefined ? 1.0 : 0.0 },
+			u_tint: { value: tint },
+			u_opacity: { value: opacity },
+			u_periodSeconds: { value: periodSeconds },
+			u_minScale: { value: minScale },
+			u_maxScale: { value: maxScale },
+			u_phase: { value: phase },
+			u_edgeSoftness: { value: edgeSoftness },
+			u_flipY: { value: options.flipY === false ? 0.0 : 1.0 },
+			u_footprintScale: { value: footprintScale },
+		},
+		fragmentShader: C23_SCALE_PULSE_MATERIAL_SOURCE,
 	} );
 }
 
