@@ -650,6 +650,7 @@ export class CesiumClassificationPrimitive {
 	private readonly cameraLow = new Vector3();
 	private readonly materialPipeline: ClassificationMaterialPipelineRuntime;
 	private colorFragmentCull: boolean;
+	private disposed = false;
 
 	/**
 	 * 分类目标：决定 {@link update} 时采样哪张 packed 深度纹理（贴地形 / 贴模型 / 二者）。
@@ -783,6 +784,7 @@ export class CesiumClassificationPrimitive {
 	 * @param renderOrder 分配给 front-stencil 命令的基础顺序。
 	 */
 	public setRenderOrder( renderOrder: number ): void {
+		this.ensureActive();
 		const safeRenderOrder = Number.isFinite( renderOrder ) ? renderOrder : 0;
 		this.stencilMesh.renderOrder = safeRenderOrder;
 		this.backStencilMesh.renderOrder = safeRenderOrder + 1;
@@ -795,6 +797,7 @@ export class CesiumClassificationPrimitive {
 	 * @param visibility 可选的逐命令可见性标志。
 	 */
 	public setCommandVisibility( visibility: CesiumClassificationCommandVisibility ): void {
+		this.ensureActive();
 		if ( visibility.frontStencil !== undefined ) {
 			this.stencilMesh.visible = visibility.frontStencil;
 		}
@@ -813,6 +816,7 @@ export class CesiumClassificationPrimitive {
 	 * @param alpha 预乘输出 alpha 因子。
 	 */
 	public setColor( color: Color, alpha: number ): void {
+		this.ensureActive();
 		this.uniforms.u_color.value.set( color.r, color.g, color.b, alpha );
 	}
 
@@ -826,6 +830,7 @@ export class CesiumClassificationPrimitive {
 		candidate: BufferGeometry,
 		extents: PlanarExtents,
 	): void {
+		this.ensureActive();
 		const live = this.stencilMesh.geometry;
 		const attributeNames = [
 			'position3DHigh',
@@ -888,6 +893,7 @@ export class CesiumClassificationPrimitive {
 	 * its internal default or the exact user Appearance object.
 	 */
 	public get appearance(): CesiumGroundAppearance {
+		this.ensureActive();
 		return this.materialPipeline.appearance;
 	}
 
@@ -897,6 +903,7 @@ export class CesiumClassificationPrimitive {
 	 * safe default; user-owned logical materials are never disposed here.
 	 */
 	public setAppearance( appearance?: CesiumGroundAppearance ): void {
+		this.ensureActive();
 		if (
 			appearance !== undefined &&
 			! ( appearance instanceof CesiumGroundMaterialAppearance ) &&
@@ -946,6 +953,7 @@ export class CesiumClassificationPrimitive {
 	 * @param widthMeters 局部米制坐标中的边框宽度。
 	 */
 	public setBorderStyle( enabled: boolean, color: Color, opacity: number, widthMeters: number ): void {
+		this.ensureActive();
 		const safeOpacity = Math.min( Math.max( opacity, 0.0 ), 1.0 );
 		const safeWidthMeters = Math.max( widthMeters, 0.0 );
 
@@ -966,6 +974,7 @@ export class CesiumClassificationPrimitive {
 	 *               推导出的同一 SW 米制原点。
 	 */
 	public setPolygonBorderPoints( points: readonly Vector2[] ): void {
+		this.ensureActive();
 		const polygonPoints = this.uniforms.u_polygonPoints.value;
 		const pointCount = Math.min( points.length, MAX_POLYGON_STYLE_VERTICES );
 
@@ -990,6 +999,7 @@ export class CesiumClassificationPrimitive {
 	 * @param enabled render ring 是真实 miter 偏移外壳时为 true。
 	 */
 	public setPolygonMiterStrokeMode( enabled: boolean ): void {
+		this.ensureActive();
 		this.uniforms.u_polygonMiterStrokeMode.value = enabled ? 1.0 : 0.0;
 	}
 
@@ -1015,6 +1025,7 @@ export class CesiumClassificationPrimitive {
 		sectorStartRadians = 0.0,
 		sectorAngleRadians = Math.PI * 2.0,
 	): void {
+		this.ensureActive();
 		const safeRingCount = Number.isFinite( ringCount )
 			? Math.max( Math.floor( ringCount ), 1.0 )
 			: 1.0;
@@ -1079,6 +1090,7 @@ export class CesiumClassificationPrimitive {
 	 * @param enabled Cesium 的 CULL_FRAGMENTS define 是否启用。
 	 */
 	public setFragmentCulling( enabled: boolean ): void {
+		this.ensureActive();
 		if ( this.colorFragmentCull === enabled ) {
 			return;
 		}
@@ -1102,6 +1114,7 @@ export class CesiumClassificationPrimitive {
 	 * @param classificationType 目标枚举；undefined 时保持当前值不变。
 	 */
 	public setClassificationType( classificationType?: ClassificationType ): void {
+		this.ensureActive();
 		if ( classificationType !== undefined ) {
 			this.classificationType = classificationType;
 		}
@@ -1113,6 +1126,7 @@ export class CesiumClassificationPrimitive {
 	 * @param frameState Cesium frame state 的 Three 侧等价结构。
 	 */
 	public update( frameState: CesiumGroundFrameState ): void {
+		this.ensureActive();
 		this.reconcileMaterialAppearance();
 		encodeCesiumVector3( frameState.camera.position, this.cameraHigh, this.cameraLow );
 		updateFrameStateUniforms( frameState, this.uniforms );
@@ -1129,9 +1143,19 @@ export class CesiumClassificationPrimitive {
 	 * 释放几何和材质 GPU 资源。
 	 */
 	public dispose(): void {
+		if ( this.disposed ) return;
+		this.disposed = true;
+		this.group.remove( this.stencilMesh, this.backStencilMesh, this.colorMesh );
 		this.stencilMesh.geometry.dispose();
 		( this.stencilMesh.material as Material ).dispose();
 		( this.backStencilMesh.material as Material ).dispose();
 		( this.colorMesh.material as Material ).dispose();
+	}
+
+	/** Rejects every operation after permanent primitive resource release. */
+	private ensureActive(): void {
+		if ( this.disposed ) {
+			throw new Error( 'CesiumClassificationPrimitive: instance already disposed.' );
+		}
 	}
 }

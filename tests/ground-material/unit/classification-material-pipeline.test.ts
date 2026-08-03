@@ -70,6 +70,41 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 }
 
 describe( 'classification color Material pipeline', () => {
+	it( 'disposes the command set once and rejects use after disposal', () => {
+		const geometry = new BufferGeometry();
+		const primitive = new CesiumClassificationPrimitive(
+			geometry,
+			createExtents(),
+			new Color( '#d34c61' ),
+			0.75,
+			12,
+			true,
+			{},
+		);
+		const commands = getCommands( primitive );
+		const geometryDispose = vi.fn();
+		const frontDispose = vi.fn();
+		const backDispose = vi.fn();
+		const colorDispose = vi.fn();
+		geometry.addEventListener( 'dispose', geometryDispose );
+		( commands.front.material as RawShaderMaterial ).addEventListener( 'dispose', frontDispose );
+		( commands.back.material as RawShaderMaterial ).addEventListener( 'dispose', backDispose );
+		( commands.color.material as RawShaderMaterial ).addEventListener( 'dispose', colorDispose );
+
+		primitive.dispose();
+		primitive.dispose();
+
+		expect( primitive.group.children ).toHaveLength( 0 );
+		expect( geometryDispose ).toHaveBeenCalledOnce();
+		expect( frontDispose ).toHaveBeenCalledOnce();
+		expect( backDispose ).toHaveBeenCalledOnce();
+		expect( colorDispose ).toHaveBeenCalledOnce();
+		expect( () => primitive.setColor( new Color(), 1 ) ).toThrow( /already disposed/ );
+		expect( () => primitive.setAppearance( undefined ) ).toThrow( /already disposed/ );
+		expect( () => primitive.update( {} as never ) ).toThrow( /already disposed/ );
+		expect( () => primitive.appearance ).toThrow( /already disposed/ );
+	} );
+
 	it( 'assembles fixed stencil commands without legacy shader patching', () => {
 		const geometry = new BufferGeometry();
 		const primitive = new CesiumClassificationPrimitive(
