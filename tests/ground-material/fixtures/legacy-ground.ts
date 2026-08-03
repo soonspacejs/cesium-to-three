@@ -14,6 +14,7 @@ import {
 	type RawShaderMaterial,
 	Scene,
 	SRGBColorSpace,
+	type Texture,
 	Vector3,
 	WebGLRenderer,
 } from 'three';
@@ -32,6 +33,9 @@ import {
 	CESIUM_GROUND_NON_PICKABLE_LAYER,
 	createCesiumEllipsoidDepthMeshes,
 	createColorGroundMaterial,
+	createFlowLineMaterial,
+	createPulsePointMaterial,
+	createScalePulseMaterial,
 	initializeApproximateTerrainHeights,
 	longitudeLatitudeFromCenterOffsetsMeters,
 	updateTerrainLogDepthUniforms,
@@ -102,6 +106,7 @@ export interface LegacyGroundFixtureApi {
 	renderFrames( count: number ): LegacyGroundResourceSnapshot;
 	measureLowAngleSky(): LegacyGroundSkyReport;
 	measureAppearanceSwitchFrames(): LegacyGroundAppearanceSwitchReport;
+	measureAnimationKeyframes(): LegacyGroundAnimationReport;
 	dispose(): LegacyGroundResourceSnapshot;
 }
 
@@ -116,6 +121,20 @@ export interface LegacyGroundAppearanceSwitchReport {
 	safePixel: [ number, number, number, number ];
 	rawPixel: [ number, number, number, number ];
 	restoredPixel: [ number, number, number, number ];
+}
+
+export interface LegacyGroundAnimationSeries {
+	keyframeEnergy: number[];
+	cyclePixelsEqual: boolean;
+	midpointPixelsEqual: boolean;
+	absoluteTimePixelsEqual: boolean;
+}
+
+export interface LegacyGroundAnimationReport {
+	flow: LegacyGroundAnimationSeries;
+	pulse: LegacyGroundAnimationSeries;
+	scalePlain: LegacyGroundAnimationSeries;
+	scaleTextured: LegacyGroundAnimationSeries;
 }
 
 export interface LegacyGroundStabilityReport {
@@ -201,7 +220,10 @@ interface LegacyPrimitiveBundle {
 	entries: GroundFixturePrimitive[];
 	rectangle: CesiumGroundRectanglePrimitive;
 	solidPolyline: CesiumGroundPolylinePrimitive;
+	circlePoint: CesiumGroundPointPrimitive;
+	squarePoint: CesiumGroundPointPrimitive;
 	text: CesiumGroundTextPrimitive;
+	image: CesiumGroundImagePrimitive;
 }
 
 function createLegacyPrimitives( imageUrl: string ): LegacyPrimitiveBundle {
@@ -363,7 +385,10 @@ function createLegacyPrimitives( imageUrl: string ): LegacyPrimitiveBundle {
 		],
 		rectangle,
 		solidPolyline,
+		circlePoint,
+		squarePoint,
 		text,
+		image,
 	};
 }
 
@@ -588,7 +613,11 @@ async function createFixture(): Promise<LegacyGroundFixtureApi> {
 		textureCount: renderer.info.memory.textures,
 	} );
 
-	const renderOneFrame = (): void => {
+	const renderOneFrame = (
+		timeSeconds = 0,
+		deltaSeconds = 0,
+		explicitFrameNumber = frameNumber,
+	): void => {
 		if ( disposed ) throw new Error( 'Legacy Ground fixture is already disposed.' );
 		camera.updateMatrixWorld( true );
 		updateTerrainLogDepthUniforms( camera.near, camera.far );
@@ -600,6 +629,9 @@ async function createFixture(): Promise<LegacyGroundFixtureApi> {
 			height: HEIGHT,
 			camera,
 			pixelRatio: 1,
+			timeSeconds,
+			deltaSeconds,
+			frameNumber: explicitFrameNumber,
 		};
 		for ( const primitive of primitives ) primitive.update( frameState );
 		renderer.render( scene, camera );
@@ -732,6 +764,103 @@ async function createFixture(): Promise<LegacyGroundFixtureApi> {
 			bundle.rectangle.setAppearance( undefined );
 			const restoredPixel = sample();
 			return { defaultPixel, safePixel, rawPixel, restoredPixel };
+		},
+		measureAnimationKeyframes() {
+			for ( const primitive of primitives ) primitive.group.visible = false;
+			const gl = renderer.getContext();
+			const readFrame = (
+				timeSeconds: number,
+				deltaSeconds = 0,
+				explicitFrameNumber = 0,
+			): Uint8Array => {
+				renderOneFrame( timeSeconds, deltaSeconds, explicitFrameNumber );
+				const pixels = new Uint8Array( WIDTH * HEIGHT * 4 );
+				gl.readPixels( 0, 0, WIDTH, HEIGHT, gl.RGBA, gl.UNSIGNED_BYTE, pixels );
+				return pixels;
+			};
+			const equalPixels = ( left: Uint8Array, right: Uint8Array ): boolean => {
+				if ( left.length !== right.length ) return false;
+				for ( let index = 0; index < left.length; index += 1 ) {
+					if ( left[ index ] !== right[ index ] ) return false;
+				}
+				return true;
+			};
+			const energyFrom = ( baseline: Uint8Array, pixels: Uint8Array ): number => {
+				let energy = 0;
+				for ( let index = 0; index < pixels.length; index += 4 ) {
+					energy += Math.abs( pixels[ index ] - baseline[ index ] );
+					energy += Math.abs( pixels[ index + 1 ] - baseline[ index + 1 ] );
+					energy += Math.abs( pixels[ index + 2 ] - baseline[ index + 2 ] );
+				}
+				return energy;
+			};
+			const baseline = readFrame( 0 );
+			const sampleSeries = (
+				primitive: GroundFixturePrimitive,
+				times: readonly number[],
+			): LegacyGroundAnimationSeries => {
+				primitive.group.visible = true;
+				const frames = times.map( time => readFrame( time ) );
+				const sameTimeFirst = readFrame( 0.37, 1 / 30, 11 );
+				const sameTimeSecond = readFrame( 0.37, 1 / 120, 999 );
+				primitive.group.visible = false;
+				return {
+					keyframeEnergy: frames.map( pixels => energyFrom( baseline, pixels ) ),
+					cyclePixelsEqual: equalPixels( frames[ 0 ], frames[ frames.length - 1 ] ),
+					midpointPixelsEqual:
+						frames.length >= 4 && equalPixels( frames[ 1 ], frames[ frames.length - 2 ] ),
+					absoluteTimePixelsEqual: equalPixels( sameTimeFirst, sameTimeSecond ),
+				};
+			};
+
+			const flowAppearance = new CesiumGroundMaterialAppearance( {
+				material: createFlowLineMaterial( {
+					color: '#00ffff',
+					speed: 1,
+					repeat: 1,
+					trailFraction: 0.35,
+				} ),
+			} );
+			bundle.solidPolyline.setAppearance( flowAppearance );
+			const flow = sampleSeries(
+				fromDirectGroup( bundle.solidPolyline ), [ 0, 0.25, 0.5, 0.75, 1 ],
+			);
+
+			bundle.circlePoint.setAppearance( new CesiumGroundMaterialAppearance( {
+				material: createPulsePointMaterial( {
+					color: '#ff3355', periodSeconds: 1, minScale: 0.5, maxScale: 1,
+					minOpacity: 0.2, maxOpacity: 1, phase: 0, footprintScale: 1,
+				} ),
+			} ) );
+			const pulse = sampleSeries(
+				fromClassification( bundle.circlePoint ), [ 0, 0.25, 0.5, 0.75, 1 ],
+			);
+
+			bundle.squarePoint.setAppearance( new CesiumGroundMaterialAppearance( {
+				material: createScalePulseMaterial( {
+					tint: '#33ff88', periodSeconds: 1, minScale: 0.5, maxScale: 1,
+					phase: 0, footprintScale: 1,
+				} ),
+			} ) );
+			const scalePlain = sampleSeries(
+				fromClassification( bundle.squarePoint ), [ 0, 0.25, 0.5, 0.75, 1 ],
+			);
+
+			const imageColor = bundle.image.classification.group
+				.getObjectByName( 'CesiumClassificationColorCommand' )?.material as RawShaderMaterial;
+			const imageTexture = imageColor.uniforms.u_texture.value as Texture;
+			bundle.image.setAppearance( new CesiumGroundMaterialAppearance( {
+				material: createScalePulseMaterial( {
+					texture: imageTexture,
+					tint: '#ffffff', periodSeconds: 1, minScale: 0.5, maxScale: 1,
+					phase: 0, footprintScale: 1,
+				} ),
+			} ) );
+			const scaleTextured = sampleSeries(
+				fromDirectGroup( bundle.image ), [ 0, 0.25, 0.5, 0.75, 1 ],
+			);
+
+			return { flow, pulse, scalePlain, scaleTextured };
 		},
 		dispose() {
 			if ( disposed ) return snapshotResources();
