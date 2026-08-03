@@ -318,6 +318,14 @@ export type CesiumGroundArrowStyle = 'solid' | 'open';
  * 全部可选；resolvePublicLineOptions 填默认并严格校验。
  */
 export interface CesiumGroundPolylineOptions {
+	/**
+	 * Optional appearance for the line body. The selected Appearance owns only
+	 * the single `polyline` color pass; system depth reconstruction, width,
+	 * horizon/sky clipping, and arrow endpoint closure remain library-owned.
+	 * Omitting this field creates the internal Color Material equivalent to the
+	 * historical strokeColor/strokeOpacity path.
+	 */
+	appearance?: CesiumGroundAppearance;
 	/** lon/lat 折点（度），≥ 2 个。 */
 	points: LonLatPoint[];
 	/** 线色（'#rrggbb' 或 css 颜色）。 */
