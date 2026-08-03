@@ -40,6 +40,7 @@ import {
 	CesiumGroundRawShaderAppearance,
 	type CesiumGroundAppearance,
 } from './material/appearances';
+import { CesiumGroundMaterial } from './material/CesiumGroundMaterial';
 import { createColorGroundMaterial } from './material/builtins';
 import {
 	compileGroundPass,
@@ -47,6 +48,7 @@ import {
 } from './material/compiler';
 import { createCanonicalGroundSystemUniforms } from './material/system-uniforms';
 import type { GroundSystemUniforms } from './material/types';
+import type { GroundPrimitiveKind } from './material/types';
 import {
 	ClassificationType,
 	type CesiumClassificationCommandVisibility,
@@ -485,6 +487,10 @@ export interface ClassificationColorInjection {
 	extraUniforms?: Record<string, { value: unknown }>;
 	/** Stage 5 safe Material Appearance；Raw Appearance 留到后续三 pass 阶段。 */
 	appearance?: CesiumGroundAppearance;
+	/** Selects the canonical color ABI; decal keeps the same shadow-volume passes. */
+	primitiveKind?: Extract<GroundPrimitiveKind, 'surface' | 'decal'>;
+	/** Optional logical default used when no explicit Appearance is supplied. */
+	defaultMaterial?: CesiumGroundMaterial;
 	/**
 	 * 仅供 Ground primitive 分阶段迁移使用的内部开关。
 	 *
@@ -506,8 +512,9 @@ export interface ClassificationColorInjection {
  */
 interface ClassificationMaterialPipelineRuntime {
 	readonly systemUniforms: GroundSystemUniforms;
-	readonly defaultMaterial: ReturnType<typeof createColorGroundMaterial>;
+	readonly defaultMaterial: CesiumGroundMaterial;
 	readonly defaultAppearance: CesiumGroundMaterialAppearance;
+	readonly primitiveKind: Extract<GroundPrimitiveKind, 'surface' | 'decal'>;
 	appearance: CesiumGroundAppearance;
 	readonly primitiveId: number;
 	compiledFront?: GroundCompiledMaterial;
@@ -524,11 +531,11 @@ let nextClassificationMaterialPrimitiveId = 1;
  * 数值；因此颜色、透明度或相机更新不会制造新的 program key。
  */
 function compileClassificationColor(
-	runtime: Pick<ClassificationMaterialPipelineRuntime, 'systemUniforms' | 'defaultMaterial' | 'appearance' | 'primitiveId'>,
+	runtime: Pick<ClassificationMaterialPipelineRuntime, 'systemUniforms' | 'defaultMaterial' | 'appearance' | 'primitiveId' | 'primitiveKind'>,
 	fragmentCull: boolean,
 ): GroundCompiledMaterial {
 	return compileGroundPass( {
-		primitiveKind: 'surface',
+		primitiveKind: runtime.primitiveKind,
 		pass: 'color',
 		appearance: runtime.appearance,
 		systemUniforms: runtime.systemUniforms,
@@ -544,12 +551,12 @@ function compileClassificationColor(
 
 /** Compiles one Raw surface pass with the same canonical wrappers and owner key. */
 function compileClassificationPass(
-	runtime: Pick<ClassificationMaterialPipelineRuntime, 'systemUniforms' | 'defaultMaterial' | 'appearance' | 'primitiveId'>,
+	runtime: Pick<ClassificationMaterialPipelineRuntime, 'systemUniforms' | 'defaultMaterial' | 'appearance' | 'primitiveId' | 'primitiveKind'>,
 	pass: 'frontStencil' | 'backStencil' | 'color',
 	fragmentCull: boolean,
 ): GroundCompiledMaterial {
 	return compileGroundPass( {
-		primitiveKind: 'surface',
+		primitiveKind: runtime.primitiveKind,
 		pass,
 		appearance: runtime.appearance,
 		systemUniforms: runtime.systemUniforms,
@@ -570,7 +577,7 @@ function compileClassificationPass(
  * stencil and classification color.
  */
 function compileClassificationAppearance(
-	runtime: Pick<ClassificationMaterialPipelineRuntime, 'systemUniforms' | 'defaultMaterial' | 'appearance' | 'primitiveId'>,
+	runtime: Pick<ClassificationMaterialPipelineRuntime, 'systemUniforms' | 'defaultMaterial' | 'appearance' | 'primitiveId' | 'primitiveKind'>,
 	fragmentCull: boolean,
 ): Pick<ClassificationMaterialPipelineRuntime, 'compiledFront' | 'compiledBack' | 'compiledColor'> {
 	if ( runtime.appearance instanceof CesiumGroundRawShaderAppearance ) {
@@ -605,20 +612,23 @@ function createClassificationMaterialPipelineRuntime(
 	uniforms: SharedUniforms,
 	fragmentCull: boolean,
 	requestedAppearance?: CesiumGroundAppearance,
+	injection?: ClassificationColorInjection,
 ): ClassificationMaterialPipelineRuntime {
-	const defaultMaterial = createColorGroundMaterial();
+	const defaultMaterial = injection?.defaultMaterial ?? createColorGroundMaterial();
 	const defaultAppearance = new CesiumGroundMaterialAppearance( { material: defaultMaterial } );
+	const primitiveKind = injection?.primitiveKind ?? 'surface';
 	if ( requestedAppearance !== undefined &&
 		! ( requestedAppearance instanceof CesiumGroundMaterialAppearance ) &&
 		! ( requestedAppearance instanceof CesiumGroundRawShaderAppearance ) ) {
 		throw new TypeError( 'Classification surface appearance is not a supported Ground Appearance.' );
 	}
 	const appearance = requestedAppearance ?? defaultAppearance;
-	const systemUniforms = createCanonicalGroundSystemUniforms( uniforms, 'surface' );
+	const systemUniforms = createCanonicalGroundSystemUniforms( uniforms, primitiveKind );
 	const runtimeWithoutCompiled = {
 		systemUniforms,
 		defaultMaterial,
 		defaultAppearance,
+		primitiveKind,
 		appearance,
 		primitiveId: nextClassificationMaterialPrimitiveId ++,
 	};
@@ -754,6 +764,7 @@ export class CesiumClassificationPrimitive {
 				this.uniforms,
 				fragmentCull,
 				injection.appearance,
+				injection,
 			)
 			: null;
 
