@@ -20,7 +20,7 @@ After starting Vite, switch demos through the URL:
 | URL | Purpose |
 |---|---|
 | `http://localhost:5173/` | Default `ground` demo |
-| `http://localhost:5173/?demo=ground` | Ground primitive validation for rectangle / polygon / line / circle / point / text / arrow |
+| `http://localhost:5173/?demo=ground` | Ground primitives and Material extensions, including FlowLine / PulsePoint / ScalePulse / custom Material / Raw Appearance |
 | `http://localhost:5173/?demo=plot` | End-to-end plot management, including one-click hydrant image points |
 | `http://localhost:5173/?demo=plot&noterrain` | Ellipsoid fallback test without a Cesium Ion token |
 | `http://localhost:5173/?demo=model` | Model / oblique photogrammetry clamp demo, defaulting to a direct oblique tileset URL |
@@ -118,6 +118,7 @@ import {
 
 ## Docs
 
+- [Ground Material / Shader extension design and usage index (Chinese)](docs/animation-material/README.md)
 - [Model Clamp GLB 渲染与性能问题修复记录](docs/model-clamp-glb-rendering-fix.md)
 - [Model Clamp GLB rendering and performance fix notes](docs/model-clamp-glb-rendering-fix.en.md)
 - [Ground jitter fix notes](docs/ground-jitter-fix.md)

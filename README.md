@@ -20,7 +20,7 @@
 | URL | 用途 |
 |---|---|
 | `http://localhost:5173/` | 默认 `ground` demo |
-| `http://localhost:5173/?demo=ground` | 贴地图元基础验证，展示 rectangle / polygon / line / circle / point / text / arrow |
+| `http://localhost:5173/?demo=ground` | 贴地图元与 Material 扩展验证，展示 FlowLine / PulsePoint / ScalePulse / 自定义 Material / Raw Appearance |
 | `http://localhost:5173/?demo=plot` | `GroundDecalManager` 端到端标绘管理测试，含消防栓图片点单击标绘 |
 | `http://localhost:5173/?demo=plot&noterrain` | 无 Cesium Ion token 时，用椭球兜底验证标绘 |
 | `http://localhost:5173/?demo=model` | 贴倾斜 / 贴模型 demo，默认加载直连倾斜摄影 |
@@ -118,6 +118,7 @@ import {
 
 ## 文档
 
+- [Ground Material / Shader 扩展体系设计与使用索引](docs/animation-material/README.md)
 - [Model Clamp GLB 渲染与性能问题修复记录](docs/model-clamp-glb-rendering-fix.md)
 - [Model Clamp GLB rendering and performance fix notes](docs/model-clamp-glb-rendering-fix.en.md)
 - [贴地抖动修复记录](docs/ground-jitter-fix.md)
