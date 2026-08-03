@@ -70,9 +70,12 @@ export function acquireImageTexture( url: string ): ImageTextureHandle {
 			entry!.disposeQueued = true;
 			queueMicrotask( () => {
 				if ( entry!.refCount !== 0 || ! entry!.disposeQueued ) return;
-				if ( cache.get( normalizedUrl ) === entry ) {
-					cache.delete( normalizedUrl );
-				}
+				// A release/reacquire/release sequence can leave two callbacks queued
+				// for the same entry. Only the callback that still owns the live cache
+				// slot may dispose it; later stale callbacks must be inert.
+				if ( cache.get( normalizedUrl ) !== entry ) return;
+				cache.delete( normalizedUrl );
+				entry!.disposeQueued = false;
 				entry!.texture.dispose();
 			} );
 		},

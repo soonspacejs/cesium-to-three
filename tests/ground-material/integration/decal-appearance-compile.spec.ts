@@ -35,5 +35,9 @@ test( 'links default, safe, and Raw text/image decals in WebGL2', async ( { page
 	expect( report.textGeometryStable ).toBe( true );
 	expect( report.textTextureStable ).toBe( true );
 	expect( report.imagePointAppearanceForwarded ).toBe( true );
+	expect( report.imageCacheShared ).toBe( true );
+	expect( report.imageCacheFirstReleaseDisposals ).toBe( 0 );
+	expect( report.imageCacheFinalReleaseDisposals ).toBe( 1 );
+	expect( report.imageCacheReacquireDisposals ).toBe( 1 );
 	expect( browserErrors ).toEqual( [] );
 } );

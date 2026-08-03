@@ -33,6 +33,10 @@ export interface DecalAppearanceCompileReport {
 	textGeometryStable: boolean;
 	textTextureStable: boolean;
 	imagePointAppearanceForwarded: boolean;
+	imageCacheShared: boolean;
+	imageCacheFirstReleaseDisposals: number;
+	imageCacheFinalReleaseDisposals: number;
+	imageCacheReacquireDisposals: number;
 }
 
 declare global {
@@ -55,6 +59,7 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 const IMAGE_URL = `data:image/svg+xml;charset=utf-8,${ encodeURIComponent(
 	'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="7" fill="#ef476f"/></svg>',
 ) }`;
+const CACHE_IMAGE_URL = `${ IMAGE_URL }#cache-lifecycle`;
 
 function textOptions( appearance?: CesiumGroundMaterialAppearance | CesiumGroundRawShaderAppearance ) {
 	return {
@@ -93,6 +98,7 @@ async function preloadImage( url: string ): Promise<void> {
 
 async function compileDecalAppearances(): Promise<DecalAppearanceCompileReport> {
 	await preloadImage( IMAGE_URL );
+	await preloadImage( CACHE_IMAGE_URL );
 	const renderer = new WebGLRenderer( { antialias: false, alpha: false, stencil: true } );
 	renderer.setSize( 64, 64, false );
 	renderer.debug.checkShaderErrors = true;
@@ -146,6 +152,17 @@ async function compileDecalAppearances(): Promise<DecalAppearanceCompileReport> 
 		strokeColor: '#ffffff', strokeWidth: 0, strokeOpacity: 0,
 		fillColor: '#ffffff', fillOpacity: 100, visible: true, appearance: safeAppearance,
 	} );
+	const cacheImageOptions = {
+		imageUrl: CACHE_IMAGE_URL, imageWidth: 20, imageHeight: 20,
+		strokeColor: '#ffffff', strokeWidth: 0, strokeOpacity: 0,
+		fillColor: '#ffffff', fillOpacity: 100, visible: true,
+	};
+	const cacheImageA = new CesiumGroundImagePrimitive( {
+		...cacheImageOptions, position: [ 121.404, 31.201 ],
+	} );
+	const cacheImageB = new CesiumGroundImagePrimitive( {
+		...cacheImageOptions, position: [ 121.405, 31.201 ],
+	} );
 	const primitives = [
 		defaultText, safeText, rawText, defaultImage, safeImage, rawImage, imagePoint,
 	];
@@ -155,6 +172,7 @@ async function compileDecalAppearances(): Promise<DecalAppearanceCompileReport> 
 			? primitive.classification.group
 			: primitive.group );
 	}
+	scene.add( cacheImageA.group, cacheImageB.group );
 	const camera = new PerspectiveCamera( 45, 1, 1, 1_000_000 );
 	camera.position.z = 2;
 	camera.updateProjectionMatrix();
@@ -172,6 +190,37 @@ async function compileDecalAppearances(): Promise<DecalAppearanceCompileReport> 
 	defaultText.setText( { content: 'C23 UPDATED' } );
 	const afterGeometry = defaultText.classification.group
 		.getObjectByName( 'CesiumClassificationColorCommand' )!.geometry;
+	const cacheTextureA = ( cacheImageA.classification.group.getObjectByName(
+		'CesiumClassificationColorCommand',
+	)?.material as RawShaderMaterial ).uniforms.u_texture.value;
+	const cacheTextureB = ( cacheImageB.classification.group.getObjectByName(
+		'CesiumClassificationColorCommand',
+	)?.material as RawShaderMaterial ).uniforms.u_texture.value;
+	let cacheDisposals = 0;
+	cacheTextureA.addEventListener( 'dispose', () => { cacheDisposals += 1; } );
+	cacheImageA.dispose();
+	await Promise.resolve();
+	const imageCacheFirstReleaseDisposals = cacheDisposals;
+	cacheImageB.dispose();
+	await Promise.resolve();
+	const imageCacheFinalReleaseDisposals = cacheDisposals;
+
+	// Exercise the exact release/reacquire/release-before-microtask race. The
+	// second queued callback must not dispose the already-released cache entry.
+	const raceImageA = new CesiumGroundImagePrimitive( {
+		...cacheImageOptions, position: [ 121.406, 31.201 ],
+	} );
+	const raceTexture = ( raceImageA.classification.group.getObjectByName(
+		'CesiumClassificationColorCommand',
+	)?.material as RawShaderMaterial ).uniforms.u_texture.value;
+	let raceDisposals = 0;
+	raceTexture.addEventListener( 'dispose', () => { raceDisposals += 1; } );
+	raceImageA.dispose();
+	const raceImageB = new CesiumGroundImagePrimitive( {
+		...cacheImageOptions, position: [ 121.407, 31.201 ],
+	} );
+	raceImageB.dispose();
+	await Promise.resolve();
 	const report: DecalAppearanceCompileReport = {
 		ready: true,
 		isWebGL2: renderer.getContext() instanceof WebGL2RenderingContext,
@@ -184,6 +233,10 @@ async function compileDecalAppearances(): Promise<DecalAppearanceCompileReport> 
 		textGeometryStable: afterGeometry === beforeGeometry,
 		textTextureStable: colors[ 0 ].uniforms.u_texture.value === beforeTexture,
 		imagePointAppearanceForwarded: imagePoint.appearance === safeAppearance,
+		imageCacheShared: cacheTextureA === cacheTextureB,
+		imageCacheFirstReleaseDisposals,
+		imageCacheFinalReleaseDisposals,
+		imageCacheReacquireDisposals: raceDisposals,
 	};
 	for ( const primitive of primitives ) primitive.dispose();
 	renderer.dispose();
