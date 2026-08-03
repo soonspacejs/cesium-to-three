@@ -39,6 +39,9 @@
     "test:integration": "playwright test tests/ground-material/integration",
     "test:visual": "playwright test tests/ground-material/visual",
     "test:perf": "playwright test tests/ground-material/perf",
+    "test:package-types": "tsc -p tests/ground-material/package-smoke/tsconfig.json",
+    "test:package-import": "node tests/ground-material/package-smoke/public-api-smoke.mjs",
+    "test:package": "npm run build:lib && npm run test:package-types && npm run test:package-import",
     "test": "npm run test:unit && npm run test:integration && npm run test:visual"
   },
   "dependencies": {
