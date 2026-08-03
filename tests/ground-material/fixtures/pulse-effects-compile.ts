@@ -31,6 +31,12 @@ export interface PulseEffectsCompileReport {
 	timeValues: number[];
 	programCountBeforeFrames: number;
 	programCountAfterFrames: number;
+	programObjectSetStable: boolean;
+	compiledMaterialsStable: boolean;
+	geometryCountBeforeFrames: number;
+	geometryCountAfterFrames: number;
+	textureCountBeforeFrames: number;
+	textureCountAfterFrames: number;
 	frameCount: number;
 }
 
@@ -154,16 +160,28 @@ function compilePulseEffects(): PulseEffectsCompileReport {
 		primitive.classification.group.getObjectByName( 'CesiumClassificationColorCommand' )
 			?.material as RawShaderMaterial,
 	);
-	const programCountBeforeFrames = renderer.info.programs?.length ?? 0;
-	const frameCount = 120;
+	const programsBeforeFrames = new Set( renderer.info.programs ?? [] );
+	const programCountBeforeFrames = programsBeforeFrames.size;
+	const geometryCountBeforeFrames = renderer.info.memory.geometries;
+	const textureCountBeforeFrames = renderer.info.memory.textures;
+	const materialsBeforeFrames = materials.slice();
+	const frameCount = 600;
 	for ( let frame = 1; frame <= frameCount; frame ++ ) {
+		pulseMaterial.setUniform( 'u_phase', frame / frameCount );
+		scalePlainMaterial.setUniform( 'u_phase', - frame / frameCount );
+		scaleTexturedMaterial.setUniform( 'u_opacity', 0.5 + 0.5 * ( frame / frameCount ) );
 		frameState.timeSeconds = 3.25 + frame / 60;
 		frameState.deltaSeconds = 1 / 60;
 		frameState.frameNumber = 12 + frame;
 		for ( const primitive of primitives ) primitive.update( frameState );
 		renderer.compile( scene, camera );
 	}
-	const programCountAfterFrames = renderer.info.programs?.length ?? 0;
+	const programsAfterFrames = new Set( renderer.info.programs ?? [] );
+	const programCountAfterFrames = programsAfterFrames.size;
+	const materialsAfterFrames = primitives.map( primitive =>
+		primitive.classification.group.getObjectByName( 'CesiumClassificationColorCommand' )
+			?.material as RawShaderMaterial,
+	);
 
 	const report: PulseEffectsCompileReport = {
 		ready: true,
@@ -179,6 +197,16 @@ function compilePulseEffects(): PulseEffectsCompileReport {
 		timeValues: materials.map( material => material.uniforms.c23_time.value as number ),
 		programCountBeforeFrames,
 		programCountAfterFrames,
+		programObjectSetStable:
+			programsBeforeFrames.size === programsAfterFrames.size &&
+			[ ...programsBeforeFrames ].every( program => programsAfterFrames.has( program ) ),
+		compiledMaterialsStable: materialsAfterFrames.every(
+			( material, index ) => material === materialsBeforeFrames[ index ],
+		),
+		geometryCountBeforeFrames,
+		geometryCountAfterFrames: renderer.info.memory.geometries,
+		textureCountBeforeFrames,
+		textureCountAfterFrames: renderer.info.memory.textures,
 		frameCount,
 	};
 

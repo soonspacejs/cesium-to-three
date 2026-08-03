@@ -25,8 +25,12 @@ test( 'compiles PulsePoint and ScalePulse through point delegates in WebGL2', as
 	expect( report.pulseSourceValid ).toBe( true );
 	expect( report.scaleSourceValid ).toBe( true );
 	expect( report.textureBranchSchemaStable ).toBe( true );
-	expect( report.timeValues ).toEqual( [ 5.25, 5.25, 5.25 ] );
-	expect( report.frameCount ).toBe( 120 );
+	expect( report.timeValues ).toEqual( [ 13.25, 13.25, 13.25 ] );
+	expect( report.frameCount ).toBe( 600 );
 	expect( report.programCountAfterFrames ).toBe( report.programCountBeforeFrames );
+	expect( report.programObjectSetStable ).toBe( true );
+	expect( report.compiledMaterialsStable ).toBe( true );
+	expect( report.geometryCountAfterFrames ).toBe( report.geometryCountBeforeFrames );
+	expect( report.textureCountAfterFrames ).toBe( report.textureCountBeforeFrames );
 	expect( browserErrors ).toEqual( [] );
 } );
