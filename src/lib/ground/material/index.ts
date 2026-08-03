@@ -2,6 +2,7 @@
 // added only after primitive integration and package smoke tests are complete.
 export * from './CesiumGroundMaterial';
 export * from './appearances';
+export * from './builtins';
 export * from './compiler';
 export * from './errors';
 export * from './ground-system-shaders';
