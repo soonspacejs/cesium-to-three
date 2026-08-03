@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { validateCesiumGroundRenderer } from '../../../src/lib/ground/validation';
 import { CesiumGroundMaterialError } from '../../../src/lib/ground/material/errors';
 import {
 	assertGroundDefines,
@@ -77,5 +78,43 @@ describe( 'Ground Material validation', () => {
 		expect( () => assertGroundDefines( { [ name ]: value } as never ) ).toThrow(
 			CesiumGroundMaterialError,
 		);
+	} );
+} );
+
+describe( 'Ground renderer validation', () => {
+	function createRendererStub( isWebGL2: boolean, stencilBits: number ) {
+		const gl = {
+			STENCIL_BITS: 0x0D57,
+			getParameter: ( parameter: number ) => {
+				expect( parameter ).toBe( gl.STENCIL_BITS );
+				return stencilBits;
+			},
+		};
+		return {
+			capabilities: { isWebGL2 },
+			getContext: () => gl,
+		};
+	}
+
+	it( 'accepts WebGL2 renderers with an 8-bit or wider stencil buffer', () => {
+		for ( const bits of [ 8, 16 ] ) {
+			expect( () => validateCesiumGroundRenderer(
+				createRendererStub( true, bits ) as never,
+			) ).not.toThrow();
+		}
+	} );
+
+	it( 'reports the unsupported WebGL1 boundary before inspecting stencil bits', () => {
+		const renderer = createRendererStub( false, 0 );
+		expect( () => validateCesiumGroundRenderer( renderer as never ) )
+			.toThrow( 'Cesium ground classification requires WebGL2' );
+	} );
+
+	it( 'reports a missing 8-bit stencil buffer', () => {
+		for ( const bits of [ 0, 7 ] ) {
+			expect( () => validateCesiumGroundRenderer(
+				createRendererStub( true, bits ) as never,
+			) ).toThrow( 'requires an 8-bit stencil buffer' );
+		}
 	} );
 } );

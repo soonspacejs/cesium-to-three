@@ -260,9 +260,11 @@ describe( 'Ground pass compiler', () => {
 	it( 'lets Raw modify exactly one generated default and keeps context wrappers', () => {
 		const rawWrapper = { value: 2 };
 		let contextSystemWrapper: unknown;
+		let contextKeys: string[] = [];
 		const raw = new CesiumGroundRawShaderAppearance( {
 			uniforms: { u_opacity: rawWrapper },
 			factory( context ) {
+				contextKeys = Object.keys( context ).sort();
 				contextSystemWrapper = context.systemUniforms.c23_time;
 				const candidate = context.createDefaultMaterial();
 				candidate.name = 'RawModifiedDefault';
@@ -277,6 +279,13 @@ describe( 'Ground pass compiler', () => {
 		expect( compiled.material.uniforms.c23_time ).toBe( options.systemUniforms.c23_time );
 		expect( compiled.material.uniforms.u_opacity ).toBe( rawWrapper );
 		expect( contextSystemWrapper ).toBe( options.systemUniforms.c23_time );
+		expect( contextKeys ).toEqual( [
+			'createDefaultMaterial',
+			'pass',
+			'primitiveKind',
+			'systemUniforms',
+			'userUniforms',
+		] );
 		expect( compiled.materialVersion ).toBeUndefined();
 	} );
 
