@@ -326,6 +326,14 @@ export interface CesiumGroundPolylineOptions {
 	 * historical strokeColor/strokeOpacity path.
 	 */
 	appearance?: CesiumGroundAppearance;
+	/**
+	 * Optional appearance for the independent arrow pass. Arrow geometry,
+	 * endpoint style clipping, and all arrow sizing remain library-owned; this
+	 * Appearance controls only the material function evaluated for the arrow
+	 * fragments. When omitted, the legacy arrowColor/arrowOpacity values feed a
+	 * library-created white Color Material through the canonical arrow ABI.
+	 */
+	arrowAppearance?: CesiumGroundAppearance;
 	/** lon/lat 折点（度），≥ 2 个。 */
 	points: LonLatPoint[];
 	/** 线色（'#rrggbb' 或 css 颜色）。 */
