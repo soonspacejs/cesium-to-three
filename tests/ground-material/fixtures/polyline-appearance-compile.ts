@@ -21,6 +21,10 @@ import {
 	CesiumGroundMaterialAppearance,
 	CesiumGroundRawShaderAppearance,
 } from '../../../src/lib/ground/material/appearances';
+import {
+	createFlowLineMaterial,
+	createPolylineDashMaterial,
+} from '../../../src/lib/ground/material/builtins';
 
 export interface PolylineAppearanceCompileReport {
 	ready: boolean;
@@ -78,6 +82,21 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 		fragmentShader: SAFE_SOURCE,
 	} );
 	const safeAppearance = new CesiumGroundMaterialAppearance( { material: safeMaterial } );
+	const dashAppearance = new CesiumGroundMaterialAppearance( {
+		material: createPolylineDashMaterial( {
+			dashLengthMeters: 24,
+			gapLengthMeters: 12,
+			offsetMeters: -6,
+		} ),
+	} );
+	const flowAppearance = new CesiumGroundMaterialAppearance( {
+		material: createFlowLineMaterial( {
+			speed: 0.6,
+			repeat: 4,
+			trailFraction: 0.3,
+			direction: -1,
+		} ),
+	} );
 	const rawPasses: string[] = [];
 	const rawAppearance = new CesiumGroundRawShaderAppearance( {
 		factory: context => {
@@ -100,6 +119,8 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 		new CesiumGroundPolylinePrimitive( createOptions() ),
 		new CesiumGroundPolylinePrimitive( createOptions( { appearance: safeAppearance } ) ),
 		new CesiumGroundPolylinePrimitive( createOptions( { appearance: rawAppearance } ) ),
+		new CesiumGroundPolylinePrimitive( createOptions( { appearance: dashAppearance } ) ),
+		new CesiumGroundPolylinePrimitive( createOptions( { appearance: flowAppearance } ) ),
 	];
 
 	const scene = new Scene();

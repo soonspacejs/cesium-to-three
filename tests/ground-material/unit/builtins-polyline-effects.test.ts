@@ -62,6 +62,27 @@ describe( 'Polyline Dash Ground Material', () => {
 } );
 
 describe( 'FlowLine Ground Material', () => {
+	it( 'uses the same phase for equal absolute time at 30, 60, and 120 FPS', () => {
+		const linePosition = 0.37;
+		const repeat = 4.0;
+		const speed = 0.6;
+		const durationSeconds = 2.4;
+		const phaseAt = ( frameRate: number ): number => {
+			let timeSeconds = 0.0;
+			for ( let frame = 0; frame < frameRate * durationSeconds; frame ++ ) {
+				timeSeconds += 1.0 / frameRate;
+			}
+			const raw = linePosition * repeat - timeSeconds * speed;
+			return raw - Math.floor( raw );
+		};
+
+		// The GLSL formula reads c23_time (seconds), never frame count or delta;
+		// only floating accumulation noise remains between host sampling rates.
+		const reference = phaseAt( 60 );
+		expect( phaseAt( 30 ) ).toBeCloseTo( reference, 12 );
+		expect( phaseAt( 120 ) ).toBeCloseTo( reference, 12 );
+	} );
+
 	it( 'creates the six documented uniforms without a hidden phase or timer', () => {
 		const material = createFlowLineMaterial();
 
