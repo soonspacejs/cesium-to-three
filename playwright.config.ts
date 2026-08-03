@@ -46,6 +46,8 @@ export default defineConfig( {
 				'--use-angle=swiftshader',
 				'--enable-webgl',
 				'--ignore-gpu-blocklist',
+				'--enable-precise-memory-info',
+				'--js-flags=--expose-gc',
 			],
 		},
 	},
