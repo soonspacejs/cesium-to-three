@@ -8,7 +8,36 @@ import {
 	createScalePulseMaterial,
 } from '../../../src/lib/ground/material/builtins';
 
+function cosinePulseWave( timeSeconds: number, periodSeconds: number, phase: number ): number {
+	const unwrapped = timeSeconds / periodSeconds + phase;
+	const phase01 = unwrapped - Math.floor( unwrapped );
+	return 0.5 - 0.5 * Math.cos( Math.PI * 2 * phase01 );
+}
+
+function accumulatedTime( frameRate: number, durationSeconds: number ): number {
+	let time = 0;
+	for ( let frame = 0; frame < frameRate * durationSeconds; frame += 1 ) {
+		time += 1 / frameRate;
+	}
+	return time;
+}
+
 describe( 'PulsePoint Ground Material', () => {
+	it( 'follows min-mid-max-mid-min phases and equal absolute time at every FPS', () => {
+		const phases = [ 0, 0.25, 0.5, 0.75, 1 ];
+		expect( phases.map( time => cosinePulseWave( time, 1, 0 ) ) ).toEqual( [
+			0, 0.49999999999999994, 1, 0.5000000000000001, 0,
+		] );
+		expect( cosinePulseWave( 0, 1, 0.25 ) ).toBeCloseTo( 0.5, 14 );
+		const reference = cosinePulseWave( accumulatedTime( 60, 2.4 ), 1.5, 0.125 );
+		expect( cosinePulseWave( accumulatedTime( 30, 2.4 ), 1.5, 0.125 ) )
+			.toBeCloseTo( reference, 12 );
+		expect( cosinePulseWave( accumulatedTime( 120, 2.4 ), 1.5, 0.125 ) )
+			.toBeCloseTo( reference, 12 );
+		expect( C23_PULSE_POINT_MATERIAL_SOURCE ).not.toContain( 'c23_deltaTime' );
+		expect( C23_PULSE_POINT_MATERIAL_SOURCE ).not.toContain( 'c23_frameNumber' );
+	} );
+
 	it( 'creates the documented fixed schema and default footprint', () => {
 		const material = createPulsePointMaterial();
 
@@ -99,6 +128,18 @@ describe( 'PulsePoint Ground Material', () => {
 } );
 
 describe( 'ScalePulse Ground Material', () => {
+	it( 'uses the same cosine scale at 30, 60, and 120 FPS', () => {
+		const minScale = 0.7;
+		const maxScale = 1.3;
+		const scaleAt = ( time: number ): number =>
+			minScale + ( maxScale - minScale ) * cosinePulseWave( time, 2, -0.2 );
+		const reference = scaleAt( accumulatedTime( 60, 3.2 ) );
+		expect( scaleAt( accumulatedTime( 30, 3.2 ) ) ).toBeCloseTo( reference, 12 );
+		expect( scaleAt( accumulatedTime( 120, 3.2 ) ) ).toBeCloseTo( reference, 12 );
+		expect( C23_SCALE_PULSE_MATERIAL_SOURCE ).not.toContain( 'c23_deltaTime' );
+		expect( C23_SCALE_PULSE_MATERIAL_SOURCE ).not.toContain( 'c23_frameNumber' );
+	} );
+
 	it( 'keeps textured and untextured variants on one fixed schema', () => {
 		const plain = createScalePulseMaterial();
 		const texture = new DataTexture( new Uint8Array( [ 255, 0, 0, 255 ] ), 1, 1 );
