@@ -390,6 +390,17 @@ float c23_metersPerPixel(vec4 positionEC) {
 	return max(pixelWidth, pixelHeight) * czm_pixelRatio;
 }
 
+// [c23:ground-vertex-abi]
+
+// [c23:ground-user-defines]
+
+// [c23:ground-user-vertex]
+
+// [c23:vertex-safe-hook]
+void c23_applyVertex(vec3 positionEC, inout vec4 positionClip) {
+	// Fixed safe path: no logical vertex hook was supplied.
+}
+
 // [c23:vertex-main]
 void main() {
 	vec4 tipRelativeToEye = c23_translateRelativeToEye(arrowTipHigh, arrowTipLow);
@@ -429,6 +440,7 @@ void main() {
 	positionEC += upEC * altitudeOffset;
 
 	gl_Position = czm_projection * vec4(positionEC, 1.0);
+	c23_applyVertex(positionEC, gl_Position);
 	gl_Position.z = clamp(gl_Position.z / gl_Position.w, -1.0, 1.0) * gl_Position.w;
 }
 ",
@@ -514,6 +526,17 @@ void c23_writeVertexLogDepth() {
 	gl_Position.z = clamp(gl_Position.z / gl_Position.w, -1.0, 1.0) * gl_Position.w;
 }
 
+// [c23:ground-vertex-abi]
+
+// [c23:ground-user-defines]
+
+// [c23:ground-user-vertex]
+
+// [c23:vertex-safe-hook]
+void c23_applyVertex(vec3 positionEC, inout vec4 positionClip) {
+	// Fixed safe path: no logical vertex hook was supplied.
+}
+
 // [c23:vertex-main]
 void main() {
 	vec4 positionRte = c23_translateRelativeToEye(position3DHigh, position3DLow);
@@ -527,6 +550,8 @@ void main() {
 	// Keep the ABI-prescribed batch attribute live without changing the single-instance result.
 	positionRte.w += batchId * 0.0;
 	gl_Position = czm_modelViewProjectionRelativeToEye * positionRte;
+	vec3 c23_vertexPositionEC = (czm_modelViewRelativeToEye * positionRte).xyz;
+	c23_applyVertex(c23_vertexPositionEC, gl_Position);
 	c23_writeVertexLogDepth();
 }
 ",
@@ -989,6 +1014,17 @@ float c23_metersPerPixel(vec4 positionEC) {
 	return max(pixelWidth, pixelHeight) * czm_pixelRatio;
 }
 
+// [c23:ground-vertex-abi]
+
+// [c23:ground-user-defines]
+
+// [c23:ground-user-vertex]
+
+// [c23:vertex-safe-hook]
+void c23_applyVertex(vec3 positionEC, inout vec4 positionClip) {
+	// Fixed safe path: no logical vertex hook was supplied.
+}
+
 // [c23:vertex-main]
 void main() {
 	vec3 ecStart = (czm_modelViewRelativeToEye * c23_translateRelativeToEye(
@@ -1064,6 +1100,7 @@ void main() {
 	positionEC.xyz += pushMeters * normalEC;
 
 	gl_Position = czm_projection * positionEC;
+	c23_applyVertex(positionEC.xyz, gl_Position);
 	gl_Position.z = clamp(gl_Position.z / gl_Position.w, -1.0, 1.0) * gl_Position.w;
 }
 ",
@@ -1487,6 +1524,17 @@ vec4 c23_translateRelativeToEye(vec3 high, vec3 low) {
 	return vec4(highDifference + lowDifference, 1.0);
 }
 
+// [c23:ground-vertex-abi]
+
+// [c23:ground-user-defines]
+
+// [c23:ground-user-vertex]
+
+// [c23:vertex-safe-hook]
+void c23_applyVertex(vec3 positionEC, inout vec4 positionClip) {
+	// Fixed safe path: no logical vertex hook was supplied.
+}
+
 // [c23:vertex-main]
 void main() {
 	vec4 positionRte = c23_translateRelativeToEye(position3DHigh, position3DLow);
@@ -1499,6 +1547,8 @@ void main() {
 	positionRte.w += batchId * 0.0;
 
 	gl_Position = czm_modelViewProjectionRelativeToEye * positionRte;
+	vec3 c23_vertexPositionEC = (czm_modelViewRelativeToEye * positionRte).xyz;
+	c23_applyVertex(c23_vertexPositionEC, gl_Position);
 	gl_Position.z = clamp(gl_Position.z / gl_Position.w, -1.0, 1.0) * gl_Position.w;
 }
 ",

@@ -23,7 +23,7 @@
 - 不新增 timeline、tween、关键帧树、动画 mixer、内部时钟或内部 RAF。
 - 不改变 shadow-volume、RTE、packed depth、classificationType 或 polyline depth reconstruction 算法。
 - 不以 `onBeforeCompile` 作为 Ground 的主扩展方式，也不引入 TSL / NodeMaterial。
-- 不让安全 Material 改 vertex shader、stencil 状态或系统 shape coverage。
+- 不让安全 Material 替换完整系统 vertex shader、stencil 状态或系统 shape coverage；只允许统一的 clip-space vertex Hook。
 - 不自动修复 Raw Appearance 的错误 pass、一致性或渲染状态。
 - 不把 `src/lib/plot` 提升为首期 npm API。
 
@@ -108,8 +108,8 @@ Appearance 决定“一个逻辑外观如何变成当前 primitive 的各 pass �
 new CesiumGroundMaterialAppearance({ material: CesiumGroundMaterial });
 ```
 
-- 只允许实现 `c23_getMaterial(c23_materialInput)`；
-- surface/decal 只编译 color pass，front/back stencil 始终由库固定创建；
+- fragment 必须实现 `c23_getMaterial(c23_materialInput)`，vertex 可选实现受控 `c23_vertexMain`；
+- 没有 vertex Hook 时 surface/decal 只重编译 color；存在 Hook 时 front/back/color 原子重编译并使用同一源码；
 - polyline/arrow 在各自单 pass 的系统 membership 之后调用 Material；
 - 库拥有最终 shape coverage、stencil 清理、log-depth 处理和预乘输出；
 - 同一个 safe Appearance 可以用于多个图元；最终仍为每 primitive/pass 创建独立 `RawShaderMaterial`，因为 system uniforms 不同。
@@ -136,6 +136,7 @@ new CesiumGroundRawShaderAppearance({
 
 - `uniforms: Record<string, IUniform>`：由用户拥有，可跨图元共享；
 - `defines`：编译期常量；
+- `vertexShader?`：只提供可选 `c23_vertexMain`，读取系统 `positionEC` 并修改 `positionClip`；
 - `fragmentShader`：只提供 helpers、用户 uniform 声明和 `c23_getMaterial`，不提供 `main()`；
 - `version` / `needsUpdate`：标记源码、defines 或 uniform schema 的编译期变化；
 - `setUniform()`、`clone()`、`dispose()` 的公共语义。
@@ -348,12 +349,12 @@ WebGL Shader 的真正编译通常延迟到 renderer draw/compile 阶段。库�
 | --- | --- | --- |
 | 自定义颜色、纹理、噪声、流动、呼吸 | 支持 | 支持 |
 | 使用稳定 `st` / local meters / line distance | 支持 | 可自行使用系统数据 |
-| 修改 vertex transform | 不支持 | 支持 |
+| 修改 vertex transform | 支持受控 clip-space Hook | 支持完整替换 |
 | 修改 front/back stencil Shader | 不支持 | 支持 |
 | 修改 Three depth/stencil/blend state | 不支持 | 支持 |
 | classification 零 alpha仍清 stencil | 库保证 | 用户负责 |
 | RTE、packed depth、sky guard | 库保证 | `createDefaultMaterial()` 保证；完全替换后用户负责 |
-| pass 间 vertex 一致性 | 不存在风险 | 用户负责 |
+| pass 间 vertex 一致性 | assembler 自动保持三 pass 同源 | 用户负责 |
 | program/cache key | 库生成 | Raw version + Three 参数；用户需正确置 `needsUpdate` |
 | 推荐程度 | 默认选择 | 仅需完整接管时使用 |
 
@@ -407,6 +408,7 @@ point 外壳保存用户传入的 Appearance，并在创建 circle/rectangle/ima
 | --- | --- | --- |
 | user uniform 使用保留前缀或与 system key 冲突 | assembler/factory 前 | 抛 `TypeError`；不创建/不切换 |
 | safe source 缺少唯一 `c23_getMaterial` | assembler 前 | 抛 shader contract error |
+| safe vertex source 缺少/错误 `c23_vertexMain` 或按 pass 分支 | assembler 前 | 抛 shader contract error |
 | safe source 含禁止的 `main` / `#version` / `discard` | assembler 前 | 抛 shader contract error |
 | Raw factory 未返回 `RawShaderMaterial` | 每 pass factory 后 | dispose 当前候选集，抛错 |
 | Raw 对两个 pass 返回同一实例 | 完整候选校验 | dispose一次并抛错；不接管旧 set |

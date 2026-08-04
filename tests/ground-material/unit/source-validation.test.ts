@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { CesiumGroundMaterial } from '../../../src/lib/ground/material/CesiumGroundMaterial';
 import { CesiumGroundMaterialError } from '../../../src/lib/ground/material/errors';
-import { validateGroundMaterialSource } from '../../../src/lib/ground/material/validation';
+import {
+	validateGroundMaterialSource,
+	validateGroundVertexSource,
+} from '../../../src/lib/ground/material/validation';
 
 const ENTRY_BODY = /* glsl */ `
 c23_material c23_getMaterial(c23_materialInput materialInput) {
@@ -212,5 +215,74 @@ describe( 'safe Ground Material source validation', () => {
 			'GROUND_MATERIAL_SOURCE_FORBIDDEN',
 			'}',
 		);
+	} );
+} );
+
+describe( 'safe Ground vertex source validation', () => {
+	it( 'accepts the exact vertex hook, time ABI, helpers, and backed uniforms', () => {
+		const material = new CesiumGroundMaterial( {
+			uniforms: { u_amplitude: { value: 0.01 } },
+			vertexShader: /* glsl */ `
+uniform float u_amplitude;
+float userWave(float value) { return sin(value); }
+void c23_vertexMain(
+	c23_vertexInput vertexInput,
+	inout c23_vertexOutput vertexOutput
+) {
+	float wave = userWave(vertexInput.positionEC.x + c23_time);
+	vertexOutput.positionClip.y += wave * u_amplitude * vertexOutput.positionClip.w;
+}
+`,
+			fragmentShader: ENTRY_BODY,
+		} );
+
+		const analysis = validateGroundVertexSource( material, 'surface' );
+		expect( analysis.declaredUserUniforms ).toEqual( [ 'u_amplitude' ] );
+		expect( analysis.tokenCount ).toBeGreaterThan( 20 );
+		expect( () => validateGroundMaterialSource( material, 'surface' ) ).not.toThrow();
+	} );
+
+	it.each( [
+		[ 'void main() {}', 'GROUND_MATERIAL_MAIN_FORBIDDEN', 'main' ],
+		[
+			'void c23_vertexMain(c23_vertexInput vertexInput, inout c23_vertexOutput vertexOutput) { gl_Position = vertexOutput.positionClip; }',
+			'GROUND_MATERIAL_SOURCE_FORBIDDEN',
+			'gl_Position',
+		],
+		[
+			'#ifdef C23_PASS_COLOR\n#endif\nvoid c23_vertexMain(c23_vertexInput vertexInput, inout c23_vertexOutput vertexOutput) {}',
+			'GROUND_MATERIAL_SOURCE_FORBIDDEN',
+			'C23_PASS_COLOR',
+		],
+	] )( 'rejects unsafe vertex source %#', ( vertexShader, code, token ) => {
+		const material = new CesiumGroundMaterial( { vertexShader, fragmentShader: ENTRY_BODY } );
+		let thrown: unknown;
+		try {
+			validateGroundVertexSource( material, 'surface' );
+		} catch ( error ) {
+			thrown = error;
+		}
+		expect( thrown ).toBeInstanceOf( CesiumGroundMaterialError );
+		expect(( thrown as CesiumGroundMaterialError ).code ).toBe( code );
+		expect(( thrown as CesiumGroundMaterialError ).detail?.token ).toBe( token );
+	} );
+
+	it( 'requires the exact vertex signature and a wrapper for each declared uniform', () => {
+		const invalidSignature = new CesiumGroundMaterial( {
+			vertexShader: 'void c23_vertexMain(inout c23_vertexOutput vertexOutput) {}',
+			fragmentShader: ENTRY_BODY,
+		} );
+		expect( () => validateGroundVertexSource( invalidSignature, 'surface' ) )
+			.toThrow( /exactly void c23_vertexMain/ );
+
+		const missingWrapper = new CesiumGroundMaterial( {
+			vertexShader: /* glsl */ `
+uniform float u_amplitude;
+void c23_vertexMain(c23_vertexInput vertexInput, inout c23_vertexOutput vertexOutput) {}
+`,
+			fragmentShader: ENTRY_BODY,
+		} );
+		expect( () => validateGroundVertexSource( missingWrapper, 'surface' ) )
+			.toThrow( /u_amplitude.*no user wrapper/ );
 	} );
 } );

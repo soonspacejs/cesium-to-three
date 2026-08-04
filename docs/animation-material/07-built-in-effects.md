@@ -360,6 +360,7 @@ dashed.setUniform('u_offsetMeters', 6);
 ```ts
 // Proposed API
 interface FlowLineMaterialOptions {
+  texture?: Texture;                  // 可选 borrowed strip texture
   color?: ColorRepresentation;       // 默认 0x00ffff
   opacity?: number;                   // 默认 1
   backgroundColor?: GroundColorInput; // 默认 new Vector4(0, 0, 0, 0)
@@ -367,17 +368,20 @@ interface FlowLineMaterialOptions {
   repeat?: number;                    // 默认 1，全线重复次数
   trailFraction?: number;             // 默认 0.35，每个 cell 的比例
   direction?: number;                 // 默认 +1；工厂规范化为 +1/-1
+  flipY?: boolean;                    // 默认 true
 }
 ```
 
 | uniform | 类型 | 默认值 | 校验和单位 |
 | --- | --- | --- | --- |
+| `u_texture` / `u_hasTexture` | `sampler2D` / `float` | `null` / `0` | borrowed；有纹理时按 cell phase 滚动采样 |
 | `u_color` | `vec4` | `(0,1,1,1)` | 拖尾头部 straight RGBA |
 | `u_backgroundColor` | `vec4` | `(0,0,0,0)` | 允许透明；不会触发 discard |
 | `u_speed` | `float` | `1.0` | 有限且 `>=0`，单位 **cycles/second** |
 | `u_repeat` | `float` | `1.0` | 有限且 `>0`，全线 cell 数，可为非整数 |
 | `u_trailFraction` | `float` | `0.35` | `(0,1]` |
 | `u_direction` | `float` | `1.0` | 输入 `<0` 规范化为 `-1`，输入 `>=0` 规范化为 `+1` |
+| `u_flipY` | `float` | `1.0` | 图片 V 方向 |
 
 `u_phase` 不在此预设中；官方 FlowLine 预设在同一宿主时钟下同步。业务需要逐线起始相位时，应复制本节公式并创建显式含 phase uniform 的自定义 Material，不能靠逐图元篡改 system `c23_time`，也不能仅靠 `clone()` 凭空得到未声明的 uniform。
 
@@ -399,12 +403,15 @@ straightColor = mix(backgroundColor, color, intensity)
 ### 6.3 GLSL3
 
 ```glsl
+uniform sampler2D u_texture;
+uniform float u_hasTexture;
 uniform vec4 u_color;
 uniform vec4 u_backgroundColor;
 uniform float u_speed;
 uniform float u_repeat;
 uniform float u_trailFraction;
 uniform float u_direction;
+uniform float u_flipY;
 
 c23_material c23_getMaterial(c23_materialInput input) {
     float along01 = input.lineTotalMeters > 1e-6
@@ -425,10 +432,20 @@ c23_material c23_getMaterial(c23_materialInput input) {
         distanceBehindHead
     );
 
+    vec4 foregroundColor = clamp(u_color, 0.0, 1.0);
+    float textureCoverage = 1.0;
+    if (u_hasTexture > 0.5) {
+        vec2 textureUv = vec2(cellPhase, clamp(input.st.y, 0.0, 1.0));
+        if (u_flipY > 0.5) textureUv.y = 1.0 - textureUv.y;
+        vec4 texel = clamp(texture(u_texture, textureUv), 0.0, 1.0);
+        foregroundColor.rgb *= texel.rgb;
+        textureCoverage = texel.a;
+    }
+
     vec4 straightColor = mix(
         clamp(u_backgroundColor, 0.0, 1.0),
-        clamp(u_color, 0.0, 1.0),
-        intensity
+        foregroundColor,
+        intensity * textureCoverage
     );
 
     c23_material material;
@@ -471,7 +488,7 @@ function onHostFrame(baseState: Omit<CesiumGroundFrameState,
 }
 ```
 
-性能与限制：每片元主要增加 `fract`、一次 `fwidth` 和一次 `smoothstep`；没有纹理采样。极长运行时间下 WebGL float 的秒值会逐渐损失亚毫秒精度，宿主可把时钟定义为“本次效果启动后的秒数”。方向和速度不能通过每帧改 Shader define 实现。
+性能与限制：无纹理路径每片元主要增加 `fract`、一次 `fwidth` 和一次 `smoothstep`；图片路径再增加一次采样，并以纹理 RGB/alpha 调制移动拖尾。极长运行时间下 WebGL float 的秒值会逐渐损失亚毫秒精度，宿主可把时钟定义为“本次效果启动后的秒数”。方向和速度不能通过每帧改 Shader define 实现。
 
 ## 7. 动画预设二：`createPulsePointMaterial`
 
@@ -482,6 +499,7 @@ function onHostFrame(baseState: Omit<CesiumGroundFrameState,
 ```ts
 // Proposed API
 interface PulsePointMaterialOptions {
+  texture?: Texture;            // 可选 borrowed image
   color?: ColorRepresentation; // 默认 0xffffff，乘 input.baseColor
   periodSeconds?: number;       // 默认 1.5
   minScale?: number;            // 默认 0.65
@@ -491,11 +509,13 @@ interface PulsePointMaterialOptions {
   phase?: number;               // 默认 0，单位 cycles
   edgeSoftness?: number;        // 默认 0.02，footprint 半径归一化单位
   footprintScale?: number;      // 高级；默认 max(1, maxScale)
+  flipY?: boolean;              // 默认 true
 }
 ```
 
 | uniform | 类型 | 默认值 | 校验/语义 |
 | --- | --- | --- | --- |
+| `u_texture` / `u_hasTexture` | `sampler2D` / `float` | `null` / `0` | borrowed；有图时随 pulse 尺度反向采样 |
 | `u_color` | `vec4` | `(1,1,1,1)` | 乘 `input.baseColor` |
 | `u_periodSeconds` | `float` | `1.5` | 有限且 `>0` |
 | `u_minScale` | `float` | `0.65` | `0 < minScale <= maxScale` |
@@ -505,6 +525,7 @@ interface PulsePointMaterialOptions {
 | `u_phase` | `float` | `0.0` | 有限，单位 **cycles**；`0.25` 为四分之一周期 |
 | `u_edgeSoftness` | `float` | `0.02` | `[0,0.5]`；与导数 AA 取较大者 |
 | `u_footprintScale` | `float` | `max(1, maxScale)` | 有限且 `>=maxScale`；实际 footprint / 名义 footprint |
+| `u_flipY` | `float` | `1.0` | 图片 V 方向 |
 
 视觉半径为 `nominalRadius * currentScale`，其中 `actualFootprintRadius = nominalRadius * u_footprintScale`，Shader 使用 `normalizedRadius = currentScale / u_footprintScale`。例如名义直径 64 m、`maxScale=1.25` 时，point `size` 必须预分配为 80 m；视觉直径最大 80 m，刚好到 footprint 边界，不会扩大包围盒或拾取范围。
 
@@ -521,6 +542,8 @@ coverage      = radialSmoothMask(radius01, normalizedScale)
 ```
 
 ```glsl
+uniform sampler2D u_texture;
+uniform float u_hasTexture;
 uniform vec4 u_color;
 uniform float u_periodSeconds;
 uniform float u_minScale;
@@ -530,6 +553,7 @@ uniform float u_maxOpacity;
 uniform float u_phase;
 uniform float u_edgeSoftness;
 uniform float u_footprintScale;
+uniform float u_flipY;
 
 c23_material c23_getMaterial(c23_materialInput input) {
     const float twoPi = 6.283185307179586;
@@ -541,6 +565,7 @@ c23_material c23_getMaterial(c23_materialInput input) {
     float footprintScale = max(u_footprintScale, 1e-6);
     float normalizedScale = clamp(requestedScale / footprintScale, 1e-4, 1.0);
     float opacity = clamp(mix(u_minOpacity, u_maxOpacity, wave), 0.0, 1.0);
+    vec2 sourceSt = (input.st - vec2(0.5)) / normalizedScale + vec2(0.5);
 
     float radius01 = length((input.st - vec2(0.5)) * 2.0);
     float edge = max(
@@ -553,7 +578,13 @@ c23_material c23_getMaterial(c23_materialInput input) {
         radius01
     );
 
-    vec4 straightColor = clamp(input.baseColor, 0.0, 1.0)
+    vec4 sourceColor = clamp(input.baseColor, 0.0, 1.0);
+    if (u_hasTexture > 0.5) {
+        vec2 sampleSt = sourceSt;
+        if (u_flipY > 0.5) sampleSt.y = 1.0 - sampleSt.y;
+        sourceColor = clamp(texture(u_texture, sampleSt), 0.0, 1.0);
+    }
+    vec4 straightColor = sourceColor
         * clamp(u_color, 0.0, 1.0);
 
     c23_material material;
@@ -595,7 +626,7 @@ const point = new CesiumGroundPointPrimitive({
 });
 ```
 
-性能与限制：每片元一次 `cos`；没有纹理采样。运行期 `u_minScale/u_maxScale` 不得超过构造时预留的 `u_footprintScale`，否则应重建图元。Material 只裁掉外部 alpha，不能把当前 shape 阶段算出的描边重新定位到缩放后的半径，所以首期不承诺“会随呼吸移动的 stroke”。需要描边呼吸时应在自定义 Material 中自行画径向 ring，或使用 Raw Appearance。
+性能与限制：无纹理路径每片元一次 `cos`；图片路径再增加一次采样。运行期 `u_minScale/u_maxScale` 不得超过构造时预留的 `u_footprintScale`，否则应重建图元。Material 只裁掉外部 alpha，不能把当前 shape 阶段算出的描边重新定位到缩放后的半径，所以不承诺“会随呼吸移动的 stroke”。需要描边呼吸时应在自定义 Material 中自行画径向 ring，或使用 Raw Appearance。
 
 ## 8. 动画预设三：`createScalePulseMaterial`
 
@@ -759,7 +790,7 @@ delayedPulse.setUniform('u_phase', 0.5); // 相差半个周期
 | polyline gap | 同样返回 `alpha=0`；即使无 stencil，也保持 Material 纯函数语义 |
 | 时间单位 | `c23_time` 秒；Flow 的 `u_speed` 为 cycles/second；`u_phase` 仅用于 Pulse/Scale，单位 cycles |
 | 方向 | 工厂一律规范化为 `+1/-1`，不生成 Shader define |
-| 尺寸 | PulsePoint 最大视觉半径不越 footprint；ScalePulse 超过 1 时预分配最大 footprint |
+| 尺寸 | PulsePoint/ScalePulse 最大视觉尺寸不越 footprint；超过 1 时预分配最大 footprint |
 | 纹理所有权 | 所有 user Texture 均 borrowed，Material/Primitive 不销毁 |
 | 无效参数 | 构造时抛 `RangeError`；`setUniform` 的低层调用由用户维持相同约束 |
 | shape 描边 | 安全 Material 得到的是已判定的 `baseColor/isStroke`，不能移动 shape SDF 或描边边界 |
@@ -771,6 +802,7 @@ delayedPulse.setUniform('u_phase', 0.5); // 相差半个周期
 - [ ] `createTexturedDecalMaterial` 与现有文字/图片方向、alpha 和 opacity 一致；透明纹素不 `discard`。
 - [ ] `createPolylineDashMaterial` 使用全线米距离，跨 segment 相位连续。
 - [ ] FlowLine 的 `speed=1` 精确表示每秒一 cycle；相同 `c23_time` 在不同 FPS 下结果一致。
+- [ ] FlowLine/PulsePoint/ScalePulse 的有图与无图实例共用各自固定 Shader schema，纹理均为 borrowed。
 - [ ] PulsePoint/ScalePulse 允许 `maxScale>1`，但 `u_footprintScale>=u_maxScale` 且实际 footprint 已按该倍率预分配。
 - [ ] ScalePulse 的 `u_footprintScale` 与预分配尺寸一致，运行期不越界。
 - [ ] 所有 opacity 为零时仍执行 surface/decal color pass 的 stencil 清理。

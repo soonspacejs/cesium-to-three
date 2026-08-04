@@ -88,6 +88,59 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 }
 
 describe( 'classification color Material pipeline', () => {
+	it( 'rebuilds front/back/color atomically when a safe vertex hook changes or is removed', () => {
+		const appearance = createSafeAppearance( 0.8 );
+		appearance.material.vertexShader = /* glsl */ `
+uniform float u_gain;
+void c23_vertexMain(
+	c23_vertexInput vertexInput,
+	inout c23_vertexOutput vertexOutput
+) {
+	vertexOutput.positionClip.x += sin(c23_time + vertexInput.positionEC.x)
+		* u_gain * vertexOutput.positionClip.w * 0.01;
+}
+`;
+		appearance.material.needsUpdate = true;
+		const primitive = new CesiumClassificationPrimitive(
+			new BufferGeometry(), createExtents(), new Color(), 1, 0, true,
+			{ appearance },
+		);
+		const first = getCommands( primitive );
+		const firstMaterials = [ first.front.material, first.back.material, first.color.material ];
+		for ( const command of [ first.front, first.back, first.color ] ) {
+			const material = command.material as RawShaderMaterial;
+			expect( material.vertexShader ).toContain( 'void c23_vertexMain' );
+			expect( material.uniforms.u_gain ).toBe( appearance.material.uniforms.u_gain );
+		}
+
+		appearance.material.vertexShader = appearance.material.vertexShader.replace(
+			'positionClip.x',
+			'positionClip.y',
+		);
+		appearance.material.needsUpdate = true;
+		const frameState = createFrameState();
+		primitive.update( frameState );
+		const second = getCommands( primitive );
+		const secondMaterials = [ second.front.material, second.back.material, second.color.material ];
+		expect( secondMaterials ).not.toEqual( firstMaterials );
+		for ( const material of secondMaterials as RawShaderMaterial[] ) {
+			expect( material.vertexShader ).toContain( 'positionClip.y' );
+		}
+
+		appearance.material.vertexShader = undefined;
+		appearance.material.needsUpdate = true;
+		primitive.update( frameState );
+		const fixed = getCommands( primitive );
+		for ( const command of [ fixed.front, fixed.back ] ) {
+			const material = command.material as RawShaderMaterial;
+			expect( material.vertexShader ).not.toContain( 'void c23_vertexMain' );
+			expect( material.uniforms.u_gain ).toBeUndefined();
+		}
+
+		primitive.dispose();
+		frameState.depthTexture.dispose();
+	} );
+
 	it( 'disposes the command set once and rejects use after disposal', () => {
 		const geometry = new BufferGeometry();
 		const primitive = new CesiumClassificationPrimitive(

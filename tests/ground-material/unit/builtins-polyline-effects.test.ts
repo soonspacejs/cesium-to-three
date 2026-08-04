@@ -1,4 +1,4 @@
-import { Vector4 } from 'three';
+import { DataTexture, Vector4 } from 'three';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -83,18 +83,23 @@ describe( 'FlowLine Ground Material', () => {
 		expect( phaseAt( 120 ) ).toBeCloseTo( reference, 12 );
 	} );
 
-	it( 'creates the six documented uniforms without a hidden phase or timer', () => {
+	it( 'creates one texture-capable fixed schema without a hidden phase or timer', () => {
 		const material = createFlowLineMaterial();
 
 		expect( material.type ).toBe( 'FlowLineGroundMaterial' );
 		expect( Object.keys( material.uniforms ) ).toEqual( [
+			'u_texture',
+			'u_hasTexture',
 			'u_color',
 			'u_backgroundColor',
 			'u_speed',
 			'u_repeat',
 			'u_trailFraction',
 			'u_direction',
+			'u_flipY',
 		] );
+		expect( material.uniforms.u_texture.value ).toBeNull();
+		expect( material.uniforms.u_hasTexture.value ).toBe( 0 );
 		expect(( material.uniforms.u_color.value as Vector4 ).toArray() )
 			.toEqual( [ 0, 1, 1, 1 ] );
 		expect(( material.uniforms.u_backgroundColor.value as Vector4 ).toArray() )
@@ -103,12 +108,27 @@ describe( 'FlowLine Ground Material', () => {
 		expect( material.uniforms.u_repeat.value ).toBe( 1 );
 		expect( material.uniforms.u_trailFraction.value ).toBe( 0.35 );
 		expect( material.uniforms.u_direction.value ).toBe( 1 );
+		expect( material.uniforms.u_flipY.value ).toBe( 1 );
 		expect( material.uniforms.u_phase ).toBeUndefined();
 		expect( material.fragmentShader ).toBe( C23_FLOW_LINE_MATERIAL_SOURCE );
 		expect( material.fragmentShader ).toContain( 'c23_time * max(u_speed, 0.0)' );
 		expect( material.fragmentShader ).not.toContain( 'c23_deltaTime' );
 		expect( material.fragmentShader ).not.toContain( 'c23_frameNumber' );
 		expect( material.fragmentShader ).not.toContain( 'discard' );
+	} );
+
+	it( 'binds a borrowed scrolling texture without changing the shader schema', () => {
+		const texture = new DataTexture( new Uint8Array( [ 255, 128, 0, 255 ] ), 1, 1 );
+		const plain = createFlowLineMaterial();
+		const textured = createFlowLineMaterial( { texture, color: '#ffffff', flipY: false } );
+
+		expect( Object.keys( textured.uniforms ) ).toEqual( Object.keys( plain.uniforms ) );
+		expect( textured.uniforms.u_texture.value ).toBe( texture );
+		expect( textured.uniforms.u_hasTexture.value ).toBe( 1 );
+		expect( textured.uniforms.u_flipY.value ).toBe( 0 );
+		expect( textured.fragmentShader ).toContain( 'vec2 textureUv = vec2(cellPhase' );
+		expect( textured.fragmentShader ).toContain( 'textureCoverage = texel.a' );
+		texture.dispose();
 	} );
 
 	it( 'normalizes direction and preserves explicit background alpha', () => {

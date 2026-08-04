@@ -12,6 +12,7 @@ import { canonicalizeGroundDefines } from './validation';
 export const C23_LOGICAL_MATERIAL_KEY_VERSION = 1 as const;
 
 interface LogicalMaterialKeySource {
+	vertexShader?: CesiumGroundMaterial['vertexShader'];
 	fragmentShader: CesiumGroundMaterial['fragmentShader'];
 	defines: CesiumGroundMaterial['defines'];
 	uniforms: CesiumGroundMaterial['uniforms'];
@@ -34,6 +35,7 @@ export function computeLogicalMaterialKey(
 	return JSON.stringify( [
 		'c23-ground-logical-material',
 		C23_LOGICAL_MATERIAL_KEY_VERSION,
+		material.vertexShader ?? null,
 		material.fragmentShader,
 		canonicalizeGroundDefines( material.defines ),
 		getGroundUniformSchemaNames( material ),

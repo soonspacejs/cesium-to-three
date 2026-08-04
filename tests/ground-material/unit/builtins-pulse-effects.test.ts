@@ -43,6 +43,8 @@ describe( 'PulsePoint Ground Material', () => {
 
 		expect( material.type ).toBe( 'PulsePointGroundMaterial' );
 		expect( Object.keys( material.uniforms ) ).toEqual( [
+			'u_texture',
+			'u_hasTexture',
 			'u_color',
 			'u_periodSeconds',
 			'u_minScale',
@@ -52,7 +54,10 @@ describe( 'PulsePoint Ground Material', () => {
 			'u_phase',
 			'u_edgeSoftness',
 			'u_footprintScale',
+			'u_flipY',
 		] );
+		expect( material.uniforms.u_texture.value ).toBeNull();
+		expect( material.uniforms.u_hasTexture.value ).toBe( 0 );
 		expect(( material.uniforms.u_color.value as Vector4 ).toArray() )
 			.toEqual( [ 1, 1, 1, 1 ] );
 		expect( material.uniforms.u_periodSeconds.value ).toBe( 1.5 );
@@ -63,10 +68,25 @@ describe( 'PulsePoint Ground Material', () => {
 		expect( material.uniforms.u_phase.value ).toBe( 0 );
 		expect( material.uniforms.u_edgeSoftness.value ).toBe( 0.02 );
 		expect( material.uniforms.u_footprintScale.value ).toBe( 1 );
+		expect( material.uniforms.u_flipY.value ).toBe( 1 );
 		expect( material.fragmentShader ).toBe( C23_PULSE_POINT_MATERIAL_SOURCE );
 		expect( material.fragmentShader ).toContain( 'c23_time / max(u_periodSeconds, 1e-6)' );
 		expect( material.fragmentShader ).toContain( 'length((materialInput.st - vec2(0.5)) * 2.0)' );
 		expect( material.fragmentShader ).not.toContain( 'discard' );
+	} );
+
+	it( 'samples an optional borrowed image inside the animated footprint', () => {
+		const texture = new DataTexture( new Uint8Array( [ 255, 255, 255, 128 ] ), 1, 1 );
+		const plain = createPulsePointMaterial();
+		const textured = createPulsePointMaterial( { texture, flipY: false } );
+
+		expect( Object.keys( textured.uniforms ) ).toEqual( Object.keys( plain.uniforms ) );
+		expect( textured.uniforms.u_texture.value ).toBe( texture );
+		expect( textured.uniforms.u_hasTexture.value ).toBe( 1 );
+		expect( textured.uniforms.u_flipY.value ).toBe( 0 );
+		expect( textured.fragmentShader ).toContain( 'sourceSt = (materialInput.st - vec2(0.5))' );
+		expect( textured.fragmentShader ).toContain( 'texture(u_texture, sampleSt)' );
+		texture.dispose();
 	} );
 
 	it( 'preserves an explicit footprint for maxScale above one', () => {

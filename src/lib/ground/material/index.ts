@@ -3,6 +3,12 @@
 // factories cross the package boundary.
 export { C23_GROUND_SHADER_ABI_VERSION } from './shader-abi';
 export {
+	C23_GROUND_VERTEX_SHADER_TEMPLATE,
+	C23_GROUND_FRAGMENT_SHADER_TEMPLATE,
+	createGroundVertexShader,
+	createGroundFragmentShader,
+} from './templates';
+export {
 	CesiumGroundMaterial,
 	type CesiumGroundMaterialEventMap,
 	type CesiumGroundMaterialOptions,

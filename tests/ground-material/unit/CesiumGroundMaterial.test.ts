@@ -29,6 +29,7 @@ describe( 'CesiumGroundMaterial', () => {
 		expect( material.uniforms ).toBe( uniforms );
 		expect( material.uniforms.u_phase ).toBe( wrapper );
 		expect( material.defines ).toBe( defines );
+		expect( material.vertexShader ).toBeUndefined();
 		expect( material.fragmentShader ).toBe( SOURCE );
 		expect( material.version ).toBe( 0 );
 		expect( material.uuid ).toMatch( /^[0-9a-f-]{36}$/i );
@@ -177,6 +178,7 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 		const typedArray = new Float32Array( [ 1, 2, 3 ] );
 		const source = new CesiumGroundMaterial( {
 			type: 'CloneFixture',
+			vertexShader: 'void c23_vertexMain(c23_vertexInput vertexInput, inout c23_vertexOutput vertexOutput) {}',
 			uniforms: {
 				u_color: { value: color },
 				u_matrix: { value: matrix },
@@ -197,6 +199,7 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 		expect( clone.uuid ).not.toBe( source.uuid );
 		expect( clone.version ).toBe( 0 );
 		expect( clone.type ).toBe( source.type );
+		expect( clone.vertexShader ).toBe( source.vertexShader );
 		expect( clone.fragmentShader ).toBe( source.fragmentShader );
 		expect( clone.uniforms ).not.toBe( source.uniforms );
 		expect( clone.defines ).not.toBe( source.defines );

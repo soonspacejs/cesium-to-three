@@ -47,6 +47,17 @@ out vec2 v_testUv;
 // [c23:vertex-system-helpers]
 vec3 c23_testHelper(vec3 p) { return p; }
 
+// [c23:ground-vertex-abi]
+
+// [c23:ground-user-defines]
+
+// [c23:ground-user-vertex]
+
+// [c23:vertex-safe-hook]
+void c23_applyVertex(vec3 positionEC, inout vec4 positionClip) {
+	// Fixed safe path: no logical vertex hook was supplied.
+}
+
 // [c23:vertex-main]
 void main() { gl_Position = vec4(c23_testHelper(position3DHigh), 1.0); }
 "

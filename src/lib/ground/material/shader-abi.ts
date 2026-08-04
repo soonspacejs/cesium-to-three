@@ -128,6 +128,23 @@ struct c23_material {
 };
 `;
 
+/** ABI declarations injected only when a safe Material provides a vertex hook. */
+export const C23_VERTEX_SHADER_ABI_SOURCE = /* glsl */ `
+#define C23_GROUND_SHADER_ABI_VERSION ${ C23_GROUND_SHADER_ABI_VERSION }
+
+uniform float c23_time;
+uniform float c23_deltaTime;
+uniform float c23_frameNumber;
+
+struct c23_vertexInput {
+	vec3 positionEC;
+};
+
+struct c23_vertexOutput {
+	vec4 positionClip;
+};
+`;
+
 /** Emits the one and only kind macro for a safe compiled material. */
 export function createGroundKindDefineSource( kind: GroundPrimitiveKind ): string {
 	return `#define ${ C23_KIND_DEFINE_NAMES[ kind ] } 1`;

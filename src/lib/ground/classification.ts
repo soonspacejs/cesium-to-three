@@ -569,6 +569,16 @@ function compileClassificationPass(
 	} );
 }
 
+/** Safe vertex hooks own the same three-pass command set as Raw appearances. */
+function appearanceOwnsClassificationVertex(
+	appearance: CesiumGroundAppearance,
+): boolean {
+	return appearance instanceof CesiumGroundRawShaderAppearance || (
+		appearance instanceof CesiumGroundMaterialAppearance &&
+		appearance.material.vertexShader !== undefined
+	);
+}
+
 /**
  * Builds the candidate set needed by the current Appearance transition. Safe
  * appearances normally rebuild only color and retain fixed compiled stencils;
@@ -581,7 +591,7 @@ function compileClassificationAppearance(
 	fragmentCull: boolean,
 	includeSafeStencil = false,
 ): Pick<ClassificationMaterialPipelineRuntime, 'compiledFront' | 'compiledBack' | 'compiledColor'> {
-	if ( runtime.appearance instanceof CesiumGroundRawShaderAppearance || includeSafeStencil ) {
+	if ( appearanceOwnsClassificationVertex( runtime.appearance ) || includeSafeStencil ) {
 		let compiledFront: GroundCompiledMaterial | undefined;
 		let compiledBack: GroundCompiledMaterial | undefined;
 		let compiledColor: GroundCompiledMaterial | undefined;
@@ -930,13 +940,13 @@ export class CesiumClassificationPrimitive {
 		// Compile first. A validation failure leaves the current material and
 		// Appearance untouched, so a failed custom shader cannot create a half-updated
 		// command block or a transient transparent frame.
-		const replaceRawStencilWithFixed =
-			this.materialPipeline.appearance instanceof CesiumGroundRawShaderAppearance &&
-			! ( nextAppearance instanceof CesiumGroundRawShaderAppearance );
+		const replaceOwnedStencilWithFixed =
+			appearanceOwnsClassificationVertex( this.materialPipeline.appearance ) &&
+			! appearanceOwnsClassificationVertex( nextAppearance );
 		const nextCompiled = compileClassificationAppearance( {
 			...this.materialPipeline,
 			appearance: nextAppearance,
-		}, this.colorFragmentCull, replaceRawStencilWithFixed );
+		}, this.colorFragmentCull, replaceOwnedStencilWithFixed );
 		const previousFrontMaterial = this.stencilMesh.material as Material;
 		const previousBackMaterial = this.backStencilMesh.material as Material;
 		const previousColorMaterial = this.colorMesh.material as Material;
@@ -1084,7 +1094,14 @@ export class CesiumClassificationPrimitive {
 			this.materialPipeline.compiledColor.appearanceVersion === currentVersion
 		) return;
 
-		const nextCompiled = compileClassificationAppearance( this.materialPipeline, this.colorFragmentCull );
+		const replaceRemovedSafeVertex =
+			! appearanceOwnsClassificationVertex( this.materialPipeline.appearance ) &&
+			this.materialPipeline.compiledFront?.materialVersion !== undefined;
+		const nextCompiled = compileClassificationAppearance(
+			this.materialPipeline,
+			this.colorFragmentCull,
+			replaceRemovedSafeVertex,
+		);
 		const previousFrontMaterial = this.stencilMesh.material as Material;
 		const previousBackMaterial = this.backStencilMesh.material as Material;
 		const previousColorMaterial = this.colorMesh.material as Material;

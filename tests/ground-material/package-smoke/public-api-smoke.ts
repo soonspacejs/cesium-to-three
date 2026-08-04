@@ -5,6 +5,8 @@
 import {
 	CesiumGroundMaterial,
 	CesiumGroundMaterialAppearance,
+	createGroundFragmentShader,
+	createGroundVertexShader,
 	createPulsePointMaterial,
 	type GroundRawShaderBuildContext,
 	type PulsePointMaterialOptions,
@@ -12,6 +14,8 @@ import {
 import {
 	CesiumGroundMaterial as GroundCesiumGroundMaterial,
 	CesiumGroundMaterialAppearance as GroundCesiumGroundMaterialAppearance,
+	createGroundFragmentShader as createGroundEntryFragmentShader,
+	createGroundVertexShader as createGroundEntryVertexShader,
 	createPulsePointMaterial as createGroundPulsePointMaterial,
 	type GroundRawShaderBuildContext as GroundEntryRawShaderBuildContext,
 	type PulsePointMaterialOptions as GroundEntryPulsePointMaterialOptions,
@@ -19,6 +23,19 @@ import {
 
 const rootOptions: PulsePointMaterialOptions = { periodSeconds: 1.5, phase: 0.25 };
 const groundOptions: GroundEntryPulsePointMaterialOptions = rootOptions;
+
+export const rootVertexShader: string = createGroundVertexShader(
+	'vertexOutput.positionClip.x += c23_time * 0.0;',
+);
+export const groundVertexShader: string = createGroundEntryVertexShader(
+	'vertexOutput.positionClip.x += c23_time * 0.0;',
+);
+export const rootFragmentShader: string = createGroundFragmentShader(
+	'material.alpha *= 1.0;',
+);
+export const groundFragmentShader: string = createGroundEntryFragmentShader(
+	'material.alpha *= 1.0;',
+);
 
 export const rootMaterial: CesiumGroundMaterial = createPulsePointMaterial( rootOptions );
 export const groundMaterial: GroundCesiumGroundMaterial =

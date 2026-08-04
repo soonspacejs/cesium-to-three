@@ -21,6 +21,20 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 `,
 } );
 
+const VERTEX_MATERIAL = new CesiumGroundMaterial( {
+	type: 'SystemShaderVertexFixture',
+	vertexShader: /* glsl */ `
+void c23_vertexMain(
+	c23_vertexInput vertexInput,
+	inout c23_vertexOutput vertexOutput
+) {
+	float wave = sin(vertexInput.positionEC.x * 0.01 + c23_time);
+	vertexOutput.positionClip.y += wave * vertexOutput.positionClip.w * 0.01;
+}
+`,
+	fragmentShader: COLOR_MATERIAL.fragmentShader,
+} );
+
 describe( 'Ground classification stencil system shaders', () => {
 	it( 'locks the complete front-stencil source pair', () => {
 		const source = createGroundClassificationStencilShaders( 'surface', 'frontStencil' );
@@ -52,6 +66,37 @@ describe( 'Ground classification stencil system shaders', () => {
 		expect( fragmentShader ).toContain( 'discard;' );
 		expect( fragmentShader ).toContain( 'gl_FragDepth = log2(depthFromNearPlusOne)' );
 		expect( fragmentShader ).not.toContain( 'c23_getMaterial' );
+	} );
+
+	it( 'injects one safe vertex hook into every supported kind and surface pass', () => {
+		const sources = [
+			createGroundClassificationStencilShaders( 'surface', 'frontStencil', VERTEX_MATERIAL ),
+			createGroundClassificationStencilShaders( 'surface', 'backStencil', VERTEX_MATERIAL ),
+			createGroundClassificationColorShaders( 'surface', VERTEX_MATERIAL, true ),
+			createGroundClassificationColorShaders( 'decal', VERTEX_MATERIAL, false ),
+			createGroundPolylineShaders( VERTEX_MATERIAL, false ),
+			createGroundArrowShaders( VERTEX_MATERIAL, false ),
+		];
+
+		for ( const source of sources ) {
+			expect( source.vertexShader.match( /void c23_vertexMain/g ) ).toHaveLength( 1 );
+			expect( source.vertexShader.match( /c23_vertexMain\(vertexInput, vertexOutput\)/g ) )
+				.toHaveLength( 1 );
+			expect( source.vertexShader.match( /c23_applyVertex\(/g ) ).toHaveLength( 2 );
+			expect( source.vertexShader ).toContain( 'uniform float c23_time;' );
+		}
+	} );
+
+	it( 'keeps custom front/back vertex math identical apart from the pass macro', () => {
+		const front = createGroundClassificationStencilShaders(
+			'surface', 'frontStencil', VERTEX_MATERIAL,
+		);
+		const back = createGroundClassificationStencilShaders(
+			'surface', 'backStencil', VERTEX_MATERIAL,
+		);
+
+		expect( front.vertexShader.split( '#define C23_PASS_FRONT_STENCIL 1' ).join( '' ) )
+			.toBe( back.vertexShader.split( '#define C23_PASS_BACK_STENCIL 1' ).join( '' ) );
 	} );
 
 	it( 'locks the full surface color evaluation and safe finalizer source', () => {

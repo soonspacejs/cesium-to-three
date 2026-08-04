@@ -92,6 +92,8 @@ void main() {
 	// Keep the ABI-prescribed batch attribute live without changing the single-instance result.
 	positionRte.w += batchId * 0.0;
 	gl_Position = czm_modelViewProjectionRelativeToEye * positionRte;
+	vec3 c23_vertexPositionEC = (czm_modelViewRelativeToEye * positionRte).xyz;
+	c23_applyVertex(c23_vertexPositionEC, gl_Position);
 	c23_writeVertexLogDepth();
 }
 `;
@@ -138,11 +140,16 @@ void main() {
 export function createGroundClassificationStencilShaders(
 	kind: Extract<GroundPrimitiveKind, 'surface' | 'decal'>,
 	pass: Extract<GroundRenderPass, 'frontStencil' | 'backStencil'>,
+	material?: Pick<
+		CesiumGroundMaterial,
+		'type' | 'vertexShader' | 'fragmentShader' | 'uniforms' | 'defines'
+	>,
 ): GroundShaderSourcePair {
 	return Object.freeze( {
 		vertexShader: assembleGroundVertexShader( {
 			kind,
 			pass,
+			material,
 			sections: {
 				declarations: CLASSIFICATION_STENCIL_VERTEX_DECLARATIONS,
 				attributes: CLASSIFICATION_ATTRIBUTES,
@@ -192,6 +199,8 @@ void main() {
 	positionRte.w += batchId * 0.0;
 
 	gl_Position = czm_modelViewProjectionRelativeToEye * positionRte;
+	vec3 c23_vertexPositionEC = (czm_modelViewRelativeToEye * positionRte).xyz;
+	c23_applyVertex(c23_vertexPositionEC, gl_Position);
 	gl_Position.z = clamp(gl_Position.z / gl_Position.w, -1.0, 1.0) * gl_Position.w;
 }
 `;
@@ -521,7 +530,10 @@ c23_input.normalEC = c23_surface.normalEC;
  */
 export function createGroundClassificationColorShaders(
 	kind: Extract<GroundPrimitiveKind, 'surface' | 'decal'>,
-	material: Pick<CesiumGroundMaterial, 'type' | 'fragmentShader' | 'uniforms' | 'defines'>,
+	material: Pick<
+		CesiumGroundMaterial,
+		'type' | 'vertexShader' | 'fragmentShader' | 'uniforms' | 'defines'
+	>,
 	fragmentCull: boolean,
 ): GroundShaderSourcePair {
 	const systemDefines = fragmentCull ? [ 'C23_FRAGMENT_CULL 1' ] : [];
@@ -529,6 +541,7 @@ export function createGroundClassificationColorShaders(
 		vertexShader: assembleGroundVertexShader( {
 			kind,
 			pass: 'color',
+			material,
 			systemDefines,
 			sections: {
 				declarations: CLASSIFICATION_COLOR_VERTEX_DECLARATIONS,
@@ -716,6 +729,7 @@ void main() {
 	positionEC.xyz += pushMeters * normalEC;
 
 	gl_Position = czm_projection * positionEC;
+	c23_applyVertex(positionEC.xyz, gl_Position);
 	gl_Position.z = clamp(gl_Position.z / gl_Position.w, -1.0, 1.0) * gl_Position.w;
 }
 `;
@@ -1035,7 +1049,10 @@ c23_input.metersPerPixel = c23_mpp;
 
 /** Builds the complete safe polyline source pair. */
 export function createGroundPolylineShaders(
-	material: Pick<CesiumGroundMaterial, 'type' | 'fragmentShader' | 'uniforms' | 'defines'>,
+	material: Pick<
+		CesiumGroundMaterial,
+		'type' | 'vertexShader' | 'fragmentShader' | 'uniforms' | 'defines'
+	>,
 	debugVolume: boolean,
 ): GroundShaderSourcePair {
 	const systemDefines = debugVolume ? [ 'C23_DEBUG_VOLUME 1' ] : [];
@@ -1043,6 +1060,7 @@ export function createGroundPolylineShaders(
 		vertexShader: assembleGroundVertexShader( {
 			kind: 'polyline',
 			pass: 'polyline',
+			material,
 			systemDefines,
 			sections: {
 				declarations: POLYLINE_VERTEX_DECLARATIONS,
@@ -1155,6 +1173,7 @@ void main() {
 	positionEC += upEC * altitudeOffset;
 
 	gl_Position = czm_projection * vec4(positionEC, 1.0);
+	c23_applyVertex(positionEC, gl_Position);
 	gl_Position.z = clamp(gl_Position.z / gl_Position.w, -1.0, 1.0) * gl_Position.w;
 }
 `;
@@ -1294,7 +1313,10 @@ c23_input.metersPerPixel = c23_mpp;
 
 /** Builds the complete safe arrowhead source pair. */
 export function createGroundArrowShaders(
-	material: Pick<CesiumGroundMaterial, 'type' | 'fragmentShader' | 'uniforms' | 'defines'>,
+	material: Pick<
+		CesiumGroundMaterial,
+		'type' | 'vertexShader' | 'fragmentShader' | 'uniforms' | 'defines'
+	>,
 	debugVolume: boolean,
 ): GroundShaderSourcePair {
 	const systemDefines = debugVolume ? [ 'C23_DEBUG_VOLUME 1' ] : [];
@@ -1302,6 +1324,7 @@ export function createGroundArrowShaders(
 		vertexShader: assembleGroundVertexShader( {
 			kind: 'arrow',
 			pass: 'arrow',
+			material,
 			systemDefines,
 			sections: {
 				declarations: ARROW_VERTEX_DECLARATIONS,

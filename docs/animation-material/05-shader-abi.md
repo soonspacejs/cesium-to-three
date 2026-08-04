@@ -81,7 +81,34 @@ struct c23_material {
 c23_material c23_getMaterial(c23_materialInput input);
 ```
 
-### 1.2 最小合法 Material
+### 1.2 可选安全顶点入口
+
+`vertexShader` 省略时使用固定系统顶点阶段；提供时，assembler 注入：
+
+```glsl
+struct c23_vertexInput {
+    vec3 positionEC;
+};
+
+struct c23_vertexOutput {
+    vec4 positionClip;
+};
+```
+
+用户源码必须提供且只提供：
+
+```glsl
+void c23_vertexMain(
+    c23_vertexInput vertexInput,
+    inout c23_vertexOutput vertexOutput
+);
+```
+
+`positionEC` 是系统保守 shadow-volume/line-box 顶点的眼坐标米制位置，只读；顶点动画修改 `positionClip`。系统会把同一源码、defines 和 uniform wrappers 注入 surface/decal 的 front stencil、back stencil 与 color 三个 pass，避免用户复制默认 Shader。
+
+可直接导入 `C23_GROUND_VERTEX_SHADER_TEMPLATE`，或用 `createGroundVertexShader(body)` 只填写函数体；配套的 `C23_GROUND_FRAGMENT_SHADER_TEMPLATE` 是可编译的透传 fragment 模板。
+
+### 1.3 最小合法 Material
 
 > **Proposed GLSL 示例：**这是用户 `fragmentShader` 内容，不含 assembler 注入的 `#version`、precision、struct 或 `main()`。
 
@@ -105,6 +132,8 @@ c23_material c23_getMaterial(c23_materialInput input) {
 - 用户常量和 helper 函数；
 - 条件预处理 allowlist：`#if`、`#ifdef`、`#ifndef`、`#elif`、`#else`、`#endif`，用于用户 defines 或 `C23_*` kind 宏分支；
 - 唯一且签名精确的 `c23_getMaterial` 实现。
+
+安全 Material 的可选 `vertexShader` 可以包含用户 uniform、普通 helper、kind 条件分支和唯一精确的 `c23_vertexMain`。不得访问 `gl_Position`（改 `vertexOutput.positionClip`）、不得声明 varying/main，也不得按 `C23_PASS_*` 分支；最后一条保证 classification 三 pass 的顶点覆盖一致。
 
 ### 2.2 禁止内容
 
@@ -341,6 +370,7 @@ front/back 保留完整 `czm_vertexLogDepth/czm_writeLogDepth`。classification 
 
 | 数据 | 类别 | 改变后 |
 | --- | --- | --- |
+| `vertexShader` | 编译期 | Material `needsUpdate=true`；surface/decal 原子重建三 pass |
 | `fragmentShader` | 编译期 | Material `needsUpdate=true`，重建 compiled material |
 | defines key/value | 编译期 | 同上 |
 | uniform key/schema | 编译期 | 同上 |
@@ -534,7 +564,7 @@ Current 事实：`src/lib/ground/materials.ts:1421-1458,1704-1737`。完全替�
 
 ### 13.1 surface / decal
 
-三个 pass 使用同一 geometry，但各自是独立 material。若用户在 vertex shader 中变换 footprint：
+三个 pass 使用同一 geometry，但各自是独立 material。安全 `vertexShader` 由 assembler 自动注入同一个 Hook，因此保持：
 
 ```text
 frontStencil(vertex) == backStencil(vertex) == color(vertex)
@@ -546,7 +576,7 @@ frontStencil(vertex) == backStencil(vertex) == color(vertex)
 - stencil 与 color 不一致会在旧位置着色、漏清 stencil 或清错区域；
 - 只改 color 的“视觉几何缩放”不是安全做法。safe scale effect应只变换 `st`/采样坐标，并受原 footprint裁切。
 
-Raw factory 可在三个 context 中调用 `createDefaultMaterial()`，把相同 vertex source 变换注入三者。开发模式只能检查三个 pass 都返回且不是同一 material 实例；无法证明 GLSL 等价。
+安全 Hook 禁止读取 `C23_PASS_*` 宏。Raw factory 仍可在三个 context 中调用 `createDefaultMaterial()` 后自行修改完整 vertex source；Raw 路径只能检查三个 pass 都返回且不是同一 material 实例，无法证明用户修改后的 GLSL 等价。
 
 ### 13.2 polyline / arrow
 

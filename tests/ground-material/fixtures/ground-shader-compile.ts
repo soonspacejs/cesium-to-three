@@ -60,6 +60,16 @@ const TEST_MATERIAL = new CesiumGroundMaterial( {
 	type: 'WebGL2CompileFixture',
 	uniforms: { u_gain: { value: 1.0 } },
 	defines: { FIXTURE_GAIN_ENABLED: true },
+	vertexShader: /* glsl */ `
+uniform float u_gain;
+void c23_vertexMain(
+	c23_vertexInput vertexInput,
+	inout c23_vertexOutput vertexOutput
+) {
+	float wave = sin(vertexInput.positionEC.x * 0.01 + c23_time);
+	vertexOutput.positionClip.y += wave * u_gain * vertexOutput.positionClip.w * 0.001;
+}
+`,
 	fragmentShader: /* glsl */ `
 uniform float u_gain;
 

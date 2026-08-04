@@ -117,6 +117,14 @@ export interface CesiumGroundMaterialOptions {
   defines?: GroundDefines;
 
   /**
+   * 可选安全顶点 Hook；必须实现：
+   * void c23_vertexMain(c23_vertexInput vertexInput,
+   *                     inout c23_vertexOutput vertexOutput)
+   * 只能修改 vertexOutput.positionClip，不得声明 main()。
+   */
+  vertexShader?: string;
+
+  /**
    * GLSL3 源码，可以包含用户 uniform 与 helper，但必须提供且只能以此作为材质入口：
    * c23_material c23_getMaterial(c23_materialInput input)
    * 不得声明 main()。
@@ -134,6 +142,7 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
   type: string;
   uniforms: GroundUserUniforms;
   defines: GroundDefines;
+  vertexShader?: string;
   fragmentShader: string;
   readonly version: number;
 
@@ -170,6 +179,7 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
 | `material.uniforms.u_speed.value = 2` | 仅既有 key | 不变 | 否 |
 | 替换既有 wrapper | 只允许配置阶段 | 手动 `needsUpdate=true` | 是 |
 | 新增/删除 uniform key | 只允许配置阶段 | 手动 `needsUpdate=true` | 是 |
+| 修改/增加/移除 `vertexShader` | 允许 | 手动 `needsUpdate=true` | 是；surface/decal 原子重建三 pass |
 | 修改 `fragmentShader` | 允许 | 手动 `needsUpdate=true` | 是 |
 | 修改 `defines` 的 key/value | 允许 | 手动 `needsUpdate=true` | 是 |
 | 修改 `type` | 允许用于调试 | 不变 | 否 |
@@ -244,14 +254,16 @@ export class CesiumGroundMaterialAppearance {
 }
 ```
 
-安全 Appearance 不暴露 vertex shader 和 Ground render state。它的能力是：
+安全 Appearance 暴露受控 vertex Hook，但不暴露完整系统 vertex shader 或 Ground render state。它的能力是：
 
 1. 验证 user uniforms/defines/function 名称；
-2. 用 [05](./05-shader-abi.md) 的系统前缀编译 `fragmentShader`；
-3. 只在适用的 color/polyline/arrow pass 调用 `c23_getMaterial`；
-4. 把用户返回的 straight alpha 统一预乘；
-5. 保持 shape/depth/stencil/log-depth 清理逻辑；
-6. 由 `material.version` 决定是否重建 compiled material。
+2. 可选编译 `vertexShader`，在系统投影之后统一修改 `positionClip`；
+3. 对 surface/decal 的 front/back/color 三 pass 注入完全相同的 Hook；
+4. 用 [05](./05-shader-abi.md) 的系统前缀编译 `fragmentShader`；
+5. 只在适用的 color/polyline/arrow pass 调用 `c23_getMaterial`；
+6. 把用户返回的 straight alpha 统一预乘；
+7. 保持属性布局、shape/depth/stencil/log-depth 与 render state；
+8. 由 `material.version` 决定是否重建 compiled material。
 
 同一个安全 Appearance 可以用于不同 primitive kind；assembler 会分别以 `C23_SURFACE`、`C23_POLYLINE`、`C23_DECAL` 或 `C23_ARROW` 编译。用户 Shader 应用 `#ifdef` 分支处理能力差异。不适用输入为稳定零值，不允许读取未初始化值。
 

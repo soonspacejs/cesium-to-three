@@ -9,6 +9,7 @@
 import type { CesiumGroundMaterial } from './CesiumGroundMaterial';
 import {
 	C23_SHADER_ABI_SOURCE,
+	C23_VERTEX_SHADER_ABI_SOURCE,
 	createFinalOutputSource,
 	createGroundKindDefineSource,
 	createGroundUserDefineSource,
@@ -40,6 +41,11 @@ interface GroundShaderAssemblyBase {
  * the assembler to rename or patch an imported function.
  */
 export interface GroundVertexShaderAssemblyOptions extends GroundShaderAssemblyBase {
+	/** Optional logical Material whose safe vertex hook is shared by this pass. */
+	material?: Pick<
+		CesiumGroundMaterial,
+		'type' | 'vertexShader' | 'fragmentShader' | 'uniforms' | 'defines'
+	>;
 	sections: {
 		declarations: string;
 		attributes: string;
@@ -47,6 +53,44 @@ export interface GroundVertexShaderAssemblyOptions extends GroundShaderAssemblyB
 		helpers?: string;
 		main: string;
 	};
+}
+
+/** Internal bridge keeps the system main independent of optional user source. */
+function createSafeVertexHook(
+	options: GroundVertexShaderAssemblyOptions,
+): readonly string[] {
+	const material = options.material;
+	if ( material?.vertexShader === undefined ) {
+		return [
+			emitNamedSection( 'ground-vertex-abi', undefined ),
+			emitNamedSection( 'ground-user-defines', undefined ),
+			emitNamedSection( 'ground-user-vertex', undefined ),
+			emitNamedSection( 'vertex-safe-hook', /* glsl */ `
+void c23_applyVertex(vec3 positionEC, inout vec4 positionClip) {
+	// Fixed safe path: no logical vertex hook was supplied.
+}
+` ),
+		];
+	}
+
+	// Validate both stages here so a custom surface stencil pass cannot accept a
+	// structure that the later color pass would reject after partial compilation.
+	validateGroundMaterialSource( material, options.kind );
+	return [
+		emitNamedSection( 'ground-vertex-abi', C23_VERTEX_SHADER_ABI_SOURCE ),
+		emitNamedSection( 'ground-user-defines', createGroundUserDefineSource( material.defines ) ),
+		emitNamedSection( 'ground-user-vertex', material.vertexShader ),
+		emitNamedSection( 'vertex-safe-hook', /* glsl */ `
+void c23_applyVertex(vec3 positionEC, inout vec4 positionClip) {
+	c23_vertexInput vertexInput;
+	vertexInput.positionEC = positionEC;
+	c23_vertexOutput vertexOutput;
+	vertexOutput.positionClip = positionClip;
+	c23_vertexMain(vertexInput, vertexOutput);
+	positionClip = vertexOutput.positionClip;
+}
+` ),
+	];
 }
 
 /** Fixed front/back stencil source; it deliberately has no Material ABI call. */
@@ -68,7 +112,10 @@ export interface GroundStencilFragmentShaderAssemblyOptions extends GroundShader
  */
 export interface GroundMaterialFragmentShaderAssemblyOptions extends GroundShaderAssemblyBase {
 	mode: 'material';
-	material: Pick<CesiumGroundMaterial, 'type' | 'fragmentShader' | 'uniforms' | 'defines'>;
+	material: Pick<
+		CesiumGroundMaterial,
+		'type' | 'vertexShader' | 'fragmentShader' | 'uniforms' | 'defines'
+	>;
 	sections: {
 		declarations: string;
 		varyings?: string;
@@ -156,6 +203,7 @@ export function assembleGroundVertexShader(
 		emitNamedSection( 'vertex-attributes', options.sections.attributes ),
 		emitNamedSection( 'vertex-varyings', options.sections.varyings ),
 		emitNamedSection( 'vertex-system-helpers', options.sections.helpers ),
+		...createSafeVertexHook( options ),
 		emitNamedSection( 'vertex-main', options.sections.main ),
 	] );
 }

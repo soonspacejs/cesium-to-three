@@ -20,6 +20,12 @@ export interface CesiumGroundMaterialOptions {
 	uniforms?: GroundUserUniforms;
 	/** Compile-time user macros. False records an off state and emits no macro. */
 	defines?: GroundDefines;
+	/**
+	 * Optional safe GLSL3 vertex hook. The exact entry signature is provided by
+	 * `C23_GROUND_VERTEX_SHADER_TEMPLATE`; omitted values preserve the fixed
+	 * library vertex stage without adding user uniforms to stencil passes.
+	 */
+	vertexShader?: string;
 	/** Safe GLSL3 material source. Entry-function validation occurs at compile time. */
 	fragmentShader: string;
 }
@@ -53,6 +59,7 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
 	public type: string;
 	public uniforms: GroundUserUniforms;
 	public defines: GroundDefines;
+	public vertexShader?: string;
 	public fragmentShader: string;
 
 	private _version = 0;
@@ -64,6 +71,9 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
 		}
 		if ( typeof options.fragmentShader !== 'string' ) {
 			throw new TypeError( 'CesiumGroundMaterial fragmentShader must be a string.' );
+		}
+		if ( options.vertexShader !== undefined && typeof options.vertexShader !== 'string' ) {
+			throw new TypeError( 'CesiumGroundMaterial vertexShader must be a string when provided.' );
 		}
 		if ( options.type !== undefined && typeof options.type !== 'string' ) {
 			throw new TypeError( 'CesiumGroundMaterial type must be a string.' );
@@ -80,6 +90,7 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
 		// identity. Only an explicit clone() creates independent wrappers/values.
 		this.uniforms = uniforms;
 		this.defines = defines;
+		this.vertexShader = options.vertexShader;
 		this.fragmentShader = options.fragmentShader;
 		GROUND_MATERIAL_STRUCTURE_SNAPSHOTS.set( this, {
 			version: this.version,
@@ -114,6 +125,7 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
 			type: this.type,
 			uniforms: cloneGroundUniforms( this.uniforms ),
 			defines: { ...this.defines },
+			vertexShader: this.vertexShader,
 			fragmentShader: this.fragmentShader,
 		} );
 	}

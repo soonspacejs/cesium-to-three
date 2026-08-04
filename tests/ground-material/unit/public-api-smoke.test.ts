@@ -5,6 +5,10 @@ import * as groundEntry from '../../../src/lib/ground';
 
 const REQUIRED_RUNTIME_EXPORTS = [
 	'C23_GROUND_SHADER_ABI_VERSION',
+	'C23_GROUND_VERTEX_SHADER_TEMPLATE',
+	'C23_GROUND_FRAGMENT_SHADER_TEMPLATE',
+	'createGroundVertexShader',
+	'createGroundFragmentShader',
 	'CesiumGroundMaterial',
 	'CesiumGroundMaterialAppearance',
 	'CesiumGroundRawShaderAppearance',

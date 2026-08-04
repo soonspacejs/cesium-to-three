@@ -19,7 +19,7 @@
 
 当前 Ground 公共入口已经提供：
 
-- `CesiumGroundMaterial`：安全的逻辑 Material、稳定 user uniform wrapper、`setUniform()`、`clone()` 和显式 `dispose()`；
+- `CesiumGroundMaterial`：安全的逻辑 Material、可选 vertex Hook、稳定 user uniform wrapper、`setUniform()`、`clone()` 和显式 `dispose()`；
 - `CesiumGroundMaterialAppearance`：推荐的 `c23_getMaterial` 接入方式；
 - `CesiumGroundRawShaderAppearance`：按物理 pass 完整接管 `RawShaderMaterial` 的专家入口；
 - `createFlowLineMaterial`、`createPulsePointMaterial`、`createScalePulseMaterial` 等内置效果；
@@ -122,10 +122,10 @@ flowchart TD
 | 主题 | 决策 | 事实源 |
 | --- | --- | --- |
 | 动画模型 | 稳定 Shader + 动态 uniform；无 timeline/tween/内部 RAF | 本文、[07](./07-built-in-effects.md) |
-| 安全扩展 | `CesiumGroundMaterialAppearance`，用户实现 `c23_getMaterial` | [04](./04-public-api-design.md)、[05](./05-shader-abi.md) |
+| 安全扩展 | `CesiumGroundMaterialAppearance`；fragment 实现 `c23_getMaterial`，可选 vertex 实现 `c23_vertexMain` | [04](./04-public-api-design.md)、[05](./05-shader-abi.md) |
 | 完整扩展 | `CesiumGroundRawShaderAppearance`，按 pass 返回独立 `RawShaderMaterial` | [04](./04-public-api-design.md)、[05](./05-shader-abi.md) |
 | Shader ABI | `C23_GROUND_SHADER_ABI_VERSION = 1`；不适用字段初始化为零 | [05](./05-shader-abi.md) |
-| 保留前缀 | 用户 uniform、define、函数不得使用 `czm_`、`c23_` 或 `C23_`；唯一例外是精确入口 `c23_getMaterial` | [04](./04-public-api-design.md)、[05](./05-shader-abi.md) |
+| 保留前缀 | 用户 uniform、define、函数不得使用 `czm_`、`c23_` 或 `C23_`；例外是精确入口 `c23_getMaterial` / `c23_vertexMain` | [04](./04-public-api-design.md)、[05](./05-shader-abi.md) |
 | 系统 uniform | Raw context 只公开 canonical `czm_*`/`c23_*`；legacy `u_*` 仅作同 wrapper 迁移别名，不进入 user merge | [05](./05-shader-abi.md)、[08](./08-lifecycle-cache-resources.md) |
 | 透明 classification | Material alpha 为零时仍运行 color pass 并清 stencil；不得提前 `discard` | [05](./05-shader-abi.md)、[06](./06-render-pipeline-integration.md) |
 | 时间 | 宿主传秒；缺省为零；示例按要求使用 `THREE.Clock` | [04](./04-public-api-design.md)、[07](./07-built-in-effects.md) |
@@ -209,6 +209,29 @@ flowchart TD
 | Cesium | `D:\my\explore\cesium` | `effe290c08` / `@cesium/engine 26.1.0` | Appearance、Material、Property 与 Ground 管线参考 |
 
 当前项目的 `package.json:44` 固定依赖 `three ^0.183.0`，因此 r185 源码结论必须经过兼容判断。首期不依赖只在 r185 才存在的接口。`THREE.Clock` 自 r183 起被标记弃用；本套 API 只接收宿主产生的秒值，按需求保留 `Clock` 示例，并在 [源码调研](./01-three-cesium-reference.md) 中说明 `Timer` 等价接线。
+
+## 示例：只写动画逻辑的 vertex + fragment
+
+```ts
+import {
+  CesiumGroundMaterial,
+  createGroundFragmentShader,
+  createGroundVertexShader,
+} from 'cesium-to-three/ground';
+
+const material = new CesiumGroundMaterial({
+  uniforms: { u_speed: { value: 2 } },
+  vertexShader: createGroundVertexShader(/* glsl */ `
+    float wave = sin(vertexInput.positionEC.x * 0.01 + c23_time * u_speed);
+    vertexOutput.positionClip.y += wave * vertexOutput.positionClip.w * 0.01;
+  `, 'uniform float u_speed;'),
+  fragmentShader: createGroundFragmentShader(/* glsl */ `
+    material.alpha *= 0.5 + 0.5 * sin(c23_time * u_speed);
+  `, 'uniform float u_speed;'),
+});
+```
+
+不需要复制默认系统 Shader。`C23_GROUND_VERTEX_SHADER_TEMPLATE` 与 `C23_GROUND_FRAGMENT_SHADER_TEMPLATE` 也可直接作为编辑起点；surface/decal 的 vertex Hook 自动同步到 front/back/color 三个 pass。
 
 ## 示例：共享 Material 与热更新 uniform
 

@@ -168,7 +168,7 @@ function createGroundPassShaders(
 			// guard local prevents future pass additions from weakening type safety.
 			throw new TypeError( `Stencil pass cannot be assembled for ${ kind }.` );
 		}
-		return createGroundClassificationStencilShaders( kind, pass );
+		return createGroundClassificationStencilShaders( kind, pass, material );
 	}
 	if ( pass === 'color' ) {
 		if ( kind !== 'surface' && kind !== 'decal' ) {
@@ -474,7 +474,8 @@ export function compileGroundPass( options: CompileGroundPassOptions ): GroundCo
 	let materialVersion: number | undefined;
 	if ( options.appearance instanceof CesiumGroundMaterialAppearance ) {
 		const logicalMaterial = options.appearance.material;
-		const isFixedStencil = options.pass === 'frontStencil' || options.pass === 'backStencil';
+		const isStencil = options.pass === 'frontStencil' || options.pass === 'backStencil';
+		const isFixedStencil = isStencil && logicalMaterial.vertexShader === undefined;
 		const structureKey = isFixedStencil
 			? undefined
 			: prepareGroundMaterialStructureForCompile( logicalMaterial, {
@@ -485,9 +486,8 @@ export function compileGroundPass( options: CompileGroundPassOptions ): GroundCo
 				primitiveId: options.pipelineState.primitiveId,
 				abiVersion: C23_GROUND_SHADER_ABI_VERSION,
 			} );
-		// Safe stencil is a library-fixed branch. It must not bind or key user
-		// wrappers, source, schema, or Material version; only color/line/arrow
-		// consume the logical Material ABI.
+		// A stencil remains fixed only when no safe vertex hook exists. Custom
+		// vertex source and wrappers must be identical across front/back/color.
 		const uniforms = isFixedStencil
 			? { ...options.systemUniforms }
 			: mergeGroundUniforms( options.systemUniforms, logicalMaterial.uniforms );

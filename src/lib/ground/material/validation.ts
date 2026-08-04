@@ -174,6 +174,7 @@ interface GroundGlslToken {
 interface GroundSourceValidationContext {
 	materialType: string;
 	kind: GroundPrimitiveKind;
+	entryName: 'c23_getMaterial' | 'c23_vertexMain';
 }
 
 interface GroundFunctionCandidate {
@@ -525,14 +526,17 @@ function assertTopLevelNameAvailable(
 	domain: 'function' | 'struct' | 'global',
 	context: GroundSourceValidationContext,
 ): void {
-	if ( token.value === 'c23_getMaterial' ) {
+	if ( token.value === context.entryName ) {
 		if ( domain === 'function' ) return;
+		const reason = context.entryName === 'c23_getMaterial'
+			? 'material-entry-not-a-function'
+			: 'shader-entry-not-a-function';
 		throwGroundSourceError(
 			'GROUND_MATERIAL_FUNCTION_INVALID',
 			context,
 			token,
-			'material-entry-not-a-function',
-			'c23_getMaterial must be the exact safe Material entry function.',
+			reason,
+			`${ context.entryName } must be the exact safe shader entry function.`,
 		);
 	}
 
@@ -668,31 +672,49 @@ function validateFunctionCandidate(
 	}
 
 	assertTopLevelNameAvailable( name, 'function', context );
-	if ( name.value !== 'c23_getMaterial' ) return false;
+	if ( name.value !== context.entryName ) return false;
 
-	const exactSignature = [
-		'c23_material',
-		'c23_getMaterial',
-		'(',
-		'c23_materialInput',
-		// `input` is a reserved future keyword in GLSL ES 3.00 and is rejected
-		// by ANGLE/SwiftShader. Fixing the parameter name here keeps validation
-		// aligned with the actual WebGL2 compiler instead of accepting source that
-		// can only fail later during a render.
-		'materialInput',
-		')',
-	];
+	const exactSignature = context.entryName === 'c23_getMaterial'
+		? [
+			'c23_material',
+			'c23_getMaterial',
+			'(',
+			'c23_materialInput',
+			// `input` is a reserved future keyword in GLSL ES 3.00 and is rejected
+			// by ANGLE/SwiftShader. Fixing the parameter name here keeps validation
+			// aligned with the actual WebGL2 compiler instead of accepting source that
+			// can only fail later during a render.
+			'materialInput',
+			')',
+		]
+		: [
+			'void',
+			'c23_vertexMain',
+			'(',
+			'c23_vertexInput',
+			'vertexInput',
+			',',
+			'inout',
+			'c23_vertexOutput',
+			'vertexOutput',
+			')',
+		];
 	const signatureMatches =
 		isDefinition &&
 		header.length === exactSignature.length &&
 		header.every(( token, index ) => token.value === exactSignature[ index ] );
 	if ( ! signatureMatches ) {
+		const reason = context.entryName === 'c23_getMaterial'
+			? ( isDefinition ? 'material-entry-signature-invalid' : 'material-entry-must-be-defined' )
+			: ( isDefinition ? 'shader-entry-signature-invalid' : 'shader-entry-must-be-defined' );
 		throwGroundSourceError(
 			'GROUND_MATERIAL_FUNCTION_INVALID',
 			context,
 			name,
-			isDefinition ? 'material-entry-signature-invalid' : 'material-entry-must-be-defined',
-			'Ground Material entry must be exactly c23_material c23_getMaterial(c23_materialInput materialInput).',
+			reason,
+			context.entryName === 'c23_getMaterial'
+				? 'Ground Material entry must be exactly c23_material c23_getMaterial(c23_materialInput materialInput).'
+				: 'Ground vertex entry must be exactly void c23_vertexMain(c23_vertexInput vertexInput, inout c23_vertexOutput vertexOutput).',
 		);
 	}
 	return true;
@@ -791,6 +813,7 @@ function assertGroundUniformSchemaMatches(
 	declaredUserUniforms: ReadonlySet<string>,
 	material: Pick<CesiumGroundMaterial, 'type' | 'uniforms'>,
 	context: GroundSourceValidationContext,
+	requireEveryWrapper: boolean,
 ): void {
 	for ( const declaredName of [ ...declaredUserUniforms ].sort() ) {
 		if ( Object.prototype.hasOwnProperty.call( material.uniforms, declaredName ) ) continue;
@@ -807,6 +830,7 @@ function assertGroundUniformSchemaMatches(
 		);
 	}
 
+	if ( ! requireEveryWrapper ) return;
 	for ( const wrapperName of Object.keys( material.uniforms ).sort() ) {
 		if ( declaredUserUniforms.has( wrapperName ) ) continue;
 		throw new CesiumGroundMaterialError(
@@ -830,12 +854,13 @@ function assertGroundUniformSchemaMatches(
  * exact source coordinates.
  */
 export function validateGroundMaterialSource(
-	material: Pick<CesiumGroundMaterial, 'type' | 'fragmentShader' | 'uniforms'>,
+	material: Pick<CesiumGroundMaterial, 'type' | 'vertexShader' | 'fragmentShader' | 'uniforms'>,
 	kind: GroundPrimitiveKind,
 ): GroundMaterialSourceAnalysis {
 	const context: GroundSourceValidationContext = {
 		materialType: material.type,
 		kind,
+		entryName: 'c23_getMaterial',
 	};
 	const commentFree = maskGlslComments( material.fragmentShader, context );
 	const declarationSource = maskAndValidatePreprocessor( commentFree, context );
@@ -891,7 +916,107 @@ export function validateGroundMaterialSource(
 		);
 	}
 
-	assertGroundUniformSchemaMatches( analysis.declaredUserUniforms, material, context );
+	assertGroundUniformSchemaMatches( analysis.declaredUserUniforms, material, context, false );
+	const allDeclaredUniforms = new Set( analysis.declaredUserUniforms );
+	if ( material.vertexShader !== undefined ) {
+		const vertexAnalysis = validateGroundVertexSource( material, kind );
+		for ( const name of vertexAnalysis.declaredUserUniforms ) allDeclaredUniforms.add( name );
+	}
+	assertGroundUniformSchemaMatches( allDeclaredUniforms, material, context, true );
+	return Object.freeze( {
+		declaredUserUniforms: Object.freeze( [ ...analysis.declaredUserUniforms ].sort() ),
+		tokenCount: tokens.length,
+	} );
+}
+
+/**
+ * Validates the optional safe vertex hook. Vertex uniforms must be backed by
+ * logical wrappers; wrappers used only by the fragment stage need not be
+ * redeclared here. Pass macros are forbidden so surface stencil/color coverage
+ * cannot diverge through user preprocessor branches.
+ */
+export function validateGroundVertexSource(
+	material: Pick<CesiumGroundMaterial, 'type' | 'vertexShader' | 'uniforms'>,
+	kind: GroundPrimitiveKind,
+): GroundMaterialSourceAnalysis {
+	if ( material.vertexShader === undefined ) {
+		return Object.freeze( {
+			declaredUserUniforms: Object.freeze( [] ),
+			tokenCount: 0,
+		} );
+	}
+
+	const context: GroundSourceValidationContext = {
+		materialType: material.type,
+		kind,
+		entryName: 'c23_vertexMain',
+	};
+	const commentFree = maskGlslComments( material.vertexShader, context );
+	const passMacro = /\bC23_PASS_(?:FRONT_STENCIL|BACK_STENCIL|COLOR|POLYLINE|ARROW)\b/
+		.exec( commentFree );
+	if ( passMacro !== null ) {
+		throwGroundSourceError(
+			'GROUND_MATERIAL_SOURCE_FORBIDDEN',
+			context,
+			passMacro[ 0 ],
+			'pass-dependent-vertex-source-forbidden',
+			'Ground vertex source cannot branch on render-pass macros.',
+		);
+	}
+	const declarationSource = maskAndValidatePreprocessor( commentFree, context );
+	const tokens = tokenizeGroundGlsl( declarationSource );
+
+	for ( const token of tokens ) {
+		if ( token.value === 'gl_Position' ) {
+			throwGroundSourceError(
+				'GROUND_MATERIAL_SOURCE_FORBIDDEN',
+				context,
+				token,
+				'clip-position-direct-access-forbidden',
+				'Ground vertex source must modify vertexOutput.positionClip instead of gl_Position.',
+			);
+		}
+		if ( token.value === 'discard' || token.value === 'gl_FragDepth' ) {
+			throwGroundSourceError(
+				'GROUND_MATERIAL_SOURCE_FORBIDDEN',
+				context,
+				token,
+				'fragment-operation-in-vertex-source',
+				`Ground vertex source cannot access ${ token.value }.`,
+			);
+		}
+		if ( token.value === '#' || token.value === '"' || token.value === "'" ) {
+			throwGroundSourceError(
+				'GROUND_MATERIAL_SOURCE_FORBIDDEN',
+				context,
+				token,
+				'unexpected-lexical-token',
+				`Ground vertex source contains forbidden token "${ token.value }".`,
+			);
+		}
+	}
+
+	const analysis = analyzeGroundTopLevel( tokens, context );
+	if ( analysis.entryCount === 0 ) {
+		throwGroundSourceError(
+			'GROUND_MATERIAL_FUNCTION_MISSING',
+			context,
+			'c23_vertexMain',
+			'vertex-entry-missing',
+			'Ground vertex source must define c23_vertexMain exactly once.',
+		);
+	}
+	if ( analysis.entryCount !== 1 ) {
+		throwGroundSourceError(
+			'GROUND_MATERIAL_FUNCTION_INVALID',
+			context,
+			'c23_vertexMain',
+			'vertex-entry-duplicate',
+			'Ground vertex source must define c23_vertexMain exactly once.',
+		);
+	}
+
+	assertGroundUniformSchemaMatches( analysis.declaredUserUniforms, material, context, false );
 	return Object.freeze( {
 		declaredUserUniforms: Object.freeze( [ ...analysis.declaredUserUniforms ].sort() ),
 		tokenCount: tokens.length,

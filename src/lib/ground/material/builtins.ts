@@ -33,6 +33,8 @@ export interface PolylineDashMaterialOptions {
 }
 
 export interface FlowLineMaterialOptions {
+	/** Optional borrowed strip texture scrolled through each repeated cell. */
+	texture?: Texture;
 	/** Bright trail-head RGB; alpha is supplied separately by opacity. */
 	color?: ColorRepresentation;
 	/** Bright trail-head straight alpha in the inclusive range [0, 1]. */
@@ -47,6 +49,8 @@ export interface FlowLineMaterialOptions {
 	trailFraction?: number;
 	/** Any negative value selects reverse; zero and positives select forward. */
 	direction?: number;
+	/** Whether the sampled texture V coordinate is inverted. */
+	flipY?: boolean;
 }
 
 /** Options for the shared transparent-texture decal preset used by text/image. */
@@ -62,6 +66,8 @@ export interface TexturedDecalMaterialOptions {
 }
 
 export interface PulsePointMaterialOptions {
+	/** Optional borrowed image sampled inside the animated radial footprint. */
+	texture?: Texture;
 	/** Straight-RGB multiplier applied after the point's base color. */
 	color?: ColorRepresentation;
 	/** Animation period in seconds; must be strictly positive. */
@@ -80,6 +86,8 @@ export interface PulsePointMaterialOptions {
 	edgeSoftness?: number;
 	/** Preallocated footprint / nominal footprint; must be >= maxScale. */
 	footprintScale?: number;
+	/** Whether the sampled texture V coordinate is inverted. */
+	flipY?: boolean;
 }
 
 export interface ScalePulseMaterialOptions {
@@ -161,12 +169,15 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
  * host frame rate and no internal clock or render loop is required.
  */
 export const C23_FLOW_LINE_MATERIAL_SOURCE = /* glsl */ `
+uniform sampler2D u_texture;
+uniform float u_hasTexture;
 uniform vec4 u_color;
 uniform vec4 u_backgroundColor;
 uniform float u_speed;
 uniform float u_repeat;
 uniform float u_trailFraction;
 uniform float u_direction;
+uniform float u_flipY;
 
 c23_material c23_getMaterial(c23_materialInput materialInput) {
 	float along01 = materialInput.lineTotalMeters > 1e-6
@@ -187,10 +198,20 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 		distanceBehindHead
 	);
 
+	vec4 foregroundColor = clamp(u_color, 0.0, 1.0);
+	float textureCoverage = 1.0;
+	if (u_hasTexture > 0.5) {
+		vec2 textureUv = vec2(cellPhase, clamp(materialInput.st.y, 0.0, 1.0));
+		if (u_flipY > 0.5) textureUv.y = 1.0 - textureUv.y;
+		vec4 texel = clamp(texture(u_texture, textureUv), 0.0, 1.0);
+		foregroundColor.rgb *= texel.rgb;
+		textureCoverage = texel.a;
+	}
+
 	vec4 straightColor = mix(
 		clamp(u_backgroundColor, 0.0, 1.0),
-		clamp(u_color, 0.0, 1.0),
-		intensity
+		foregroundColor,
+		intensity * textureCoverage
 	);
 	c23_material material;
 	material.diffuse = straightColor.rgb;
@@ -237,6 +258,8 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
  * response to the effect.
  */
 export const C23_PULSE_POINT_MATERIAL_SOURCE = /* glsl */ `
+uniform sampler2D u_texture;
+uniform float u_hasTexture;
 uniform vec4 u_color;
 uniform float u_periodSeconds;
 uniform float u_minScale;
@@ -246,6 +269,7 @@ uniform float u_maxOpacity;
 uniform float u_phase;
 uniform float u_edgeSoftness;
 uniform float u_footprintScale;
+uniform float u_flipY;
 
 c23_material c23_getMaterial(c23_materialInput materialInput) {
 	const float twoPi = 6.283185307179586;
@@ -257,6 +281,7 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 	float footprintScale = max(u_footprintScale, 1e-6);
 	float normalizedScale = clamp(requestedScale / footprintScale, 1e-4, 1.0);
 	float opacity = clamp(mix(u_minOpacity, u_maxOpacity, wave), 0.0, 1.0);
+	vec2 sourceSt = (materialInput.st - vec2(0.5)) / normalizedScale + vec2(0.5);
 
 	float radius01 = length((materialInput.st - vec2(0.5)) * 2.0);
 	float edge = max(
@@ -269,7 +294,13 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 		radius01
 	);
 
-	vec4 straightColor = clamp(materialInput.baseColor, 0.0, 1.0)
+	vec4 sourceColor = clamp(materialInput.baseColor, 0.0, 1.0);
+	if (u_hasTexture > 0.5) {
+		vec2 sampleSt = sourceSt;
+		if (u_flipY > 0.5) sampleSt.y = 1.0 - sampleSt.y;
+		sourceColor = clamp(texture(u_texture, sampleSt), 0.0, 1.0);
+	}
+	vec4 straightColor = sourceColor
 		* clamp(u_color, 0.0, 1.0);
 
 	c23_material material;
@@ -448,6 +479,9 @@ export function createPulsePointMaterial(
 	if ( options === null || typeof options !== 'object' ) {
 		throw new TypeError( 'Pulse Point Material options must be an object.' );
 	}
+	if ( options.texture !== undefined && ! ( options.texture instanceof Texture ) ) {
+		throw new TypeError( 'Pulse Point Material texture must be a Three Texture.' );
+	}
 	const color = new Color( options.color ?? 0xffffff );
 	const periodSeconds = requireFiniteAtLeast(
 		options.periodSeconds, 1.5, 0.0, 'Pulse Point periodSeconds', true,
@@ -477,6 +511,8 @@ export function createPulsePointMaterial(
 	return new CesiumGroundMaterial( {
 		type: 'PulsePointGroundMaterial',
 		uniforms: {
+			u_texture: { value: options.texture ?? null },
+			u_hasTexture: { value: options.texture !== undefined ? 1.0 : 0.0 },
 			u_color: { value: new Vector4( color.r, color.g, color.b, 1.0 ) },
 			u_periodSeconds: { value: periodSeconds },
 			u_minScale: { value: minScale },
@@ -486,6 +522,7 @@ export function createPulsePointMaterial(
 			u_phase: { value: phase },
 			u_edgeSoftness: { value: edgeSoftness },
 			u_footprintScale: { value: footprintScale },
+			u_flipY: { value: options.flipY === false ? 0.0 : 1.0 },
 		},
 		fragmentShader: C23_PULSE_POINT_MATERIAL_SOURCE,
 	} );
@@ -497,6 +534,9 @@ export function createScalePulseMaterial(
 ): CesiumGroundMaterial {
 	if ( options === null || typeof options !== 'object' ) {
 		throw new TypeError( 'Scale Pulse Material options must be an object.' );
+	}
+	if ( options.texture !== undefined && ! ( options.texture instanceof Texture ) ) {
+		throw new TypeError( 'Scale Pulse Material texture must be a Three Texture.' );
 	}
 	const tint = createGroundColorVector(
 		options.tint,
@@ -606,7 +646,7 @@ export function createPolylineDashMaterial(
 }
 
 /**
- * Creates an absolute-time FlowLine Material with a fixed six-uniform schema.
+ * Creates an absolute-time FlowLine Material with a fixed texture-capable schema.
  * Direction is normalized once so runtime shader evaluation never treats
  * arbitrary magnitudes as speed, and no timer/RAF is allocated by the factory.
  */
@@ -615,6 +655,9 @@ export function createFlowLineMaterial(
 ): CesiumGroundMaterial {
 	if ( options === null || typeof options !== 'object' ) {
 		throw new TypeError( 'Flow Line Material options must be an object.' );
+	}
+	if ( options.texture !== undefined && ! ( options.texture instanceof Texture ) ) {
+		throw new TypeError( 'Flow Line Material texture must be a Three Texture.' );
 	}
 	const color = new Color( options.color ?? 0x00ffff );
 	const opacity = requireNormalizedOpacity( options.opacity, 'Flow Line opacity' );
@@ -641,12 +684,15 @@ export function createFlowLineMaterial(
 	return new CesiumGroundMaterial( {
 		type: 'FlowLineGroundMaterial',
 		uniforms: {
+			u_texture: { value: options.texture ?? null },
+			u_hasTexture: { value: options.texture !== undefined ? 1.0 : 0.0 },
 			u_color: { value: new Vector4( color.r, color.g, color.b, opacity ) },
 			u_backgroundColor: { value: backgroundColor },
 			u_speed: { value: speed },
 			u_repeat: { value: repeat },
 			u_trailFraction: { value: trailFraction },
 			u_direction: { value: direction },
+			u_flipY: { value: options.flipY === false ? 0.0 : 1.0 },
 		},
 		fragmentShader: C23_FLOW_LINE_MATERIAL_SOURCE,
 	} );

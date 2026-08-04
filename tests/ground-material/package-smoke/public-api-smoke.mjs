@@ -7,6 +7,10 @@ const groundEntry = await import( new URL( '../../../dist/ground.js', import.met
 
 const requiredRuntimeExports = [
 	'C23_GROUND_SHADER_ABI_VERSION',
+	'C23_GROUND_VERTEX_SHADER_TEMPLATE',
+	'C23_GROUND_FRAGMENT_SHADER_TEMPLATE',
+	'createGroundVertexShader',
+	'createGroundFragmentShader',
 	'CesiumGroundMaterial',
 	'CesiumGroundMaterialAppearance',
 	'CesiumGroundRawShaderAppearance',
