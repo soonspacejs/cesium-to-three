@@ -23,6 +23,11 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Playwright 运行产物（截图基线位于 tests/ground-material 下，不在这里）
+test-results/
+playwright-report/
+blob-report/
+
 # 编辑器本地配置
 .vscode/*
 !.vscode/extensions.json

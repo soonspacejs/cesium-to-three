@@ -14,7 +14,7 @@
 // 依赖:Three.js Vector3 + Vector4 + Matrix4、math/cartographic.ts、
 //      math/ellipsoid.ts、math/enu-frame.ts、math/rte-encoding.ts、
 //      math/matrix4-helpers.ts、rectangle-radians.ts、types.ts
-// 被消费:primitives.ts(CesiumGroundRectanglePrimitive 类,传给 classification 的 SharedUniforms)
+// 被消费:primitives.ts(CesiumGroundRectanglePrimitive，传给 classification runtime uniforms)
 // 算法对应:Cesium 内部 ShadowVolumeAppearance.computeRectangleBounds + 现有
 //          geometry.ts:649-719 的 computePlanarExtents(矩形分支)
 // ============================================================

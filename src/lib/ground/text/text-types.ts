@@ -11,6 +11,7 @@
 
 import { ClassificationType } from '../types';
 import type { LonLatPoint } from '../types';
+import type { CesiumGroundAppearance } from '../material/appearances';
 
 export type { LonLatPoint };
 
@@ -125,6 +126,12 @@ export interface PlotTextOptions {
 	 */
 	classificationType?: ClassificationType;
 }
+
+/** Public text options with the decal Material/Appearance extension. */
+export type CesiumGroundTextPrimitiveOptions = PlotTextOptions & {
+	/** Optional safe or Raw Appearance for the text decal color pass. */
+	appearance?: CesiumGroundAppearance;
+};
 
 /**
  * 解析后的不可变配置。所有可选项已填默认值；

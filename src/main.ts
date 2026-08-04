@@ -12,15 +12,17 @@
 // ============================================================
 
 import { runGroundDemo } from './demo/ground-demo';
+import { runAnimationModesDemo } from './demo/animation-modes-demo';
 import { runModelClampDemo } from './demo/model-clamp-demo';
 import { runPlotDemo } from './demo/plot-demo';
 
-function pickDemo(): 'ground' | 'plot' | 'model' {
+function pickDemo(): 'ground' | 'plot' | 'model' | 'animation' {
 	const fromUrl = new URLSearchParams( window.location.search ).get( 'demo' );
 	const fromEnv = ( import.meta.env as Record<string, string | undefined> ).VITE_DEMO;
 	const choice = ( fromUrl ?? fromEnv ?? '' ).trim().toLowerCase();
 	if ( choice === 'plot' ) return 'plot';
 	if ( choice === 'model' ) return 'model';
+	if ( choice === 'animation' || choice === 'vertex-animation' ) return 'animation';
 	return 'ground';
 }
 
@@ -29,6 +31,8 @@ if ( demo === 'plot' ) {
 	runPlotDemo();
 } else if ( demo === 'model' ) {
 	runModelClampDemo();
+} else if ( demo === 'animation' ) {
+	runAnimationModesDemo();
 } else {
 	runGroundDemo();
 }

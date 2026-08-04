@@ -3,10 +3,10 @@
 // 层级：L4（顶层公开类，串联 A/B/C 全层 + 复用共享 classification）
 // 职责：CesiumGroundTextPrimitive —— 贴地文本标绘对外入口。
 //       构造：resolve 选项 → 画 canvas → CanvasTexture → 算足迹 → 建几何 →
-//       算 extents → new CesiumClassificationPrimitive(注入文字 color 材质 +
-//       u_textTexture)。update 只转发 frameState。setText 局部重建。
-// 依赖：Three.CanvasTexture 等、classification（注入扩展）、materials
-//      (createTextColorMaterial)、text-defaults/-canvas/-placement/
+//       算 extents → new CesiumClassificationPrimitive(绑定 decal Material)。
+//       update 只转发 frameState；setText 在固定 topology 内局部更新。
+// 依赖：Three.CanvasTexture 等、classification、Material/Appearance、
+//      text-defaults/-canvas/-placement/
 //      -shadow-volume/-extents/-options。
 // 被消费：业务渲染代码 / demo。
 // ============================================================
@@ -21,7 +21,13 @@ import {
 } from 'three';
 
 import { CesiumClassificationPrimitive } from '../classification';
-import { createTextColorMaterial } from '../materials';
+import {
+	CesiumGroundMaterialAppearance,
+	CesiumGroundRawShaderAppearance,
+	type CesiumGroundAppearance,
+} from '../material/appearances';
+import { createTexturedDecalMaterial } from '../material/builtins';
+import type { CesiumGroundMaterial } from '../material/CesiumGroundMaterial';
 import type { CesiumGroundFrameState, ClassificationType } from '../types';
 
 import { paintTextToCanvas, type PaintedTextCanvas } from './text-canvas';
@@ -29,7 +35,11 @@ import { resolvePlotTextOptions } from './text-defaults';
 import { computeTextPlanarExtents } from './text-extents';
 import { computeTextFootprint, type TextFootprint } from './text-placement';
 import { buildTextShadowVolumeGeometry } from './text-shadow-volume';
-import type { PlotTextOptions, ResolvedPlotTextOptions } from './text-types';
+import type {
+	CesiumGroundTextPrimitiveOptions,
+	PlotTextOptions,
+	ResolvedPlotTextOptions,
+} from './text-types';
 
 // 各向异性过滤上限：贴地纹理常被斜视，提高斜向锐度。Three 会按 GPU 能力 clamp，
 // 16 是绝大多数桌面 GPU 的实际上限，传大值安全。
@@ -45,12 +55,18 @@ export class CesiumGroundTextPrimitive {
 	/**
 	 * 共享 classification（front / back stencil + color command）。公开以便宿主
 	 * 单独切命令显隐（setCommandVisibility）等高级用法，与 rectangle/circle 同形。
-	 * setText 会替换为新实例；外部不应缓存其引用。
+	 * setText 原位更新固定拓扑；外部可安全缓存 group、geometry 和 Appearance 引用。
 	 */
 	public classification: CesiumClassificationPrimitive;
 	private resolved: ResolvedPlotTextOptions;
 	private painted: PaintedTextCanvas;
 	private texture: CanvasTexture;
+	/** One logical decal Material reused across every setText rebuild. */
+	private readonly decalMaterial: CesiumGroundMaterial;
+	/** Exact logical Appearance retained when classification commands are rebuilt. */
+	private appearanceState: CesiumGroundAppearance;
+	/** Stable default wrapper restored by `setAppearance(undefined)`. */
+	private readonly defaultAppearance: CesiumGroundMaterialAppearance;
 	private footprint: TextFootprint;
 	private renderOrder: number;
 	private disposed: boolean;
@@ -58,13 +74,21 @@ export class CesiumGroundTextPrimitive {
 	/**
 	 * @param options 外部选项（lon/lat 锚点 + 内容 + 外观 + 贴地摆放）。
 	 */
-	public constructor( options: PlotTextOptions ) {
+	public constructor( options: CesiumGroundTextPrimitiveOptions ) {
 		this.disposed = false;
 
 		// A 层：解析 → 画 canvas → 纹理
 		this.resolved = resolvePlotTextOptions( options );
 		this.painted = paintTextToCanvas( this.resolved, null );
 		this.texture = createTextTexture( this.painted.canvas );
+		this.decalMaterial = createTexturedDecalMaterial( {
+			texture: this.texture,
+			flipY: true,
+		} );
+		this.defaultAppearance = new CesiumGroundMaterialAppearance( {
+			material: this.decalMaterial,
+		} );
+		this.appearanceState = options.appearance ?? this.defaultAppearance;
 
 		// B 层：足迹 4 角点
 		this.footprint = computeTextFootprint( this.resolved, this.painted.layout );
@@ -90,11 +114,11 @@ export class CesiumGroundTextPrimitive {
 	}
 
 	/**
-	 * 局部更新文本/样式/摆放：重 resolve → 重画纹理 → 重算足迹 → 重建几何 + extents。
-	 * 几何/extents 变化需重建 classification（uniforms 持有 extents 引用），
-	 * 故 dispose 旧 classification 再建新的，纹理可复用 canvas 句柄。
+	 * Transactionally updates text/layout in the existing fixed-topology command
+	 * set. A candidate canvas, footprint and geometry are completed first; only
+	 * then are live attribute arrays, extents and the same CanvasTexture updated.
 	 *
-	 * @param partial 要覆盖的字段（与 PlotTextOptions 同形，points 用原锚点若不传）。
+	 * @param partial Fields to merge; omitted points retain the current anchor.
 	 */
 	public setText( partial: Partial<PlotTextOptions> ): void {
 		this.ensureNotDisposed();
@@ -108,27 +132,69 @@ export class CesiumGroundTextPrimitive {
 			],
 		};
 
-		this.resolved = resolvePlotTextOptions( merged );
-		this.renderOrder = this.resolved.renderOrder;
+		const nextResolved = resolvePlotTextOptions( merged );
+		const nextPainted = paintTextToCanvas( nextResolved, null );
+		const liveCanvas = this.painted.canvas;
+		const liveContext = liveCanvas.getContext( '2d' );
+		if ( liveContext === null ) {
+			throw new Error( 'PlotText update: failed to acquire the live 2D context.' );
+		}
+		const nextFootprint = computeTextFootprint( nextResolved, nextPainted.layout );
+		const candidateGeometry = buildTextShadowVolumeGeometry( {
+			swEcef: nextFootprint.swEcef,
+			seEcef: nextFootprint.seEcef,
+			neEcef: nextFootprint.neEcef,
+			nwEcef: nextFootprint.nwEcef,
+			minimumHeight: nextResolved.minimumHeight ?? undefined,
+			maximumHeight: nextResolved.maximumHeight ?? undefined,
+		} );
+		const nextExtents = computeTextPlanarExtents( nextFootprint );
+		try {
+			this.classification.updateGeometryAndPlanarExtents( candidateGeometry, nextExtents );
+		} finally {
+			// Candidate arrays have been copied into the live BufferGeometry; this
+			// temporary object never becomes part of the scene or owns a GPU program.
+			candidateGeometry.dispose();
+		}
 
-		// 重画纹理（复用 canvas 句柄；尺寸变了 paint 内部会 resize）
-		this.painted = paintTextToCanvas( this.resolved, this.painted.canvas );
+		this.resolved = nextResolved;
+		this.renderOrder = nextResolved.renderOrder;
+		// The off-screen candidate has passed layout and fixed-topology validation.
+		// Commit its pixels into the original canvas so both CanvasTexture and
+		// texture.image identities remain stable across every successful setText.
+		liveCanvas.width = nextPainted.canvas.width;
+		liveCanvas.height = nextPainted.canvas.height;
+		liveContext.setTransform( 1, 0, 0, 1, 0, 0 );
+		liveContext.clearRect( 0, 0, liveCanvas.width, liveCanvas.height );
+		liveContext.drawImage( nextPainted.canvas, 0, 0 );
+		this.painted = { ...nextPainted, canvas: liveCanvas };
+		this.footprint = nextFootprint;
 		this.texture.needsUpdate = true;
+		this.classification.setRenderOrder( nextResolved.renderOrder );
+		this.classification.setClassificationType( nextResolved.classificationType );
+		this.group.visible = nextResolved.visible;
+	}
 
-		// 重算足迹（geometry + extents 会用到）
-		this.footprint = computeTextFootprint( this.resolved, this.painted.layout );
+	/** Returns the exact logical Appearance currently bound to the text decal. */
+	public get appearance(): CesiumGroundAppearance {
+		this.ensureNotDisposed();
+		return this.appearanceState;
+	}
 
-		// classification 的 uniforms 持有旧 extents 引用，几何也变了 → 重建。
-		const parent = this.group.parent;
-		this.classification.dispose();
-		parent?.remove( this.classification.group );
-
-		this.classification = this.buildClassification();
-		this.classification.group.visible = this.resolved.visible;
-		// 复用同一引用：把新 group 接回原 parent，并更新本对象的 group 字段。
-		this.group = this.classification.group;
-		this.group.name = 'CesiumGroundTextPrimitive';
-		parent?.add( this.group );
+	/** Switches only the text color pass; the CanvasTexture remains borrowed and stable. */
+	public setAppearance( appearance?: CesiumGroundAppearance ): void {
+		this.ensureNotDisposed();
+		if (
+			appearance !== undefined &&
+			! ( appearance instanceof CesiumGroundMaterialAppearance ) &&
+			! ( appearance instanceof CesiumGroundRawShaderAppearance )
+		) {
+			throw new TypeError( 'Ground text appearance is not a supported Ground Appearance.' );
+		}
+		const nextAppearance = appearance ?? this.defaultAppearance;
+		if ( nextAppearance === this.appearanceState ) return;
+		this.classification.setAppearance( nextAppearance );
+		this.appearanceState = nextAppearance;
 	}
 
 	/**
@@ -181,8 +247,8 @@ export class CesiumGroundTextPrimitive {
 
 	/**
 	 * 用当前 resolved + footprint + 纹理构造一个新的 CesiumClassificationPrimitive。
-	 * 复用 buildTextShadowVolumeGeometry 与 computeTextPlanarExtents，并注入文字
-	 * color 材质工厂与 u_textTexture，保证所有命令共享同一 jitter-fixed 管线。
+	 * 复用 buildTextShadowVolumeGeometry 与 computeTextPlanarExtents，并绑定
+	 * decal logical Material，保证所有命令共享同一 jitter-fixed 管线。
 	 *
 	 * @returns 新建的 classification。
 	 */
@@ -206,11 +272,9 @@ export class CesiumGroundTextPrimitive {
 			this.renderOrder,
 			true, // fragmentCull：裁足迹 + 丢弃无地形 fragment
 			{
-				colorMaterialFactory: createTextColorMaterial,
-				extraUniforms: {
-					u_decalTexture: { value: this.texture },
-					u_decalOpacity: { value: 1.0 },
-				},
+				primitiveKind: 'decal',
+				defaultMaterial: this.decalMaterial,
+				appearance: this.appearanceState,
 			},
 		);
 		// 文字也支持贴地形 / 贴模型 / 二者：把解析出的分类目标传给 classification。

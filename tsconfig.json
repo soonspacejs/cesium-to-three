@@ -25,6 +25,6 @@
     /* 允许 GLSL 作为 .glsl 文件 raw 导入，等价于 Vite 的 ?raw 资源。 */
     "types": ["vite/client"]
   },
-  "include": ["src"],
+	"include": ["src", "tests/ground-material/types/**/*.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

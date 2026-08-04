@@ -1,0 +1,986 @@
+// ============================================================
+// legacy-ground.ts
+// Purpose: immutable pre-Material visual and resource baseline for every
+//          synchronous public Ground rendering path. It uses only a generated
+//          WGS84 ellipsoid depth source, so the fixture has no network, terrain,
+//          tile-streaming, random, or wall-clock dependency.
+// ============================================================
+
+import {
+	Color,
+	type Group,
+	Mesh,
+	PerspectiveCamera,
+	type RawShaderMaterial,
+	Scene,
+	SRGBColorSpace,
+	type Texture,
+	Vector3,
+	WebGLRenderer,
+} from 'three';
+
+import {
+	CesiumGlobeDepth,
+	CesiumGroundCirclePrimitive,
+	CesiumGroundMaterialAppearance,
+	CesiumGroundRawShaderAppearance,
+	CesiumGroundImagePrimitive,
+	CesiumGroundPointPrimitive,
+	CesiumGroundPolygonPrimitive,
+	CesiumGroundPolylinePrimitive,
+	CesiumGroundRectanglePrimitive,
+	CesiumGroundTextPrimitive,
+	CESIUM_GROUND_NON_PICKABLE_LAYER,
+	createCesiumEllipsoidDepthMeshes,
+	createColorGroundMaterial,
+	createFlowLineMaterial,
+	createPulsePointMaterial,
+	createScalePulseMaterial,
+	initializeApproximateTerrainHeights,
+	longitudeLatitudeFromCenterOffsetsMeters,
+	updateTerrainLogDepthUniforms,
+	validateCesiumGroundRenderer,
+	wgs84NormalFromDegrees,
+	wgs84PositionFromDegrees,
+	type CesiumGroundFrameState,
+	type LonLatPoint,
+} from '../../../src/lib/ground';
+
+const WIDTH = 960;
+const HEIGHT = 640;
+const CENTER_LONGITUDE = 116.391;
+const CENTER_LATITUDE = 39.907;
+
+interface GroundFixturePrimitive {
+	readonly group: Group;
+	update( frameState: CesiumGroundFrameState ): void;
+	dispose(): void;
+}
+
+interface ClassificationBackedPrimitive {
+	readonly classification: { readonly group: Group };
+	update( frameState: CesiumGroundFrameState ): void;
+	dispose(): void;
+}
+
+/**
+ * Surface and delegated point primitives expose their scene node through the
+ * public `classification.group`, whereas text/polyline expose `group` directly.
+ * Normalize that intentional legacy API difference inside the fixture only.
+ */
+function fromClassification(
+	primitive: ClassificationBackedPrimitive,
+): GroundFixturePrimitive {
+	return {
+		group: primitive.classification.group,
+		update: frameState => primitive.update( frameState ),
+		dispose: () => primitive.dispose(),
+	};
+}
+
+function fromDirectGroup( primitive: GroundFixturePrimitive ): GroundFixturePrimitive {
+	return {
+		// Text keeps its public group during setText(); this getter remains live for
+		// compatibility with fixtures that intentionally re-read the command set.
+		get group() {
+			return primitive.group;
+		},
+		update: frameState => primitive.update( frameState ),
+		dispose: () => primitive.dispose(),
+	};
+}
+
+export interface LegacyGroundResourceSnapshot {
+	programCount: number;
+	geometryCount: number;
+	textureCount: number;
+}
+
+export interface LegacyGroundFixtureApi {
+	ready: boolean;
+	isWebGL2: boolean;
+	frameNumber: number;
+	resourceSnapshot: LegacyGroundResourceSnapshot;
+	exerciseLegacySetters(): LegacyGroundSetterReport;
+	measureFrameStability( count: number ): LegacyGroundStabilityReport;
+	renderFrames( count: number ): LegacyGroundResourceSnapshot;
+	measureLowAngleSky(): LegacyGroundSkyReport;
+	measureAppearanceSwitchFrames(): LegacyGroundAppearanceSwitchReport;
+	measureAnimationKeyframes(): LegacyGroundAnimationReport;
+	measureMutationFrames(): LegacyGroundMutationFrameReport;
+	dispose(): LegacyGroundResourceSnapshot;
+}
+
+export interface LegacyGroundSkyReport {
+	sampledPixels: number;
+	wrongColorPixels: number;
+	firstWrongPixel: [ number, number, number, number ] | null;
+}
+
+export interface LegacyGroundAppearanceSwitchReport {
+	defaultPixel: [ number, number, number, number ];
+	safePixel: [ number, number, number, number ];
+	rawPixel: [ number, number, number, number ];
+	restoredPixel: [ number, number, number, number ];
+}
+
+export interface LegacyGroundAnimationSeries {
+	keyframeEnergy: number[];
+	cyclePixelsEqual: boolean;
+	midpointPixelsEqual: boolean;
+	absoluteTimePixelsEqual: boolean;
+}
+
+export interface LegacyGroundAnimationReport {
+	flow: LegacyGroundAnimationSeries;
+	pulse: LegacyGroundAnimationSeries;
+	scalePlain: LegacyGroundAnimationSeries;
+	scaleTextured: LegacyGroundAnimationSeries;
+}
+
+export interface LegacyGroundMutationFrameReport {
+	fragmentCull: {
+		disabledEnergy: number;
+		enabledEnergy: number;
+	};
+	text: {
+		beforeEnergy: number;
+		afterEnergy: number;
+		changedPixels: number;
+	};
+	arrow: {
+		noneEnergy: number;
+		bothEnergy: number;
+		noneToBothChangedPixels: number;
+		solidToOpenChangedPixels: number;
+	};
+}
+
+export interface LegacyGroundStabilityReport {
+	framesRendered: number;
+	programObjectSetStable: boolean;
+	before: LegacyGroundResourceSnapshot;
+	after: LegacyGroundResourceSnapshot;
+}
+
+export interface LegacyGroundSetterReport {
+	fragmentCulling: {
+		geometryStable: boolean;
+		frontMaterialStable: boolean;
+		backMaterialStable: boolean;
+		colorMaterialReplaced: boolean;
+	};
+	lineUniformSetters: { geometryStable: boolean; materialStable: boolean };
+	arrowStyleRebuild: {
+		lineGeometryStable: boolean;
+		lineMaterialStable: boolean;
+		arrowGeometryReplaced: boolean;
+		arrowMaterialReplaced: boolean;
+	};
+	textUpdate: {
+		groupReplaced: boolean;
+		geometryReplaced: boolean;
+		textureStable: boolean;
+	};
+	visibilityAndOrder: {
+		hidden: boolean;
+		frontOrder: number;
+		backOrder: number;
+		colorOrder: number;
+	};
+	doubleDispose: {
+		geometryDisposeEvents: number;
+		frontMaterialDisposeEvents: number;
+		backMaterialDisposeEvents: number;
+		colorMaterialDisposeEvents: number;
+	};
+}
+
+declare global {
+	interface Window {
+		/** Installed only after shaders have compiled and the warm frame completed. */
+		__C23_LEGACY_GROUND__?: LegacyGroundFixtureApi;
+	}
+}
+
+/** Converts deterministic local east/north offsets to the public WGS84 tuple. */
+function point( eastMeters: number, northMeters: number ): LonLatPoint {
+	const converted = longitudeLatitudeFromCenterOffsetsMeters(
+		CENTER_LONGITUDE,
+		CENTER_LATITUDE,
+		[ { eastMeters, northMeters } ],
+	)[ 0 ];
+	return [ converted.longitude, converted.latitude ];
+}
+
+/** Builds an axis-aligned local rectangle in the four-corner public format. */
+function rectanglePoints(
+	centerEastMeters: number,
+	centerNorthMeters: number,
+	widthMeters: number,
+	heightMeters: number,
+): LonLatPoint[] {
+	const halfWidth = widthMeters * 0.5;
+	const halfHeight = heightMeters * 0.5;
+	return [
+		point( centerEastMeters - halfWidth, centerNorthMeters - halfHeight ),
+		point( centerEastMeters + halfWidth, centerNorthMeters - halfHeight ),
+		point( centerEastMeters + halfWidth, centerNorthMeters + halfHeight ),
+		point( centerEastMeters - halfWidth, centerNorthMeters + halfHeight ),
+	];
+}
+
+/**
+ * Creates the complete legacy scene. Explicit colors and dimensions make every
+ * branch independently recognizable in a screenshot instead of relying on the
+ * library defaults that the implementation is about to migrate.
+ */
+interface LegacyPrimitiveBundle {
+	entries: GroundFixturePrimitive[];
+	rectangle: CesiumGroundRectanglePrimitive;
+	solidPolyline: CesiumGroundPolylinePrimitive;
+	circlePoint: CesiumGroundPointPrimitive;
+	squarePoint: CesiumGroundPointPrimitive;
+	text: CesiumGroundTextPrimitive;
+	image: CesiumGroundImagePrimitive;
+}
+
+function createLegacyPrimitives( imageUrl: string ): LegacyPrimitiveBundle {
+	const rectangle = new CesiumGroundRectanglePrimitive( {
+		points: rectanglePoints( - 230, 145, 165, 115 ),
+		strokeColor: '#ffe08a',
+		strokeWidth: 9,
+		strokeOpacity: 100,
+		fillColor: '#db3757',
+		fillOpacity: 76,
+		visible: true,
+		renderOrder: 10,
+		fragmentCull: true,
+	} );
+
+	const polygon = new CesiumGroundPolygonPrimitive( {
+		points: [
+			point( - 95, 90 ),
+			point( 5, 70 ),
+			point( 95, 140 ),
+			point( 35, 225 ),
+			point( - 75, 210 ),
+		],
+		holes: [ rectanglePoints( 0, 145, 42, 42 ) ],
+		strokeColor: '#d9fff5',
+		strokeWidth: 8,
+		strokeOpacity: 100,
+		fillColor: '#18a999',
+		fillOpacity: 82,
+		visible: true,
+		renderOrder: 20,
+		fragmentCull: true,
+	} );
+
+	const circle = new CesiumGroundCirclePrimitive( {
+		center: point( 225, 145 ),
+		radius: 78,
+		strokeColor: '#f7f1ff',
+		strokeWidth: 9,
+		strokeOpacity: 100,
+		fillColor: '#7657d5',
+		fillOpacity: 82,
+		visible: true,
+		ringCount: 2,
+		ringGapMeters: 10,
+		sectorStartDegrees: 28,
+		sectorAngleDegrees: 298,
+		renderOrder: 30,
+		fragmentCull: true,
+	} );
+
+	const solidPolyline = new CesiumGroundPolylinePrimitive( {
+		points: [ point( - 315, - 70 ), point( - 135, - 155 ), point( 45, - 70 ) ],
+		strokeColor: '#ffb627',
+		strokeOpacity: 100,
+		widthPixels: 8,
+		widthMode: 'screen',
+		visible: true,
+		renderOrder: 40,
+		arrowMode: 'both',
+		startArrowStyle: 'open',
+		endArrowStyle: 'solid',
+		arrowWidthMode: 'screen',
+		arrowLengthPixels: 24,
+		arrowWidthPixels: 22,
+		arrowStrokeWidthPixels: 4,
+	} );
+
+	const dashPolyline = new CesiumGroundPolylinePrimitive( {
+		points: [ point( - 25, - 105 ), point( 120, - 175 ), point( 310, - 70 ) ],
+		strokeColor: '#35c7ff',
+		strokeOpacity: 92,
+		widthPixels: 7,
+		widthMode: 'screen',
+		visible: true,
+		renderOrder: 50,
+		dashLengthMeters: 24,
+		gapLengthMeters: 14,
+	} );
+
+	const circlePoint = new CesiumGroundPointPrimitive( {
+		position: point( - 185, - 255 ),
+		shape: 'circle',
+		size: 54,
+		strokeColor: '#ffffff',
+		strokeWidth: 6,
+		strokeOpacity: 100,
+		fillColor: '#ff5c8a',
+		fillOpacity: 100,
+		visible: true,
+		renderOrder: 60,
+	} );
+
+	const squarePoint = new CesiumGroundPointPrimitive( {
+		position: point( - 90, - 255 ),
+		shape: 'square',
+		size: 54,
+		strokeColor: '#ffffff',
+		strokeWidth: 6,
+		strokeOpacity: 100,
+		fillColor: '#30d68f',
+		fillOpacity: 100,
+		visible: true,
+		renderOrder: 70,
+	} );
+
+	const text = new CesiumGroundTextPrimitive( {
+		points: [ point( 145, - 265 ) ],
+		content: 'C23 BASELINE',
+		fontColor: '#ffffff',
+		fontSize: 30,
+		fontFamily: 'sans-serif',
+		fontWeight: 'bold',
+		fontStrokeColor: '#132238',
+		fontStrokeWidth: 2,
+		fillColor: '#244568',
+		fillOpacity: 96,
+		strokeColor: '#75d6ff',
+		strokeWidth: 3,
+		strokeOpacity: 100,
+		cornerRadius: 6,
+		padding: [ 8, 14, 8, 14 ],
+		textAlign: 'center',
+		verticalAlign: 'middle',
+		metersPerPixel: 0.48,
+		anchorX: 'center',
+		anchorY: 'middle',
+		rotation: - 6,
+		visible: true,
+		renderOrder: 80,
+	} );
+
+	const image = new CesiumGroundImagePrimitive( {
+		position: point( 285, - 255 ),
+		imageUrl,
+		imageWidth: 70,
+		imageHeight: 70,
+		rotation: 12,
+		strokeColor: '#ffffff',
+		strokeWidth: 0,
+		strokeOpacity: 0,
+		fillColor: '#ffffff',
+		fillOpacity: 100,
+		visible: true,
+		renderOrder: 90,
+	} );
+
+	return {
+		entries: [
+			fromClassification( rectangle ),
+			fromClassification( polygon ),
+			fromClassification( circle ),
+			fromDirectGroup( solidPolyline ),
+			fromDirectGroup( dashPolyline ),
+			fromClassification( circlePoint ),
+			fromClassification( squarePoint ),
+			fromDirectGroup( text ),
+			fromDirectGroup( image ),
+		],
+		rectangle,
+		solidPolyline,
+		circlePoint,
+		squarePoint,
+		text,
+		image,
+	};
+}
+
+/** Resolves the three ordered classification commands by their stable names. */
+function classificationMeshes(
+	primitive: CesiumGroundRectanglePrimitive | CesiumGroundTextPrimitive,
+): { front: Mesh; back: Mesh; color: Mesh } {
+	const group = primitive.classification.group;
+	const front = group.getObjectByName( 'CesiumClassificationFrontStencilDepthCommand' );
+	const back = group.getObjectByName( 'CesiumClassificationBackStencilDepthCommand' );
+	const color = group.getObjectByName( 'CesiumClassificationColorCommand' );
+	if ( ! ( front instanceof Mesh ) || ! ( back instanceof Mesh ) || ! ( color instanceof Mesh ) ) {
+		throw new Error( 'Legacy classification command set is incomplete.' );
+	}
+	return { front, back, color };
+}
+
+/** Resolves line and optional arrow commands without reaching into private fields. */
+function polylineMeshes(
+	primitive: CesiumGroundPolylinePrimitive,
+): { line: Mesh; arrow: Mesh } {
+	const line = primitive.group.getObjectByName( 'CesiumGroundPolylineColorCommand' );
+	const arrow = primitive.group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
+	if ( ! ( line instanceof Mesh ) || ! ( arrow instanceof Mesh ) ) {
+		throw new Error( 'Legacy polyline fixture requires both line and arrow commands.' );
+	}
+	return { line, arrow };
+}
+
+/**
+ * Captures the exact pre-migration object-identity behavior. Several values are
+ * intentionally legacy behavior (not the final design), which lets a later
+ * migration prove that each deliberate identity change is covered by a test.
+ */
+function exerciseLegacySetters(
+	bundle: LegacyPrimitiveBundle,
+): LegacyGroundSetterReport {
+	const surfaceBefore = classificationMeshes( bundle.rectangle );
+	const surfaceGeometry = surfaceBefore.color.geometry;
+	const frontMaterial = surfaceBefore.front.material;
+	const backMaterial = surfaceBefore.back.material;
+	const colorMaterial = surfaceBefore.color.material;
+	bundle.rectangle.classification.setFragmentCulling( false );
+	const surfaceAfter = classificationMeshes( bundle.rectangle );
+
+	const lineBefore = polylineMeshes( bundle.solidPolyline );
+	bundle.solidPolyline.setColor( '#f4d35e', 88 );
+	bundle.solidPolyline.applyWidthState( 'world', 9, 11 );
+	bundle.solidPolyline.setArrowColor( '#ff477e', 91 );
+	bundle.solidPolyline.setArrowSizeMeters( 36, 28 );
+	const lineAfterUniformSetters = polylineMeshes( bundle.solidPolyline );
+	bundle.solidPolyline.setArrowStyles( 'solid', 'open' );
+	const lineAfterArrowStyle = polylineMeshes( bundle.solidPolyline );
+
+	const textBefore = classificationMeshes( bundle.text );
+	const textGroup = bundle.text.group;
+	const textTexture = ( textBefore.color.material as RawShaderMaterial )
+		.uniforms.u_texture.value;
+	bundle.text.setText( { content: 'C23 UPDATED' } );
+	const textAfter = classificationMeshes( bundle.text );
+	const updatedTextTexture = ( textAfter.color.material as RawShaderMaterial )
+		.uniforms.u_texture.value;
+
+	bundle.rectangle.classification.group.visible = false;
+	bundle.rectangle.setRenderOrder( 125 );
+	const orderedSurface = classificationMeshes( bundle.rectangle );
+
+	const disposable = new CesiumGroundRectanglePrimitive( {
+		points: rectanglePoints( 0, 0, 20, 20 ),
+		strokeColor: '#ffffff',
+		strokeWidth: 1,
+		strokeOpacity: 100,
+		fillColor: '#ffffff',
+		fillOpacity: 100,
+		visible: true,
+	} );
+	const disposableMeshes = classificationMeshes( disposable );
+	const disposeCounts = {
+		geometryDisposeEvents: 0,
+		frontMaterialDisposeEvents: 0,
+		backMaterialDisposeEvents: 0,
+		colorMaterialDisposeEvents: 0,
+	};
+	disposableMeshes.front.geometry.addEventListener(
+		'dispose',
+		() => disposeCounts.geometryDisposeEvents += 1,
+	);
+	disposableMeshes.front.material.addEventListener(
+		'dispose',
+		() => disposeCounts.frontMaterialDisposeEvents += 1,
+	);
+	disposableMeshes.back.material.addEventListener(
+		'dispose',
+		() => disposeCounts.backMaterialDisposeEvents += 1,
+	);
+	disposableMeshes.color.material.addEventListener(
+		'dispose',
+		() => disposeCounts.colorMaterialDisposeEvents += 1,
+	);
+	disposable.dispose();
+	disposable.dispose();
+
+	return {
+		fragmentCulling: {
+			geometryStable: surfaceAfter.color.geometry === surfaceGeometry,
+			frontMaterialStable: surfaceAfter.front.material === frontMaterial,
+			backMaterialStable: surfaceAfter.back.material === backMaterial,
+			colorMaterialReplaced: surfaceAfter.color.material !== colorMaterial,
+		},
+		lineUniformSetters: {
+			geometryStable: lineAfterUniformSetters.line.geometry === lineBefore.line.geometry,
+			materialStable: lineAfterUniformSetters.line.material === lineBefore.line.material,
+		},
+		arrowStyleRebuild: {
+			lineGeometryStable: lineAfterArrowStyle.line.geometry === lineBefore.line.geometry,
+			lineMaterialStable: lineAfterArrowStyle.line.material === lineBefore.line.material,
+			arrowGeometryReplaced: lineAfterArrowStyle.arrow.geometry !== lineBefore.arrow.geometry,
+			arrowMaterialReplaced: lineAfterArrowStyle.arrow.material !== lineBefore.arrow.material,
+		},
+		textUpdate: {
+			groupReplaced: bundle.text.group !== textGroup,
+			geometryReplaced: textAfter.color.geometry !== textBefore.color.geometry,
+			textureStable: updatedTextTexture === textTexture,
+		},
+		visibilityAndOrder: {
+			hidden: bundle.rectangle.classification.group.visible === false,
+			frontOrder: orderedSurface.front.renderOrder,
+			backOrder: orderedSurface.back.renderOrder,
+			colorOrder: orderedSurface.color.renderOrder,
+		},
+		doubleDispose: disposeCounts,
+	};
+}
+
+/**
+ * Produces a transparent, high-contrast decal without a repository binary or
+ * network request. The public image primitive still goes through Three's real
+ * ImageLoader and Canvas/WebGL texture upload path.
+ */
+function createInlineImageUrl(): string {
+	const source = [
+		'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">',
+		'<path fill="#101820" d="M32 2 61 32 32 62 3 32z"/>',
+		'<path fill="#ffcf33" d="M32 9 54 32 32 55 10 32z"/>',
+		'<circle cx="32" cy="32" r="10" fill="#e83f5b"/>',
+		'<circle cx="32" cy="32" r="4" fill="#ffffff"/>',
+		'</svg>',
+	].join( '' );
+	return `data:image/svg+xml;charset=utf-8,${ encodeURIComponent( source ) }`;
+}
+
+/** Waits for browser decode so the recorded frame cannot race texture upload. */
+async function preloadImage( url: string ): Promise<void> {
+	const image = new Image();
+	image.src = url;
+	await image.decode();
+}
+
+async function createFixture(): Promise<LegacyGroundFixtureApi> {
+	initializeApproximateTerrainHeights();
+	const imageUrl = createInlineImageUrl();
+	await preloadImage( imageUrl );
+
+	const renderer = new WebGLRenderer( {
+		antialias: false,
+		alpha: false,
+		stencil: true,
+		preserveDrawingBuffer: true,
+		powerPreference: 'high-performance',
+	} );
+	renderer.setPixelRatio( 1 );
+	renderer.setSize( WIDTH, HEIGHT, false );
+	renderer.outputColorSpace = SRGBColorSpace;
+	renderer.setClearColor( new Color( '#081018' ), 1.0 );
+	renderer.autoClear = true;
+	renderer.autoClearStencil = true;
+	validateCesiumGroundRenderer( renderer );
+	document.body.appendChild( renderer.domElement );
+
+	const scene = new Scene();
+	scene.background = new Color( '#081018' );
+
+	const camera = new PerspectiveCamera( 45, WIDTH / HEIGHT, 1, 40_000_000 );
+	const anchor = wgs84PositionFromDegrees( CENTER_LONGITUDE, CENTER_LATITUDE );
+	const up = wgs84NormalFromDegrees( CENTER_LONGITUDE, CENTER_LATITUDE );
+	const east = new Vector3( - anchor.y, anchor.x, 0 ).normalize();
+	// A shallow oblique view exercises RTE and depth reconstruction more strongly
+	// than a perfectly vertical camera while keeping every fixture shape visible.
+	camera.position.copy( anchor )
+		.addScaledVector( up, 800 )
+		.addScaledVector( east, 250 );
+	// Match the production demo's ECEF camera convention. Using the local
+	// ellipsoid normal as camera.up becomes nearly collinear in top-down views
+	// and produces an unstable roll basis around this latitude.
+	camera.up.set( 0, 0, 1 );
+	camera.lookAt( anchor );
+	camera.layers.enable( CESIUM_GROUND_NON_PICKABLE_LAYER );
+	camera.updateProjectionMatrix();
+	camera.updateMatrixWorld( true );
+
+	const globeDepth = new CesiumGlobeDepth( WIDTH, HEIGHT );
+	const { mainDepthMesh, packedDepthMesh } = createCesiumEllipsoidDepthMeshes( 128, 64 );
+	scene.add( mainDepthMesh );
+	globeDepth.addDepthMesh( packedDepthMesh );
+
+	const bundle = createLegacyPrimitives( imageUrl );
+	const primitives = bundle.entries;
+	for ( const primitive of primitives ) scene.add( primitive.group );
+	// TextureLoader creates its own HTMLImageElement. Even though the URL has
+	// already decoded into the browser cache, allow two task/paint boundaries for
+	// its load callback to set Texture.needsUpdate before the warm render.
+	await new Promise<void>( resolve => requestAnimationFrame(
+		() => requestAnimationFrame( () => resolve() ),
+	) );
+
+	let frameNumber = 0;
+	let disposed = false;
+
+	const snapshotResources = (): LegacyGroundResourceSnapshot => ( {
+		programCount: renderer.info.programs?.length ?? 0,
+		geometryCount: renderer.info.memory.geometries,
+		textureCount: renderer.info.memory.textures,
+	} );
+
+	const renderOneFrame = (
+		timeSeconds = 0,
+		deltaSeconds = 0,
+		explicitFrameNumber = frameNumber,
+	): void => {
+		if ( disposed ) throw new Error( 'Legacy Ground fixture is already disposed.' );
+		camera.updateMatrixWorld( true );
+		updateTerrainLogDepthUniforms( camera.near, camera.far );
+		globeDepth.render( renderer, camera );
+
+		const frameState: CesiumGroundFrameState = {
+			depthTexture: globeDepth.target.texture,
+			width: WIDTH,
+			height: HEIGHT,
+			camera,
+			pixelRatio: 1,
+			timeSeconds,
+			deltaSeconds,
+			frameNumber: explicitFrameNumber,
+		};
+		for ( const primitive of primitives ) primitive.update( frameState );
+		renderer.render( scene, camera );
+		frameNumber += 1;
+	};
+
+	// Render twice: the first frame forces lazy program compilation; the second
+	// is the warm baseline against which program/resource stability is measured.
+	renderOneFrame();
+	renderOneFrame();
+
+	const api: LegacyGroundFixtureApi = {
+		ready: true,
+		isWebGL2: renderer.getContext() instanceof WebGL2RenderingContext,
+		get frameNumber() {
+			return frameNumber;
+		},
+		get resourceSnapshot() {
+			return snapshotResources();
+		},
+		exerciseLegacySetters() {
+			return exerciseLegacySetters( bundle );
+		},
+		measureFrameStability( count: number ) {
+			const beforePrograms = new Set( renderer.info.programs ?? [] );
+			const before = snapshotResources();
+			const safeCount = Math.max( 0, Math.floor( count ) );
+			for ( let index = 0; index < safeCount; index += 1 ) renderOneFrame();
+			const afterPrograms = new Set( renderer.info.programs ?? [] );
+			const programObjectSetStable =
+				beforePrograms.size === afterPrograms.size &&
+				[ ...beforePrograms ].every( program => afterPrograms.has( program ) );
+			return {
+				framesRendered: safeCount,
+				programObjectSetStable,
+				before,
+				after: snapshotResources(),
+			};
+		},
+		renderFrames( count: number ) {
+			const safeCount = Math.max( 0, Math.floor( count ) );
+			for ( let index = 0; index < safeCount; index += 1 ) renderOneFrame();
+			return snapshotResources();
+		},
+		measureLowAngleSky() {
+			// Aim almost tangentially across the ellipsoid. The top 48 framebuffer
+			// rows are guaranteed sky/no-depth; any Ground color there means the
+			// packed-depth clear sentinel escaped fragment culling.
+			camera.position.copy( anchor ).addScaledVector( up, 500 );
+			camera.lookAt(
+				anchor.clone().addScaledVector( east, 10000 ).addScaledVector( up, - 50 ),
+			);
+			camera.updateMatrixWorld( true );
+			renderOneFrame();
+			const gl = renderer.getContext();
+			const bandHeight = 48;
+			const pixels = new Uint8Array( WIDTH * bandHeight * 4 );
+			gl.readPixels(
+				0,
+				HEIGHT - bandHeight,
+				WIDTH,
+				bandHeight,
+				gl.RGBA,
+				gl.UNSIGNED_BYTE,
+				pixels,
+			);
+			let wrongColorPixels = 0;
+			let firstWrongPixel: [ number, number, number, number ] | null = null;
+			for ( let index = 0; index < pixels.length; index += 4 ) {
+				const pixel = [
+					pixels[ index ], pixels[ index + 1 ], pixels[ index + 2 ], pixels[ index + 3 ],
+				] as [ number, number, number, number ];
+				if ( pixel[ 0 ] === 8 && pixel[ 1 ] === 16 && pixel[ 2 ] === 24 && pixel[ 3 ] === 255 ) {
+					continue;
+				}
+				wrongColorPixels += 1;
+				firstWrongPixel ??= pixel;
+			}
+			return {
+				sampledPixels: WIDTH * bandHeight,
+				wrongColorPixels,
+				firstWrongPixel,
+			};
+		},
+		measureAppearanceSwitchFrames() {
+			const readPixel = ( x: number, y: number ): [ number, number, number, number ] => {
+				const pixel = new Uint8Array( 4 );
+				const gl = renderer.getContext();
+				gl.readPixels( x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel );
+				return [ pixel[ 0 ], pixel[ 1 ], pixel[ 2 ], pixel[ 3 ] ];
+			};
+			renderOneFrame();
+			let probeX = -1;
+			let probeY = -1;
+			const regionPixels = new Uint8Array( WIDTH * HEIGHT * 4 );
+			const gl = renderer.getContext();
+			gl.readPixels( 0, 0, WIDTH, HEIGHT, gl.RGBA, gl.UNSIGNED_BYTE, regionPixels );
+			for ( let y = HEIGHT - 1; y >= 0 && probeX < 0; y -= 1 ) {
+				for ( let x = 0; x < WIDTH; x += 1 ) {
+					const offset = ( y * WIDTH + x ) * 4;
+					const red = regionPixels[ offset ];
+					const green = regionPixels[ offset + 1 ];
+					const blue = regionPixels[ offset + 2 ];
+					// The rectangle is the only muted dark-red region. The point is
+					// brighter red/pink and the polyline is orange, so both are excluded.
+					if ( red < 100 || red > 220 || green >= 80 || blue < 20 || blue > 120 ) continue;
+					probeX = x;
+					probeY = y;
+					break;
+				}
+			}
+			if ( probeX < 0 || probeY < 0 ) {
+				throw new Error( 'Appearance switch fixture could not locate the rectangle probe pixel.' );
+			}
+			const sample = (): [ number, number, number, number ] => {
+				renderOneFrame();
+				return readPixel( probeX, probeY );
+			};
+			const safe = new CesiumGroundMaterialAppearance( {
+				material: createColorGroundMaterial( { color: '#00ff66', opacity: 1 } ),
+			} );
+			const raw = new CesiumGroundRawShaderAppearance( {
+				factory: context => context.createDefaultMaterial(),
+			} );
+			const defaultPixel = readPixel( probeX, probeY );
+			bundle.rectangle.setAppearance( safe );
+			const safePixel = sample();
+			bundle.rectangle.setAppearance( raw );
+			const rawPixel = sample();
+			bundle.rectangle.setAppearance( undefined );
+			const restoredPixel = sample();
+			return { defaultPixel, safePixel, rawPixel, restoredPixel };
+		},
+		measureAnimationKeyframes() {
+			for ( const primitive of primitives ) primitive.group.visible = false;
+			const gl = renderer.getContext();
+			const readFrame = (
+				timeSeconds: number,
+				deltaSeconds = 0,
+				explicitFrameNumber = 0,
+			): Uint8Array => {
+				renderOneFrame( timeSeconds, deltaSeconds, explicitFrameNumber );
+				const pixels = new Uint8Array( WIDTH * HEIGHT * 4 );
+				gl.readPixels( 0, 0, WIDTH, HEIGHT, gl.RGBA, gl.UNSIGNED_BYTE, pixels );
+				return pixels;
+			};
+			const equalPixels = ( left: Uint8Array, right: Uint8Array ): boolean => {
+				if ( left.length !== right.length ) return false;
+				for ( let index = 0; index < left.length; index += 1 ) {
+					if ( left[ index ] !== right[ index ] ) return false;
+				}
+				return true;
+			};
+			const energyFrom = ( baseline: Uint8Array, pixels: Uint8Array ): number => {
+				let energy = 0;
+				for ( let index = 0; index < pixels.length; index += 4 ) {
+					energy += Math.abs( pixels[ index ] - baseline[ index ] );
+					energy += Math.abs( pixels[ index + 1 ] - baseline[ index + 1 ] );
+					energy += Math.abs( pixels[ index + 2 ] - baseline[ index + 2 ] );
+				}
+				return energy;
+			};
+			const baseline = readFrame( 0 );
+			const sampleSeries = (
+				primitive: GroundFixturePrimitive,
+				times: readonly number[],
+			): LegacyGroundAnimationSeries => {
+				primitive.group.visible = true;
+				const frames = times.map( time => readFrame( time ) );
+				const sameTimeFirst = readFrame( 0.37, 1 / 30, 11 );
+				const sameTimeSecond = readFrame( 0.37, 1 / 120, 999 );
+				primitive.group.visible = false;
+				return {
+					keyframeEnergy: frames.map( pixels => energyFrom( baseline, pixels ) ),
+					cyclePixelsEqual: equalPixels( frames[ 0 ], frames[ frames.length - 1 ] ),
+					midpointPixelsEqual:
+						frames.length >= 4 && equalPixels( frames[ 1 ], frames[ frames.length - 2 ] ),
+					absoluteTimePixelsEqual: equalPixels( sameTimeFirst, sameTimeSecond ),
+				};
+			};
+
+			const flowAppearance = new CesiumGroundMaterialAppearance( {
+				material: createFlowLineMaterial( {
+					color: '#00ffff',
+					speed: 1,
+					repeat: 1,
+					trailFraction: 0.35,
+				} ),
+			} );
+			bundle.solidPolyline.setAppearance( flowAppearance );
+			const flow = sampleSeries(
+				fromDirectGroup( bundle.solidPolyline ), [ 0, 0.25, 0.5, 0.75, 1 ],
+			);
+
+			bundle.circlePoint.setAppearance( new CesiumGroundMaterialAppearance( {
+				material: createPulsePointMaterial( {
+					color: '#ff3355', periodSeconds: 1, minScale: 0.5, maxScale: 1,
+					minOpacity: 0.2, maxOpacity: 1, phase: 0, footprintScale: 1,
+				} ),
+			} ) );
+			const pulse = sampleSeries(
+				fromClassification( bundle.circlePoint ), [ 0, 0.25, 0.5, 0.75, 1 ],
+			);
+
+			bundle.squarePoint.setAppearance( new CesiumGroundMaterialAppearance( {
+				material: createScalePulseMaterial( {
+					tint: '#33ff88', periodSeconds: 1, minScale: 0.5, maxScale: 1,
+					phase: 0, footprintScale: 1,
+				} ),
+			} ) );
+			const scalePlain = sampleSeries(
+				fromClassification( bundle.squarePoint ), [ 0, 0.25, 0.5, 0.75, 1 ],
+			);
+
+			const imageColor = bundle.image.classification.group
+				.getObjectByName( 'CesiumClassificationColorCommand' )?.material as RawShaderMaterial;
+			const imageTexture = imageColor.uniforms.u_texture.value as Texture;
+			bundle.image.setAppearance( new CesiumGroundMaterialAppearance( {
+				material: createScalePulseMaterial( {
+					texture: imageTexture,
+					tint: '#ffffff', periodSeconds: 1, minScale: 0.5, maxScale: 1,
+					phase: 0, footprintScale: 1,
+				} ),
+			} ) );
+			const scaleTextured = sampleSeries(
+				fromDirectGroup( bundle.image ), [ 0, 0.25, 0.5, 0.75, 1 ],
+			);
+
+			return { flow, pulse, scalePlain, scaleTextured };
+		},
+		measureMutationFrames() {
+			for ( const primitive of primitives ) primitive.group.visible = false;
+			const gl = renderer.getContext();
+			const readFrame = (): Uint8Array => {
+				renderOneFrame();
+				const pixels = new Uint8Array( WIDTH * HEIGHT * 4 );
+				gl.readPixels( 0, 0, WIDTH, HEIGHT, gl.RGBA, gl.UNSIGNED_BYTE, pixels );
+				return pixels;
+			};
+			const baseline = readFrame();
+			const energyFromBaseline = ( pixels: Uint8Array ): number => {
+				let energy = 0;
+				for ( let index = 0; index < pixels.length; index += 4 ) {
+					energy += Math.abs( pixels[ index ] - baseline[ index ] );
+					energy += Math.abs( pixels[ index + 1 ] - baseline[ index + 1 ] );
+					energy += Math.abs( pixels[ index + 2 ] - baseline[ index + 2 ] );
+				}
+				return energy;
+			};
+			const changedPixels = ( left: Uint8Array, right: Uint8Array ): number => {
+				let count = 0;
+				for ( let index = 0; index < left.length; index += 4 ) {
+					if (
+						left[ index ] !== right[ index ] ||
+						left[ index + 1 ] !== right[ index + 1 ] ||
+						left[ index + 2 ] !== right[ index + 2 ] ||
+						left[ index + 3 ] !== right[ index + 3 ]
+					) count += 1;
+				}
+				return count;
+			};
+
+			bundle.rectangle.classification.group.visible = true;
+			bundle.rectangle.classification.setFragmentCulling( false );
+			const cullDisabled = readFrame();
+			bundle.rectangle.classification.setFragmentCulling( true );
+			const cullEnabled = readFrame();
+			bundle.rectangle.classification.group.visible = false;
+
+			bundle.text.group.visible = true;
+			const textBefore = readFrame();
+			bundle.text.setText( { content: 'FRAME UPDATE' } );
+			const textAfter = readFrame();
+			bundle.text.group.visible = false;
+
+			bundle.solidPolyline.group.visible = true;
+			bundle.solidPolyline.setArrowMode( 'none' );
+			const arrowNone = readFrame();
+			bundle.solidPolyline.setArrowMode( 'both' );
+			bundle.solidPolyline.setArrowStyles( 'solid', 'solid' );
+			const arrowSolid = readFrame();
+			bundle.solidPolyline.setArrowStyles( 'open', 'open' );
+			const arrowOpen = readFrame();
+
+			return {
+				fragmentCull: {
+					disabledEnergy: energyFromBaseline( cullDisabled ),
+					enabledEnergy: energyFromBaseline( cullEnabled ),
+				},
+				text: {
+					beforeEnergy: energyFromBaseline( textBefore ),
+					afterEnergy: energyFromBaseline( textAfter ),
+					changedPixels: changedPixels( textBefore, textAfter ),
+				},
+				arrow: {
+					noneEnergy: energyFromBaseline( arrowNone ),
+					bothEnergy: energyFromBaseline( arrowSolid ),
+					noneToBothChangedPixels: changedPixels( arrowNone, arrowSolid ),
+					solidToOpenChangedPixels: changedPixels( arrowSolid, arrowOpen ),
+				},
+			};
+		},
+		dispose() {
+			if ( disposed ) return snapshotResources();
+			disposed = true;
+			for ( const primitive of primitives ) {
+				scene.remove( primitive.group );
+				primitive.dispose();
+			}
+			scene.remove( mainDepthMesh );
+			mainDepthMesh.geometry.dispose();
+			mainDepthMesh.material.dispose();
+			packedDepthMesh.geometry.dispose();
+			packedDepthMesh.material.dispose();
+			globeDepth.dispose();
+			renderer.dispose();
+			return snapshotResources();
+		},
+	};
+
+	return api;
+}
+
+void createFixture()
+	.then( fixture => {
+		window.__C23_LEGACY_GROUND__ = fixture;
+	} )
+	.catch( error => {
+		// Surface asynchronous fixture failures in Playwright's pageerror/console
+		// collection instead of leaving only an opaque waitForFunction timeout.
+		console.error( '[legacy-ground fixture] failed to initialize', error );
+		throw error;
+	} );

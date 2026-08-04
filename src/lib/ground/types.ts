@@ -17,6 +17,7 @@ import type {
 	Vector4,
 	WebGLRenderTarget,
 } from 'three';
+import type { CesiumGroundAppearance } from './material/appearances';
 
 // ── 贴地分类目标（标绘"贴什么表面"）─────────────────────────────────
 // 数值与 Cesium `Source/Scene/ClassificationType.js` 逐值对齐，便于业务层在
@@ -113,6 +114,8 @@ export interface CesiumGroundRectangleOptions {
 }
 
 export interface CesiumGroundRectanglePrimitiveOptions extends CesiumGroundRectangleOptions {
+	/** Optional safe Material Appearance; omitted uses the legacy-equivalent Color preset. */
+	appearance?: CesiumGroundAppearance;
 	granularityRadians?: number;
 	minimumHeight?: number;
 	maximumHeight?: number;
@@ -136,6 +139,8 @@ export interface CesiumGroundRectanglePrimitiveOptions extends CesiumGroundRecta
  * 保证既有调用方仍可工作。
  */
 export interface CesiumGroundPolygonOptions {
+	/** Optional safe Material Appearance; Raw is validated when the primitive is built. */
+	appearance?: CesiumGroundAppearance;
 	points?: LonLatPoint[];
 	holes?: LonLatPoint[][];
 	hole?: boolean;
@@ -179,6 +184,8 @@ export interface CesiumGroundCircleOptions {
 }
 
 export interface CesiumGroundCirclePrimitiveOptions extends CesiumGroundCircleOptions {
+	/** Optional safe Material Appearance; omitted uses the internal Color preset. */
+	appearance?: CesiumGroundAppearance;
 	height?: number;
 	extrudedHeight?: number;
 	granularityRadians?: number;
@@ -242,6 +249,8 @@ export type CesiumGroundPointOptions = CesiumGroundPointCommonOptions & (
  * fillOpacity，不绘制背景或描边。
  */
 export type CesiumGroundImagePrimitiveOptions = CesiumGroundPointCommonOptions & {
+	/** Optional safe/Raw Appearance for the decal color pass. */
+	appearance?: CesiumGroundAppearance;
 	imageUrl: string;
 	imageWidth: number;
 	imageHeight: number;
@@ -256,6 +265,8 @@ export type CesiumGroundImagePrimitiveOptions = CesiumGroundPointCommonOptions &
 };
 
 export type CesiumGroundPointPrimitiveOptions = CesiumGroundPointOptions & {
+	/** Forwarded unchanged to the selected surface/decal delegate. */
+	appearance?: CesiumGroundAppearance;
 	granularityRadians?: number;
 	minimumHeight?: number;
 	maximumHeight?: number;
@@ -312,6 +323,22 @@ export type CesiumGroundArrowStyle = 'solid' | 'open';
  * 全部可选；resolvePublicLineOptions 填默认并严格校验。
  */
 export interface CesiumGroundPolylineOptions {
+	/**
+	 * Optional appearance for the line body. The selected Appearance owns only
+	 * the single `polyline` color pass; system depth reconstruction, width,
+	 * horizon/sky clipping, and arrow endpoint closure remain library-owned.
+	 * Omitting this field creates the internal Color Material equivalent to the
+	 * historical strokeColor/strokeOpacity path.
+	 */
+	appearance?: CesiumGroundAppearance;
+	/**
+	 * Optional appearance for the independent arrow pass. Arrow geometry,
+	 * endpoint style clipping, and all arrow sizing remain library-owned; this
+	 * Appearance controls only the material function evaluated for the arrow
+	 * fragments. When omitted, the legacy arrowColor/arrowOpacity values feed a
+	 * library-created white Color Material through the canonical arrow ABI.
+	 */
+	arrowAppearance?: CesiumGroundAppearance;
 	/** lon/lat 折点（度），≥ 2 个。 */
 	points: LonLatPoint[];
 	/** 线色（'#rrggbb' 或 css 颜色）。 */
@@ -407,6 +434,12 @@ export interface CesiumGroundFrameState {
 	width: number;
 	height: number;
 	camera: PerspectiveCamera;
+	/** Absolute host time in seconds; omitted values intentionally map to zero. */
+	timeSeconds?: number;
+	/** Host-reported elapsed time in seconds; omitted values intentionally map to zero. */
+	deltaSeconds?: number;
+	/** Host frame counter; omitted values intentionally map to zero. */
+	frameNumber?: number;
 	/**
 	 * 物理像素与 CSS 像素的比值，由宿主每帧填入（典型：renderer.getPixelRatio()）。
 	 * 仅 CesiumGroundPolylinePrimitive 在意——`czm_metersPerPixel` 内部要乘它。
@@ -466,8 +499,18 @@ export interface PlanarBounds {
 	maxY: number;
 }
 
-export interface SharedUniforms {
-	[ uniform: string ]: { value: unknown } | undefined;
+/**
+ * Strict runtime map used by Ground primitives while adapting legacy wrapper
+ * names to the canonical Material ABI. Unlike the deprecated public extension
+ * type, this schema cannot be widened with arbitrary system uniforms.
+ *
+ * @internal
+ */
+export interface GroundRuntimeUniforms {
+	/** Canonical animation wrappers are attached by the migrated Material map. */
+	c23_time?: { value: number };
+	c23_deltaTime?: { value: number };
+	c23_frameNumber?: { value: number };
 	czm_encodedCameraPositionMCHigh: { value: Vector3 };
 	czm_encodedCameraPositionMCLow: { value: Vector3 };
 	czm_modelViewRelativeToEye: { value: Matrix4 };
@@ -510,14 +553,6 @@ export interface SharedUniforms {
 	czm_farDepthFromNearPlusOne: { value: number };
 	czm_log2FarDepthFromNearPlusOne: { value: number };
 	czm_oneOverLog2FarDepthFromNearPlusOne: { value: number };
-	/**
-	 * 历史贴地文本内容纹理槽。保留用于兼容；新代码使用通用 u_decalTexture。
-	 */
-	u_textTexture: { value: Texture | null };
-	/** 通用透明纹理贴花（贴地文字和图片点共享）。 */
-	u_decalTexture: { value: Texture | null };
-	/** 贴花整体透明度，0..1；与纹理自身 alpha 相乘。 */
-	u_decalOpacity: { value: number };
 	// ── 贴地线扩展（全部可选；面图元的 uniform map 不设这些键，
 	//    classification.ts 守卫式写入跳过它们）。GLSL 端用
 	//    `#ifdef CESIUM_THREE_POLYLINE` 守住声明，对 stencil/color 编译无影响。──
@@ -526,9 +561,6 @@ export interface SharedUniforms {
 	u_lineWidthPixels?: { value: number };
 	u_lineWidthMode?: { value: number };
 	u_lineWidthMeters?: { value: number };
-	u_lineDashEnabled?: { value: number };
-	u_lineDashLengthMeters?: { value: number };
-	u_lineGapLengthMeters?: { value: number };
 	u_lineTotalMeters?: { value: number };
 	// ── 线端箭头扩展（仅在 polyline 材质 / 箭头材质里使用；其它材质
 	//    prefix 不声明这些 uniform，写入 no-op，零回归）。──
@@ -549,4 +581,30 @@ export interface SharedUniforms {
 	// 支持「起点实心、终点空心」。随各端 arrowStyle 更新。
 	u_lineArrowStyleStart?: { value: number };
 	u_lineArrowStyleEnd?: { value: number };
+}
+
+/**
+ * Legacy internal-extension uniform map retained for source compatibility.
+ *
+ * New shader extensions must use `CesiumGroundMaterial`,
+ * `CesiumGroundMaterialAppearance`, or `CesiumGroundRawShaderAppearance` and
+ * their validated `GroundUserUniforms` / `GroundSystemUniforms` maps instead.
+ *
+ * @deprecated Internal Ground uniforms are not a stable extension ABI. Use the
+ * public Material/Appearance API.
+ */
+export interface SharedUniforms extends GroundRuntimeUniforms {
+	[ uniform: string ]: { value: unknown } | undefined;
+	/** @deprecated Retained only for legacy internal-extension source compatibility. */
+	u_textTexture: { value: Texture | null };
+	/** @deprecated Decal textures now belong to validated logical Material uniforms. */
+	u_decalTexture: { value: Texture | null };
+	/** @deprecated Decal opacity now belongs to the logical Material. */
+	u_decalOpacity: { value: number };
+	/** @deprecated Dash selection now uses the built-in PolylineDash Material. */
+	u_lineDashEnabled?: { value: number };
+	/** @deprecated Use the built-in `u_dashLengthMeters` user uniform. */
+	u_lineDashLengthMeters?: { value: number };
+	/** @deprecated Use the built-in `u_gapLengthMeters` user uniform. */
+	u_lineGapLengthMeters?: { value: number };
 }

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "f8d15f0",
+  "packageVersion": "0.1.9",
+  "threeRange": "^0.183.0",
+  "renderer": {
+    "browser": "chromium",
+    "backend": "ANGLE SwiftShader",
+    "webglVersion": 2,
+    "width": 960,
+    "height": 640,
+    "devicePixelRatio": 1,
+    "antialias": false,
+    "alpha": false,
+    "stencil": true,
+    "outputColorSpace": "srgb"
+  },
+  "camera": {
+    "fovDegrees": 45,
+    "nearMeters": 1,
+    "farMeters": 40000000
+  },
+  "randomSeed": 230831
+}

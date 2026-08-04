@@ -1,0 +1,99 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Ground Shader ABI v1 > locks the public version, struct fields, order, and time uniforms 1`] = `
+"
+#define C23_GROUND_SHADER_ABI_VERSION 1
+
+uniform float c23_time;
+uniform float c23_deltaTime;
+uniform float c23_frameNumber;
+
+struct c23_materialInput {
+	vec2 st;
+	vec2 localMeters;
+	vec4 baseColor;
+	float isStroke;
+	vec3 positionEC;
+	vec3 positionToEyeEC;
+	vec3 normalEC;
+	float distanceAlongMeters;
+	float distanceAcrossMeters;
+	float lineTotalMeters;
+	float metersPerPixel;
+};
+
+struct c23_material {
+	vec3 diffuse;
+	vec3 emission;
+	float alpha;
+};
+"
+`;
+
+exports[`Ground Shader ABI v1 > locks the public version, struct fields, order, and time uniforms 2`] = `
+[
+  "czm_encodedCameraPositionMCHigh",
+  "czm_encodedCameraPositionMCLow",
+  "czm_modelViewRelativeToEye",
+  "czm_modelViewProjectionRelativeToEye",
+  "czm_normal",
+  "czm_geometricToleranceOverMeter",
+  "czm_sceneMode",
+  "czm_globeDepthTexture",
+  "czm_viewport",
+  "czm_inverseProjection",
+  "czm_viewportTransformation",
+  "czm_frustumPlanes",
+  "czm_currentFrustum",
+  "czm_farDepthFromNearPlusOne",
+  "czm_log2FarDepthFromNearPlusOne",
+  "czm_oneOverLog2FarDepthFromNearPlusOne",
+  "c23_time",
+  "c23_deltaTime",
+  "c23_frameNumber",
+  "c23_globeMinimumAltitude",
+  "c23_southWestHigh",
+  "c23_southWestLow",
+  "c23_eastward",
+  "c23_northward",
+  "c23_uvMinAndExtents",
+  "c23_uMaxVmax",
+  "c23_fillColor",
+  "c23_strokeColor",
+  "c23_borderEnabled",
+  "c23_borderWidthMeters",
+  "c23_innerMetersRect",
+  "c23_cpuWestPlane",
+  "c23_cpuSouthPlane",
+  "c23_polygonBorderMode",
+  "c23_polygonMiterStrokeMode",
+  "c23_polygonPointCount",
+  "c23_polygonPoints",
+  "c23_circleBorderMode",
+  "c23_circleCenterMeters",
+  "c23_circleFillRadiusMeters",
+  "c23_circleRenderRadiusMeters",
+  "c23_circleRingCount",
+  "c23_circleRingGapMeters",
+  "c23_circleSectorStartRadians",
+  "c23_circleSectorAngleRadians",
+  "czm_projection",
+  "czm_pixelRatio",
+  "c23_lineColor",
+  "c23_lineWidthPixels",
+  "c23_lineWidthMode",
+  "c23_lineWidthMeters",
+  "c23_lineTotalMeters",
+  "c23_arrowWidthMode",
+  "c23_arrowLengthPixels",
+  "c23_arrowHalfWidthPixels",
+  "c23_arrowLengthMeters",
+  "c23_arrowHalfWidthMeters",
+  "c23_arrowColor",
+  "c23_arrowStrokeHalfPixels",
+  "c23_lineArrowClipEndEnabled",
+  "c23_lineArrowClipStartEnabled",
+  "c23_lineArrowStyleStart",
+  "c23_lineArrowStyleEnd",
+]
+`;
