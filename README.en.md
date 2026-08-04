@@ -21,13 +21,14 @@ After starting Vite, switch demos through the URL:
 |---|---|
 | `http://localhost:5173/` | Default `ground` demo |
 | `http://localhost:5173/?demo=ground` | Ground primitives and Material extensions, including FlowLine / PulsePoint / ScalePulse / custom Material / Raw Appearance |
+| `http://localhost:5173/?demo=animation` | Real-scene vertex-animation comparison: floating, Cesium-terrain-clamped, and a small animated texture clamped to oblique photogrammetry |
 | `http://localhost:5173/?demo=plot` | End-to-end plot management, including one-click hydrant image points |
 | `http://localhost:5173/?demo=plot&noterrain` | Ellipsoid fallback test without a Cesium Ion token |
 | `http://localhost:5173/?demo=model` | Model / oblique photogrammetry clamp demo, defaulting to a direct oblique tileset URL |
 | `http://localhost:5173/?demo=model&model=buildings` | Synthetic building fallback with no external 3D Tiles dependency |
 | `http://localhost:5173/?demo=model&model=ion` | Load a 3D Tiles model from Cesium Ion |
 
-You can also set `VITE_DEMO=ground|plot|model` in `.env.local`.
+You can also set `VITE_DEMO=ground|plot|model|animation` in `.env.local`.
 
 ## Quick Start
 
@@ -68,7 +69,7 @@ npm run build:lib
 
 | Variable | Default | Description |
 |---|---|---|
-| `VITE_DEMO` | `ground` | Default demo, one of `ground` / `plot` / `model` |
+| `VITE_DEMO` | `ground` | Default demo, one of `ground` / `plot` / `model` / `animation` |
 | `VITE_CESIUM_ION_TOKEN` | empty | Cesium Ion token |
 | `VITE_CESIUM_ION_ASSET_ID` | `96188` | Cesium World Terrain |
 | `VITE_DISABLE_TERRAIN` | `false` | No-terrain mode for the `plot` demo |

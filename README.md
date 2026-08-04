@@ -21,13 +21,14 @@
 |---|---|
 | `http://localhost:5173/` | 默认 `ground` demo |
 | `http://localhost:5173/?demo=ground` | 贴地图元与 Material 扩展验证，展示 FlowLine / PulsePoint / ScalePulse / 自定义 Material / Raw Appearance |
+| `http://localhost:5173/?demo=animation` | 真实场景顶点动画对比：不贴地、贴 Cesium 地形、小尺寸动态纹理贴倾斜摄影模型 |
 | `http://localhost:5173/?demo=plot` | `GroundDecalManager` 端到端标绘管理测试，含消防栓图片点单击标绘 |
 | `http://localhost:5173/?demo=plot&noterrain` | 无 Cesium Ion token 时，用椭球兜底验证标绘 |
 | `http://localhost:5173/?demo=model` | 贴倾斜 / 贴模型 demo，默认加载直连倾斜摄影 |
 | `http://localhost:5173/?demo=model&model=buildings` | 不依赖外部 3D Tiles，用合成楼群验证贴模型 |
 | `http://localhost:5173/?demo=model&model=ion` | 从 Cesium Ion 加载 3D Tiles 模型 |
 
-也可以通过 `.env.local` 设置 `VITE_DEMO=ground|plot|model`。
+也可以通过 `.env.local` 设置 `VITE_DEMO=ground|plot|model|animation`。
 
 ## 快速开始
 
@@ -68,7 +69,7 @@ npm run build:lib
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `VITE_DEMO` | `ground` | 默认 demo，可选 `ground` / `plot` / `model` |
+| `VITE_DEMO` | `ground` | 默认 demo，可选 `ground` / `plot` / `model` / `animation` |
 | `VITE_CESIUM_ION_TOKEN` | 空 | Cesium Ion token |
 | `VITE_CESIUM_ION_ASSET_ID` | `96188` | Cesium World Terrain |
 | `VITE_DISABLE_TERRAIN` | `false` | `plot` demo 无地形模式 |
