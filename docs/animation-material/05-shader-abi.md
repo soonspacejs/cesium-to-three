@@ -106,7 +106,7 @@ void c23_vertexMain(
 
 `positionEC` 是系统保守 shadow-volume/line-box 顶点的眼坐标米制位置，只读；顶点动画修改 `positionClip`。系统会把同一源码、defines 和 uniform wrappers 注入 surface/decal 的 front stencil、back stencil 与 color 三个 pass，避免用户复制默认 Shader。
 
-可直接导入 `C23_GROUND_VERTEX_SHADER_TEMPLATE`，或用 `createGroundVertexShader(body)` 只填写函数体；配套的 `C23_GROUND_FRAGMENT_SHADER_TEMPLATE` 是可编译的透传 fragment 模板。
+可直接导入 `C23_GROUND_VERTEX_SHADER_TEMPLATE`，或用 `createGroundVertexShader(declarations, body)` 按“声明、函数体”的源码顺序填写；没有声明时第一个参数传空字符串。配套的 `C23_GROUND_FRAGMENT_SHADER_TEMPLATE` 是可编译的透传 fragment 模板。
 
 ### 1.3 最小合法 Material
 

@@ -221,13 +221,13 @@ import {
 
 const material = new CesiumGroundMaterial({
   uniforms: { u_speed: { value: 2 } },
-  vertexShader: createGroundVertexShader(/* glsl */ `
+  vertexShader: createGroundVertexShader('uniform float u_speed;', /* glsl */ `
     float wave = sin(vertexInput.positionEC.x * 0.01 + c23_time * u_speed);
     vertexOutput.positionClip.y += wave * vertexOutput.positionClip.w * 0.01;
-  `, 'uniform float u_speed;'),
-  fragmentShader: createGroundFragmentShader(/* glsl */ `
+  `),
+  fragmentShader: createGroundFragmentShader('uniform float u_speed;', /* glsl */ `
     material.alpha *= 0.5 + 0.5 * sin(c23_time * u_speed);
-  `, 'uniform float u_speed;'),
+  `),
 });
 ```
 

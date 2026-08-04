@@ -33,13 +33,13 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 }
 `;
 
-/** Wraps animation statements in the exact safe vertex entry signature. */
-export function createGroundVertexShader( body: string, declarations = '' ): string {
-	if ( typeof body !== 'string' ) {
-		throw new TypeError( 'Ground vertex shader body must be a string.' );
-	}
+/** Wraps declarations, then animation statements, in the exact safe vertex entry. */
+export function createGroundVertexShader( declarations: string, body: string ): string {
 	if ( typeof declarations !== 'string' ) {
 		throw new TypeError( 'Ground vertex shader declarations must be a string.' );
+	}
+	if ( typeof body !== 'string' ) {
+		throw new TypeError( 'Ground vertex shader body must be a string.' );
 	}
 	return /* glsl */ `
 ${ declarations }
@@ -57,12 +57,12 @@ ${ body }
  * `material` starts as a pass-through result; the body can override only the
  * fields relevant to the effect instead of recreating ABI boilerplate.
  */
-export function createGroundFragmentShader( body: string, declarations = '' ): string {
-	if ( typeof body !== 'string' ) {
-		throw new TypeError( 'Ground fragment shader body must be a string.' );
-	}
+export function createGroundFragmentShader( declarations: string, body: string ): string {
 	if ( typeof declarations !== 'string' ) {
 		throw new TypeError( 'Ground fragment shader declarations must be a string.' );
+	}
+	if ( typeof body !== 'string' ) {
+		throw new TypeError( 'Ground fragment shader body must be a string.' );
 	}
 	return /* glsl */ `
 ${ declarations }

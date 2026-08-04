@@ -1432,6 +1432,15 @@ export function runGroundDemo(): void {
 			u_maskHigh: { value: 0.96 },
 		},
 		fragmentShader: createGroundFragmentShader( /* glsl */ `
+uniform sampler2D u_texture;
+uniform vec3 u_color;
+uniform float u_opacity;
+uniform float u_speed;
+uniform float u_repeat;
+uniform float u_direction;
+uniform float u_maskLow;
+uniform float u_maskHigh;
+`, /* glsl */ `
 	float lineLength = max(materialInput.lineTotalMeters, 1e-6);
 	float along01 = materialInput.distanceAlongMeters / lineLength;
 	float arrowPhase = fract(
@@ -1448,15 +1457,6 @@ export function runGroundDemo(): void {
 
 	material.diffuse = u_color;
 	material.alpha = materialInput.baseColor.a * u_opacity * arrowMask;
-`, /* glsl */ `
-uniform sampler2D u_texture;
-uniform vec3 u_color;
-uniform float u_opacity;
-uniform float u_speed;
-uniform float u_repeat;
-uniform float u_direction;
-uniform float u_maskLow;
-uniform float u_maskHigh;
 ` ),
 	} );
 	const flowLineAppearance = new CesiumGroundMaterialAppearance( {
@@ -1499,19 +1499,19 @@ uniform float u_maskHigh;
 			u_cold: { value: new Color( '#17345f' ) },
 			u_frequency: { value: 1.5 },
 		},
-		vertexShader: createGroundVertexShader( /* glsl */ `
+		vertexShader: createGroundVertexShader( '', /* glsl */ `
 	float wave = sin(vertexInput.positionEC.x * 0.02 + c23_time * 2.0);
 	vertexOutput.positionClip.y += wave * vertexOutput.positionClip.w * 0.003;
 ` ),
 		fragmentShader: createGroundFragmentShader( /* glsl */ `
+uniform vec3 u_hot;
+uniform vec3 u_cold;
+uniform float u_frequency;
+`, /* glsl */ `
 	float wave = 0.5 + 0.5 * sin(
 		6.28318530718 * (c23_time * u_frequency + materialInput.st.x)
 	);
 	material.diffuse = mix(u_cold, u_hot, wave);
-`, /* glsl */ `
-uniform vec3 u_hot;
-uniform vec3 u_cold;
-uniform float u_frequency;
 ` ),
 	} );
 	const customAppearance = new CesiumGroundMaterialAppearance( { material: customMaterial } );
