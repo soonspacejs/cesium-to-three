@@ -23,6 +23,7 @@ import {
 	compileGroundPass,
 	type CompileGroundPassOptions,
 } from '../../../src/lib/ground/material/compiler';
+import { createPolylineDashMaterial } from '../../../src/lib/ground/material/builtins';
 import { CesiumGroundMaterialError } from '../../../src/lib/ground/material/errors';
 
 const SAFE_SOURCE = /* glsl */ `
@@ -83,6 +84,41 @@ function expectCompilerError(
 }
 
 describe( 'Ground pass compiler', () => {
+	it( 'combines a vertex-only Material with the primitive default fragment Material', () => {
+		const amplitude = { value: 0.01 };
+		const logical = new CesiumGroundMaterial( {
+			type: 'VertexOnlyFixture',
+			uniforms: { u_amplitude: amplitude },
+			vertexShader: /* glsl */ `
+uniform float u_amplitude;
+void c23_vertexMain(
+	c23_vertexInput vertexInput,
+	inout c23_vertexOutput vertexOutput
+) {
+	vertexOutput.positionClip.y += u_amplitude * vertexOutput.positionClip.w;
+}
+`,
+		} );
+		const defaultMaterial = createPolylineDashMaterial( {
+			dashLengthMeters: 12,
+			gapLengthMeters: 4,
+		} );
+		const compiled = compileGroundPass( createCompileOptions( {
+			primitiveKind: 'polyline',
+			pass: 'polyline',
+			appearance: new CesiumGroundMaterialAppearance( { material: logical } ),
+			defaultMaterial,
+		} ) );
+
+		expect( logical.fragmentShader ).toBeUndefined();
+		expect( compiled.material.vertexShader ).toContain( 'uniform float u_amplitude;' );
+		expect( compiled.material.fragmentShader ).toContain( 'uniform float u_dashLengthMeters;' );
+		expect( compiled.material.uniforms.u_amplitude ).toBe( amplitude );
+		expect( compiled.material.uniforms.u_dashLengthMeters )
+			.toBe( defaultMaterial.uniforms.u_dashLengthMeters );
+		expect( compiled.material.uniforms.u_color ).toBe( defaultMaterial.uniforms.u_color );
+	} );
+
 	it( 'creates independent safe records while preserving every wrapper identity', () => {
 		const options = createCompileOptions();
 		const first = compileGroundPass( options );

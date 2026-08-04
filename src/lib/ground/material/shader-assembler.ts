@@ -15,6 +15,7 @@ import {
 	createGroundUserDefineSource,
 	createMaterialInputSource,
 } from './shader-abi';
+import { C23_GROUND_FRAGMENT_SHADER_TEMPLATE } from './templates';
 import type { GroundPrimitiveKind, GroundRenderPass } from './types';
 import { validateGroundMaterialSource } from './validation';
 
@@ -250,12 +251,17 @@ export function assembleGroundFragmentShader(
 		] );
 	}
 
-	validateGroundMaterialSource( options.material, options.kind );
+	const fragmentShader = options.material.fragmentShader
+		?? C23_GROUND_FRAGMENT_SHADER_TEMPLATE;
+	const effectiveMaterial = options.material.fragmentShader === undefined
+		? { ...options.material, fragmentShader }
+		: options.material;
+	validateGroundMaterialSource( effectiveMaterial, options.kind );
 	return joinNamedSections( [
 		...commonSections,
 		emitNamedSection( 'ground-material-abi', C23_SHADER_ABI_SOURCE ),
 		emitNamedSection( 'ground-user-defines', createGroundUserDefineSource( options.material.defines ) ),
-		emitNamedSection( 'ground-user-material', options.material.fragmentShader ),
+		emitNamedSection( 'ground-user-material', fragmentShader ),
 		emitNamedSection( 'fragment-safe-main', createSafeFragmentMain( options.sections ) ),
 	] );
 }

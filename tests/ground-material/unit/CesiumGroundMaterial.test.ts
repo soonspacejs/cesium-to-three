@@ -19,6 +19,26 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 }`;
 
 describe( 'CesiumGroundMaterial', () => {
+	it( 'allows a vertex-only material and preserves the omitted fragment through clone()', () => {
+		const vertexShader = /* glsl */ `
+void c23_vertexMain(c23_vertexInput vertexInput, inout c23_vertexOutput vertexOutput) {}
+`;
+		const material = new CesiumGroundMaterial( { vertexShader } );
+		const clone = material.clone();
+
+		expect( material.vertexShader ).toBe( vertexShader );
+		expect( material.fragmentShader ).toBeUndefined();
+		expect( clone.vertexShader ).toBe( vertexShader );
+		expect( clone.fragmentShader ).toBeUndefined();
+	} );
+
+	it( 'rejects a non-string fragmentShader when one is provided', () => {
+		expect( () => new CesiumGroundMaterial( {
+			fragmentShader: 123,
+		} as unknown as ConstructorParameters<typeof CesiumGroundMaterial>[ 0 ] ) )
+			.toThrow( /fragmentShader must be a string when provided/ );
+	} );
+
 	it( 'preserves constructor map/wrapper identities and applies documented defaults', () => {
 		const wrapper = { value: 0.25 };
 		const uniforms = { u_phase: wrapper };

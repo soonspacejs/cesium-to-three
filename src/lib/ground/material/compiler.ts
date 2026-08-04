@@ -48,6 +48,7 @@ import {
 } from './ground-system-shaders';
 import { C23_GROUND_SHADER_ABI_VERSION } from './shader-abi';
 import { mergeGroundUniforms } from './system-uniforms';
+import { C23_GROUND_FRAGMENT_SHADER_TEMPLATE } from './templates';
 import {
 	GROUND_RENDER_PASSES,
 	type GroundPrimitiveKind,
@@ -72,8 +73,9 @@ export interface CompileGroundPassOptions {
 	appearance: CesiumGroundAppearance;
 	systemUniforms: GroundSystemUniforms;
 	/**
-	 * Current built-in/default logical Material for Raw createDefaultMaterial().
-	 * Safe appearances use their own material. Its wrappers remain borrowed.
+	 * Current built-in/default logical Material for Raw createDefaultMaterial()
+	 * and for a safe appearance whose fragmentShader is omitted. Its wrappers
+	 * remain borrowed.
 	 */
 	defaultMaterial: CesiumGroundMaterial;
 	pipelineState: GroundCompilePipelineState;
@@ -155,11 +157,39 @@ function mergeDefaultAndRawUserUniforms(
 	return merged;
 }
 
+type GroundShaderMaterialSource = Pick<
+	CesiumGroundMaterial,
+	'type' | 'vertexShader' | 'fragmentShader' | 'uniforms' | 'defines'
+>;
+
+/**
+ * Resolves a vertex-only safe Material against this primitive's real default
+ * fragment source. This preserves solid color, line dashes, textured decals,
+ * and their wrapper identities instead of replacing them with a generic color.
+ */
+function resolveSafeGroundMaterial(
+	logicalMaterial: CesiumGroundMaterial,
+	defaultMaterial: CesiumGroundMaterial,
+): GroundShaderMaterialSource {
+	if ( logicalMaterial.fragmentShader !== undefined ) return logicalMaterial;
+	return {
+		type: logicalMaterial.type,
+		vertexShader: logicalMaterial.vertexShader,
+		fragmentShader: defaultMaterial.fragmentShader
+			?? C23_GROUND_FRAGMENT_SHADER_TEMPLATE,
+		uniforms: mergeDefaultAndRawUserUniforms(
+			defaultMaterial.uniforms,
+			logicalMaterial.uniforms,
+		),
+		defines: { ...defaultMaterial.defines, ...logicalMaterial.defines },
+	};
+}
+
 /** Selects the complete trusted source pair for one safe/default pass. */
 function createGroundPassShaders(
 	kind: GroundPrimitiveKind,
 	pass: GroundRenderPass,
-	material: CesiumGroundMaterial,
+	material: GroundShaderMaterialSource,
 	state: GroundCompilePipelineState,
 ): GroundShaderSourcePair {
 	if ( pass === 'frontStencil' || pass === 'backStencil' ) {
@@ -184,7 +214,7 @@ function createGroundPassShaders(
 function createDefaultRawShaderMaterial(
 	kind: GroundPrimitiveKind,
 	pass: GroundRenderPass,
-	logicalMaterial: CesiumGroundMaterial,
+	logicalMaterial: GroundShaderMaterialSource,
 	uniforms: Record<string, IUniform>,
 	state: GroundCompilePipelineState,
 ): RawShaderMaterial {
@@ -476,6 +506,9 @@ export function compileGroundPass( options: CompileGroundPassOptions ): GroundCo
 		const logicalMaterial = options.appearance.material;
 		const isStencil = options.pass === 'frontStencil' || options.pass === 'backStencil';
 		const isFixedStencil = isStencil && logicalMaterial.vertexShader === undefined;
+		const resolvedMaterial = isFixedStencil
+			? logicalMaterial
+			: resolveSafeGroundMaterial( logicalMaterial, options.defaultMaterial );
 		const structureKey = isFixedStencil
 			? undefined
 			: prepareGroundMaterialStructureForCompile( logicalMaterial, {
@@ -490,11 +523,11 @@ export function compileGroundPass( options: CompileGroundPassOptions ): GroundCo
 		// vertex source and wrappers must be identical across front/back/color.
 		const uniforms = isFixedStencil
 			? { ...options.systemUniforms }
-			: mergeGroundUniforms( options.systemUniforms, logicalMaterial.uniforms );
+			: mergeGroundUniforms( options.systemUniforms, resolvedMaterial.uniforms );
 		compiled = createDefaultRawShaderMaterial(
 			options.primitiveKind,
 			options.pass,
-			logicalMaterial,
+			resolvedMaterial,
 			uniforms,
 			options.pipelineState,
 		);

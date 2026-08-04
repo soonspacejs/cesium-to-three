@@ -26,8 +26,11 @@ export interface CesiumGroundMaterialOptions {
 	 * library vertex stage without adding user uniforms to stencil passes.
 	 */
 	vertexShader?: string;
-	/** Safe GLSL3 material source. Entry-function validation occurs at compile time. */
-	fragmentShader: string;
+	/**
+	 * Optional safe GLSL3 material source. When omitted, each primitive keeps its
+	 * current default fragment Material while still applying this vertex hook.
+	 */
+	fragmentShader?: string;
 }
 
 export interface CesiumGroundMaterialEventMap {
@@ -60,7 +63,7 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
 	public uniforms: GroundUserUniforms;
 	public defines: GroundDefines;
 	public vertexShader?: string;
-	public fragmentShader: string;
+	public fragmentShader?: string;
 
 	private _version = 0;
 
@@ -69,8 +72,8 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
 		if ( options === null || typeof options !== 'object' ) {
 			throw new TypeError( 'CesiumGroundMaterial options must be an object.' );
 		}
-		if ( typeof options.fragmentShader !== 'string' ) {
-			throw new TypeError( 'CesiumGroundMaterial fragmentShader must be a string.' );
+		if ( options.fragmentShader !== undefined && typeof options.fragmentShader !== 'string' ) {
+			throw new TypeError( 'CesiumGroundMaterial fragmentShader must be a string when provided.' );
 		}
 		if ( options.vertexShader !== undefined && typeof options.vertexShader !== 'string' ) {
 			throw new TypeError( 'CesiumGroundMaterial vertexShader must be a string when provided.' );

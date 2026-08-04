@@ -219,7 +219,7 @@ describe( 'safe Ground Material source validation', () => {
 } );
 
 describe( 'safe Ground vertex source validation', () => {
-	it( 'accepts the exact vertex hook, time ABI, helpers, and backed uniforms', () => {
+	it( 'accepts a vertex-only hook, time ABI, helpers, and backed uniforms', () => {
 		const material = new CesiumGroundMaterial( {
 			uniforms: { u_amplitude: { value: 0.01 } },
 			vertexShader: /* glsl */ `
@@ -233,12 +233,12 @@ void c23_vertexMain(
 	vertexOutput.positionClip.y += wave * u_amplitude * vertexOutput.positionClip.w;
 }
 `,
-			fragmentShader: ENTRY_BODY,
 		} );
 
 		const analysis = validateGroundVertexSource( material, 'surface' );
 		expect( analysis.declaredUserUniforms ).toEqual( [ 'u_amplitude' ] );
 		expect( analysis.tokenCount ).toBeGreaterThan( 20 );
+		expect( material.fragmentShader ).toBeUndefined();
 		expect( () => validateGroundMaterialSource( material, 'surface' ) ).not.toThrow();
 	} );
 

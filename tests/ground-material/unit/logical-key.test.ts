@@ -37,6 +37,10 @@ describe( 'logical Ground Material key', () => {
 			new CesiumGroundMaterial( {
 				uniforms: { u_speed: { value: 1 } },
 				defines: { OPTION: false },
+			} ),
+			new CesiumGroundMaterial( {
+				uniforms: { u_speed: { value: 1 } },
+				defines: { OPTION: false },
 				vertexShader: 'void c23_vertexMain(c23_vertexInput vertexInput, inout c23_vertexOutput vertexOutput) {}',
 				fragmentShader: SOURCE,
 			} ),

@@ -233,6 +233,8 @@ const material = new CesiumGroundMaterial({
 
 不需要复制默认系统 Shader。`C23_GROUND_VERTEX_SHADER_TEMPLATE` 与 `C23_GROUND_FRAGMENT_SHADER_TEMPLATE` 也可直接作为编辑起点；surface/decal 的 vertex Hook 自动同步到 front/back/color 三个 pass。
 
+`vertexShader` 与 `fragmentShader` 都是可选的。只实现顶点动画时可以省略 `fragmentShader`；编译器会保留图元当前的默认片元材质及其 uniforms，例如 polygon 的默认颜色/边框、polyline 的默认实线或虚线效果。
+
 ## 示例：共享 Material 与热更新 uniform
 
 同一个 Appearance 可以绑定到多个图元；它们共享同一个逻辑 Material 及其 uniform wrapper。`setUniform()` 只修改现有 wrapper 的 `.value`，不会改变 Material version 或 program 身份：

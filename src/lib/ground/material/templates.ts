@@ -22,7 +22,7 @@ void c23_vertexMain(
 }
 `;
 
-/** Copy-ready pass-through fragment Material required by every safe Material. */
+/** Copy-ready pass-through fragment Material for effects that customize this stage. */
 export const C23_GROUND_FRAGMENT_SHADER_TEMPLATE = /* glsl */ `
 c23_material c23_getMaterial(c23_materialInput materialInput) {
 	c23_material material;

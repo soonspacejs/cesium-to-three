@@ -2,8 +2,8 @@
 // polyline-appearance-compile.ts
 // Purpose: exercise the public CesiumGroundPolylinePrimitive Appearance
 //         routes with a real WebGL2 renderer. The fixture intentionally uses
-//         one solid default line, one safe gradient line, and one Raw line so
-//         constructor wiring, canonical wrapper binding, and Raw factory pass
+//         default, fragment-safe, vertex-only/default-fragment, and Raw routes
+//         so constructor wiring, fallback wrapper binding, and Raw factory pass
 //         dispatch are tested together rather than through isolated strings.
 // ============================================================
 
@@ -32,6 +32,8 @@ export interface PolylineAppearanceCompileReport {
 	programCount: number;
 	materialNames: string[];
 	customUniformBound: boolean;
+	vertexOnlyUniformBound: boolean;
+	vertexOnlyUsesDefaultDash: boolean;
 	rawPasses: string[];
 	arrowMaterialNames: string[];
 	arrowCustomUniformBound: boolean;
@@ -73,6 +75,16 @@ c23_material c23_getMaterial(c23_materialInput materialInput) {
 }
 `;
 
+const VERTEX_ONLY_SOURCE = /* glsl */ `
+uniform float u_amplitude;
+void c23_vertexMain(
+	c23_vertexInput vertexInput,
+	inout c23_vertexOutput vertexOutput
+) {
+	vertexOutput.positionClip.y += u_amplitude * vertexOutput.positionClip.w;
+}
+`;
+
 function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 	const renderer = new WebGLRenderer( {
 		antialias: false,
@@ -99,6 +111,14 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 		fragmentShader: SAFE_SOURCE,
 	} );
 	const safeAppearance = new CesiumGroundMaterialAppearance( { material: safeMaterial } );
+	const vertexOnlyMaterial = new CesiumGroundMaterial( {
+		type: 'VertexOnlyPolylineWebGL2Fixture',
+		uniforms: { u_amplitude: { value: 0.002 } },
+		vertexShader: VERTEX_ONLY_SOURCE,
+	} );
+	const vertexOnlyAppearance = new CesiumGroundMaterialAppearance( {
+		material: vertexOnlyMaterial,
+	} );
 	const safeArrowLogicalMaterial = new CesiumGroundMaterial( {
 		type: 'Stage9ArrowWebGL2Fixture',
 		uniforms: { u_arrowTint: { value: new Vector4( 0.9, 0.4, 0.2, 1 ) } },
@@ -160,6 +180,12 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 		} ) ),
 		new CesiumGroundPolylinePrimitive( createOptions( { appearance: dashAppearance } ) ),
 		new CesiumGroundPolylinePrimitive( createOptions( { appearance: flowAppearance } ) ),
+		new CesiumGroundPolylinePrimitive( createOptions( {
+			appearance: vertexOnlyAppearance,
+			dashEnabled: true,
+			dashLengthMeters: 20,
+			gapLengthMeters: 10,
+		} ) ),
 	];
 
 	const scene = new Scene();
@@ -183,6 +209,8 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 	const safeArrowCompiledMaterial = safeArrow?.material as RawShaderMaterial;
 	const rawArrow = primitives[ 2 ].group.getObjectByName( 'CesiumGroundPolylineArrowCommand' );
 	const rawArrowMaterial = rawArrow?.material as RawShaderMaterial;
+	const vertexOnlyLine = primitives[ 5 ].group.getObjectByName( 'CesiumGroundPolylineColorCommand' );
+	const vertexOnlyCompiledMaterial = vertexOnlyLine?.material as RawShaderMaterial;
 	const programCountBeforeFlowFrames = renderer.info.programs?.length ?? 0;
 	const flowFrames = 600;
 	for ( let frame = 0; frame < flowFrames; frame ++ ) {
@@ -199,6 +227,11 @@ function compilePolylineAppearances(): PolylineAppearanceCompileReport {
 		programCount: renderer.info.programs?.length ?? 0,
 		materialNames,
 		customUniformBound: safeLineMaterial.uniforms.u_tint === safeMaterial.uniforms.u_tint,
+		vertexOnlyUniformBound:
+			vertexOnlyCompiledMaterial.uniforms.u_amplitude === vertexOnlyMaterial.uniforms.u_amplitude,
+		vertexOnlyUsesDefaultDash:
+			vertexOnlyCompiledMaterial.uniforms.u_dashLengthMeters !== undefined &&
+			vertexOnlyCompiledMaterial.fragmentShader.includes( 'uniform float u_dashLengthMeters;' ),
 		rawPasses,
 		arrowMaterialNames: [ safeArrowCompiledMaterial.name, rawArrowMaterial.name ],
 		arrowCustomUniformBound:

@@ -862,6 +862,19 @@ export function validateGroundMaterialSource(
 		kind,
 		entryName: 'c23_getMaterial',
 	};
+	if ( material.fragmentShader === undefined ) {
+		const vertexAnalysis = validateGroundVertexSource( material, kind );
+		assertGroundUniformSchemaMatches(
+			new Set( vertexAnalysis.declaredUserUniforms ),
+			material,
+			context,
+			true,
+		);
+		return Object.freeze( {
+			declaredUserUniforms: Object.freeze( [] ),
+			tokenCount: 0,
+		} );
+	}
 	const commentFree = maskGlslComments( material.fragmentShader, context );
 	const declarationSource = maskAndValidatePreprocessor( commentFree, context );
 	const tokens = tokenizeGroundGlsl( declarationSource );

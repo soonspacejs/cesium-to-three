@@ -125,11 +125,11 @@ export interface CesiumGroundMaterialOptions {
   vertexShader?: string;
 
   /**
-   * GLSL3 源码，可以包含用户 uniform 与 helper，但必须提供且只能以此作为材质入口：
+   * 可选 GLSL3 源码，可以包含用户 uniform 与 helper；提供时只能以此作为材质入口：
    * c23_material c23_getMaterial(c23_materialInput input)
-   * 不得声明 main()。
+   * 不得声明 main()。省略时保留当前图元的默认片元材质及其 uniforms。
    */
-  fragmentShader: string;
+  fragmentShader?: string;
 }
 
 export interface CesiumGroundMaterialEventMap {
@@ -143,7 +143,7 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
   uniforms: GroundUserUniforms;
   defines: GroundDefines;
   vertexShader?: string;
-  fragmentShader: string;
+  fragmentShader?: string;
   readonly version: number;
 
   constructor(options: CesiumGroundMaterialOptions);
@@ -180,7 +180,7 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
 | 替换既有 wrapper | 只允许配置阶段 | 手动 `needsUpdate=true` | 是 |
 | 新增/删除 uniform key | 只允许配置阶段 | 手动 `needsUpdate=true` | 是 |
 | 修改/增加/移除 `vertexShader` | 允许 | 手动 `needsUpdate=true` | 是；surface/decal 原子重建三 pass |
-| 修改 `fragmentShader` | 允许 | 手动 `needsUpdate=true` | 是 |
+| 修改/增加/移除 `fragmentShader` | 允许 | 手动 `needsUpdate=true` | 是 |
 | 修改 `defines` 的 key/value | 允许 | 手动 `needsUpdate=true` | 是 |
 | 修改 `type` | 允许用于调试 | 不变 | 否 |
 | 每帧设置 `needsUpdate=true` | 禁止用法 | 每帧增加 | 每帧，错误 |

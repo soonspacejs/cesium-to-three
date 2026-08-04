@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import type { PolylineAppearanceCompileReport } from '../fixtures/polyline-appearance-compile';
 
-test( 'links default, safe, and Raw polyline Appearance routes in WebGL2', async ( { page } ) => {
+test( 'links default, fragment-safe, vertex-only, and Raw polyline routes in WebGL2', async ( { page } ) => {
 	const browserErrors: string[] = [];
 	page.on( 'console', message => {
 		if ( message.type() === 'error' ) browserErrors.push( message.text() );
@@ -23,8 +23,11 @@ test( 'links default, safe, and Raw polyline Appearance routes in WebGL2', async
 		'Stage7RawPolyline',
 		'CesiumGroundPolylineMaterial',
 		'CesiumGroundPolylineMaterial',
+		'CesiumGroundPolylineMaterial',
 	] );
 	expect( report.customUniformBound ).toBe( true );
+	expect( report.vertexOnlyUniformBound ).toBe( true );
+	expect( report.vertexOnlyUsesDefaultDash ).toBe( true );
 	expect( report.rawPasses ).toEqual( [ 'polyline:polyline' ] );
 	expect( report.arrowMaterialNames ).toEqual( [
 		'CesiumGroundArrowMaterial',
@@ -34,8 +37,8 @@ test( 'links default, safe, and Raw polyline Appearance routes in WebGL2', async
 	expect( report.arrowRawPasses ).toEqual( [ 'arrow:arrow' ] );
 	expect( report.flowFrames ).toBe( 600 );
 	expect( report.programCountAfterFlowFrames ).toBe( report.programCountBeforeFlowFrames );
-	// Color, safe gradient, Dash, and Flow sources are four distinct logical
-	// shader schemas; Raw default reuses the Color program through Three's cache.
-	expect( report.programCount ).toBeGreaterThanOrEqual( 4 );
+	// Color, safe gradient, Dash, Flow, and vertex-only Dash are five distinct
+	// shader pairs; Raw default reuses the Color program through Three's cache.
+	expect( report.programCount ).toBeGreaterThanOrEqual( 5 );
 	expect( browserErrors ).toEqual( [] );
 } );
