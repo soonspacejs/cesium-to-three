@@ -86,9 +86,13 @@ function expectCompilerError(
 describe( 'Ground pass compiler', () => {
 	it( 'combines a vertex-only Material with the primitive default fragment Material', () => {
 		const amplitude = { value: 0.01 };
+		const unusedFragmentUniform = { value: 'unused' };
 		const logical = new CesiumGroundMaterial( {
 			type: 'VertexOnlyFixture',
-			uniforms: { u_amplitude: amplitude },
+			uniforms: {
+				u_amplitude: amplitude,
+				u_fragmentOnly: unusedFragmentUniform,
+			},
 			vertexShader: /* glsl */ `
 uniform float u_amplitude;
 void c23_vertexMain(
@@ -114,6 +118,7 @@ void c23_vertexMain(
 		expect( compiled.material.vertexShader ).toContain( 'uniform float u_amplitude;' );
 		expect( compiled.material.fragmentShader ).toContain( 'uniform float u_dashLengthMeters;' );
 		expect( compiled.material.uniforms.u_amplitude ).toBe( amplitude );
+		expect( compiled.material.uniforms.u_fragmentOnly ).toBe( unusedFragmentUniform );
 		expect( compiled.material.uniforms.u_dashLengthMeters )
 			.toBe( defaultMaterial.uniforms.u_dashLengthMeters );
 		expect( compiled.material.uniforms.u_color ).toBe( defaultMaterial.uniforms.u_color );

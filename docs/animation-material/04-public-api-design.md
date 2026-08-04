@@ -187,7 +187,7 @@ export class CesiumGroundMaterial extends EventDispatcher<CesiumGroundMaterialEv
 
 `setUniform()` 对未知 key 必须抛 `GROUND_UNIFORM_NOT_DECLARED`。它不能偷偷新增 schema，因为这种行为会让用户误以为没有重编译。
 
-首期 schema 只描述 uniform key 集合，GLSL 类型来自 safe source 声明；API 不新增 JavaScript value-type metadata。因而 `setUniform<T>()` 与直接写 `.value` 都不推断 number/Vector/Texture 是否匹配 GLSL，wrapper identity、version 与 compile key 保持不变，类型正确性由调用方与 Three uniform uploader 负责。开发编译可以诊断“GLSL 声明缺 wrapper/多余 wrapper”，但不能承诺拦截每次直接 `.value` 赋值。
+首期 schema 只描述 uniform key 集合，GLSL 类型来自 safe source 声明；API 不新增 JavaScript value-type metadata。因而 `setUniform<T>()` 与直接写 `.value` 都不推断 number/Vector/Texture 是否匹配 GLSL，wrapper identity、version 与 compile key 保持不变，类型正确性由调用方与 Three uniform uploader 负责。开发编译会诊断“GLSL 声明缺 wrapper”；与 Three/Cesium 默认行为一致，JS uniforms 允许是 Shader active uniforms 的超集，未使用 wrapper 不报错且不会上传到 GPU。
 
 新增 schema 的唯一明确流程：
 

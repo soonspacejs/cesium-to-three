@@ -808,12 +808,11 @@ function analyzeGroundTopLevel(
 	return { declaredUserUniforms, entryCount };
 }
 
-/** Ensures GLSL declarations and JavaScript uniform wrappers are one schema. */
-function assertGroundUniformSchemaMatches(
+/** Ensures every user GLSL uniform has a value wrapper; unused wrappers are allowed. */
+function assertGroundUniformWrappersExist(
 	declaredUserUniforms: ReadonlySet<string>,
 	material: Pick<CesiumGroundMaterial, 'type' | 'uniforms'>,
 	context: GroundSourceValidationContext,
-	requireEveryWrapper: boolean,
 ): void {
 	for ( const declaredName of [ ...declaredUserUniforms ].sort() ) {
 		if ( Object.prototype.hasOwnProperty.call( material.uniforms, declaredName ) ) continue;
@@ -825,22 +824,6 @@ function assertGroundUniformSchemaMatches(
 				kind: context.kind,
 				token: declaredName,
 				reason: 'uniform-wrapper-missing',
-				abiVersion: C23_GROUND_SHADER_ABI_VERSION,
-			},
-		);
-	}
-
-	if ( ! requireEveryWrapper ) return;
-	for ( const wrapperName of Object.keys( material.uniforms ).sort() ) {
-		if ( declaredUserUniforms.has( wrapperName ) ) continue;
-		throw new CesiumGroundMaterialError(
-			'GROUND_UNIFORM_NOT_DECLARED',
-			`Ground user wrapper "${ wrapperName }" has no GLSL uniform declaration.`,
-			{
-				materialType: context.materialType,
-				kind: context.kind,
-				token: wrapperName,
-				reason: 'uniform-declaration-missing',
 				abiVersion: C23_GROUND_SHADER_ABI_VERSION,
 			},
 		);
@@ -863,13 +846,7 @@ export function validateGroundMaterialSource(
 		entryName: 'c23_getMaterial',
 	};
 	if ( material.fragmentShader === undefined ) {
-		const vertexAnalysis = validateGroundVertexSource( material, kind );
-		assertGroundUniformSchemaMatches(
-			new Set( vertexAnalysis.declaredUserUniforms ),
-			material,
-			context,
-			true,
-		);
+		validateGroundVertexSource( material, kind );
 		return Object.freeze( {
 			declaredUserUniforms: Object.freeze( [] ),
 			tokenCount: 0,
@@ -929,13 +906,10 @@ export function validateGroundMaterialSource(
 		);
 	}
 
-	assertGroundUniformSchemaMatches( analysis.declaredUserUniforms, material, context, false );
-	const allDeclaredUniforms = new Set( analysis.declaredUserUniforms );
+	assertGroundUniformWrappersExist( analysis.declaredUserUniforms, material, context );
 	if ( material.vertexShader !== undefined ) {
-		const vertexAnalysis = validateGroundVertexSource( material, kind );
-		for ( const name of vertexAnalysis.declaredUserUniforms ) allDeclaredUniforms.add( name );
+		validateGroundVertexSource( material, kind );
 	}
-	assertGroundUniformSchemaMatches( allDeclaredUniforms, material, context, true );
 	return Object.freeze( {
 		declaredUserUniforms: Object.freeze( [ ...analysis.declaredUserUniforms ].sort() ),
 		tokenCount: tokens.length,
@@ -1029,7 +1003,7 @@ export function validateGroundVertexSource(
 		);
 	}
 
-	assertGroundUniformSchemaMatches( analysis.declaredUserUniforms, material, context, false );
+	assertGroundUniformWrappersExist( analysis.declaredUserUniforms, material, context );
 	return Object.freeze( {
 		declaredUserUniforms: Object.freeze( [ ...analysis.declaredUserUniforms ].sort() ),
 		tokenCount: tokens.length,

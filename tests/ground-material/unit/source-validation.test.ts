@@ -187,7 +187,7 @@ describe( 'safe Ground Material source validation', () => {
 		);
 	} );
 
-	it( 'requires a one-to-one GLSL uniform and wrapper schema', () => {
+	it( 'requires wrappers for GLSL uniforms and allows unused wrapper entries', () => {
 		const missingWrapper = expectSourceError(
 			`uniform float u_speed;\n${ ENTRY_BODY }`,
 			'GROUND_UNIFORM_NOT_DECLARED',
@@ -195,13 +195,14 @@ describe( 'safe Ground Material source validation', () => {
 		);
 		expect( missingWrapper.detail?.reason ).toBe( 'uniform-wrapper-missing' );
 
-		const missingDeclaration = expectSourceError(
-			ENTRY_BODY,
-			'GROUND_UNIFORM_NOT_DECLARED',
-			'u_speed',
-			{ u_speed: { value: 1 } },
-		);
-		expect( missingDeclaration.detail?.reason ).toBe( 'uniform-declaration-missing' );
+		const material = createMaterial( ENTRY_BODY, {
+			u_speed: { value: 1 },
+			u_color: { value: 'unused' },
+		} );
+		expect( () => validateGroundMaterialSource( material, 'surface' ) )
+			.not.toThrow();
+		expect( material.uniforms.u_speed.value ).toBe( 1 );
+		expect( material.uniforms.u_color.value ).toBe( 'unused' );
 	} );
 
 	it( 'rejects malformed lexical structure deterministically', () => {
@@ -221,7 +222,11 @@ describe( 'safe Ground Material source validation', () => {
 describe( 'safe Ground vertex source validation', () => {
 	it( 'accepts a vertex-only hook, time ABI, helpers, and backed uniforms', () => {
 		const material = new CesiumGroundMaterial( {
-			uniforms: { u_amplitude: { value: 0.01 } },
+			uniforms: {
+				u_amplitude: { value: 0.01 },
+				u_hot: { value: 'unused-fragment-color' },
+				u_cold: { value: 'unused-fragment-color' },
+			},
 			vertexShader: /* glsl */ `
 uniform float u_amplitude;
 float userWave(float value) { return sin(value); }
