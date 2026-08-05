@@ -1,0 +1,523 @@
+import {
+	Group,
+	Matrix4,
+	Vector3,
+	type Camera,
+	type Object3D,
+} from 'three';
+import type { CesiumGroundFrameState } from '../../ground';
+import type { GeometryAdapterRegistry } from '../adapters/GeometryAdapterRegistry';
+import type { EditHandle } from '../adapters/types';
+import type {
+	PlotFeature,
+	PlotFeatureId,
+	Position3D,
+	ResolvedPlotGeometry,
+} from '../document/types';
+import type { SelectionState } from '../state/SelectionModel';
+import type { TransformMode } from '../state/types';
+import {
+	computeSelectionPivot,
+	createGizmoHandleDescriptions,
+	getSelectionGizmoCapabilities,
+} from '../transform/gizmo';
+import type { GizmoHandleDescription } from '../transform/types';
+import {
+	CanonicalPlotRenderBridge,
+	type PlotRenderError,
+	type RenderSyncResult,
+} from './CanonicalPlotRenderBridge';
+import { PlotRenderProjection } from './RenderProjection';
+import {
+	ScreenSpaceMarkerLayer,
+	type MarkerViewportState,
+	type ScreenSpaceMarkerDescription,
+} from './ScreenSpaceMarkerLayer';
+import {
+	EditorCameraLayerLease,
+	EditorOverlayLayer,
+	isolateOverlayObjects,
+} from './layers';
+
+export type EditorRenderReason =
+	| 'document'
+	| 'surface'
+	| 'draft'
+	| 'selection'
+	| 'camera'
+	| 'viewport'
+	| 'dispose';
+
+export interface OverlayRenderError extends PlotRenderError {
+	readonly pass: 'committed' | 'draft' | 'selection';
+}
+
+export interface EditorOverlayRendererOptions {
+	readonly scene: Object3D;
+	readonly camera: Camera;
+	readonly adapters: GeometryAdapterRegistry;
+	readonly requestRender?: ( reason: EditorRenderReason ) => void;
+	readonly onRenderError?: ( error: OverlayRenderError ) => void;
+}
+
+export interface EditorOverlaySyncInput {
+	readonly features: readonly Readonly<PlotFeature>[];
+	readonly documentRevision: number;
+	readonly sessionRevision: number;
+	readonly resolved?: ReadonlyMap<PlotFeatureId, ResolvedPlotGeometry>;
+	/** working copy；提交或取消后传空数组即可，不进入 document/history。 */
+	readonly draftFeatures?: readonly Readonly<PlotFeature>[];
+	readonly draftValid?: boolean;
+	readonly selection?: SelectionState;
+	/** 只有显式进入 vertex edit 时才显示单图形控制点。 */
+	readonly showHandles?: boolean;
+	readonly transformMode?: TransformMode;
+	readonly activeGizmoHandleId?: string;
+	readonly occludedHandleIds?: ReadonlySet<string>;
+}
+
+export interface EditorOverlaySyncResult {
+	readonly committed: RenderSyncResult;
+	readonly draft: RenderSyncResult;
+	readonly selection: RenderSyncResult;
+	readonly handleCount: number;
+	readonly gizmoCount: number;
+}
+
+/**
+ * 每 viewport 一个实例的 Overlay 协调器。宿主拥有唯一 RAF；本类只响应 sync/update，
+ * 不缓存 canonical 写引用，也不处置 scene/camera/depth texture 等 borrowed 资源。
+ */
+export class EditorOverlayRenderer {
+	public readonly plotCommittedRoot = namedRoot( 'plotCommittedRoot' );
+	public readonly plotDraftRoot = namedRoot( 'plotDraftRoot' );
+	public readonly plotSelectionRoot = namedRoot( 'plotSelectionRoot' );
+	public readonly plotHandleRoot: Group;
+	public readonly plotGizmoRoot: Group;
+
+	private readonly _scene: Object3D;
+	private readonly _cameraLease: EditorCameraLayerLease;
+	private readonly _adapters: GeometryAdapterRegistry;
+	private readonly _requestRender?: EditorOverlayRendererOptions[ 'requestRender' ];
+	private readonly _committed: CanonicalPlotRenderBridge;
+	private readonly _draft: CanonicalPlotRenderBridge;
+	private readonly _selection: CanonicalPlotRenderBridge;
+	private readonly _handles: ScreenSpaceMarkerLayer;
+	private readonly _gizmo: ScreenSpaceMarkerLayer;
+	private readonly _feedbackMarkers: ScreenSpaceMarkerLayer;
+	private _sessionRevision = -1;
+	private _disposed = false;
+
+	public constructor( options: EditorOverlayRendererOptions ) {
+		this._scene = options.scene;
+		this._adapters = options.adapters;
+		this._requestRender = options.requestRender;
+		this._cameraLease = new EditorCameraLayerLease( options.camera );
+		this._handles = new ScreenSpaceMarkerLayer(
+			'plotHandleRoot', EditorOverlayLayer.PLOT_HANDLE,
+		);
+		this._gizmo = new ScreenSpaceMarkerLayer(
+			'plotGizmoRoot', EditorOverlayLayer.PLOT_GIZMO,
+		);
+		this._feedbackMarkers = new ScreenSpaceMarkerLayer(
+			'plotSelectionMarkerRoot', EditorOverlayLayer.PLOT_FEEDBACK,
+		);
+		this.plotHandleRoot = this._handles.root;
+		this.plotGizmoRoot = this._gizmo.root;
+		this.plotSelectionRoot.add( this._feedbackMarkers.root );
+
+		const projection = new PlotRenderProjection( options.adapters );
+		this._committed = createBridge(
+			this.plotCommittedRoot, projection, 'committed', options,
+		);
+		this._draft = createBridge(
+			this.plotDraftRoot, projection, 'draft', options,
+		);
+		this._selection = createBridge(
+			this.plotSelectionRoot, projection, 'selection', options,
+		);
+
+		isolateOverlayObjects( this.plotCommittedRoot, EditorOverlayLayer.PLOT_CONTENT );
+		isolateOverlayObjects( this.plotDraftRoot, EditorOverlayLayer.PLOT_CONTENT );
+		isolateOverlayObjects( this.plotSelectionRoot, EditorOverlayLayer.PLOT_FEEDBACK );
+		this._scene.add(
+			this.plotCommittedRoot,
+			this.plotDraftRoot,
+			this.plotSelectionRoot,
+			this.plotHandleRoot,
+			this.plotGizmoRoot,
+		);
+	}
+
+	public sync( input: EditorOverlaySyncInput ): EditorOverlaySyncResult {
+		this._assertOpen();
+		validateRevision( input.documentRevision, 'documentRevision' );
+		validateRevision( input.sessionRevision, 'sessionRevision' );
+		const resolved = input.resolved ?? EMPTY_RESOLVED;
+		const selectionState = input.selection ?? EMPTY_SELECTION;
+		const sourceById = new Map( input.features.map( ( feature ) => [ feature.id, feature ] ) );
+		for ( const feature of input.draftFeatures ?? [] ) sourceById.set( feature.id, feature );
+
+		const committed = this._committed.sync(
+			input.features, input.documentRevision, resolved,
+		);
+		const drafts = ( input.draftFeatures ?? [] ).map( ( feature ) =>
+			cloneTransientFeature(
+				feature,
+				feature.id,
+				input.sessionRevision,
+				draftStyle( feature, input.draftValid !== false ),
+			) );
+		const draftResolved = remapResolved( drafts, input.draftFeatures ?? [], resolved );
+		const draft = this._draft.sync( drafts, input.sessionRevision, draftResolved );
+
+		const selected = selectionState.ids
+			.map( ( id ) => sourceById.get( id ) )
+			.filter( ( feature ): feature is Readonly<PlotFeature> => feature !== undefined );
+		const selectionFeatures = selected
+			.filter( ( feature ) => feature.type !== 'point' && feature.type !== 'text' )
+			.map( ( feature ) => cloneTransientFeature(
+				feature,
+				selectionRenderId( feature.id ),
+				input.sessionRevision,
+				selectionStyle( feature ),
+			) );
+		const selectionResolved = remapResolved( selectionFeatures, selected, resolved );
+		const selection = this._selection.sync(
+			selectionFeatures, input.sessionRevision, selectionResolved,
+		);
+
+		this._feedbackMarkers.sync( selectionFeedbackMarkers( selected ) );
+		this._handles.sync( input.showHandles === true && selected.length === 1
+			? editHandleMarkers(
+				selected[ 0 ], this._adapters,
+				selectionState.activeHandleId,
+				input.occludedHandleIds,
+			)
+			: [] );
+		this._gizmo.sync( input.transformMode !== undefined && selected.length > 0
+			? gizmoMarkers(
+				selected,
+				selectionState.primaryId ?? selected[ 0 ].id,
+				input.transformMode,
+				this._adapters,
+				input.activeGizmoHandleId,
+			)
+			: [] );
+
+		// bridge 可能在本次 sync 内新建子树，必须在同一帧把默认 layer 隔离掉。
+		isolateOverlayObjects( this.plotCommittedRoot, EditorOverlayLayer.PLOT_CONTENT );
+		isolateOverlayObjects( this.plotDraftRoot, EditorOverlayLayer.PLOT_CONTENT );
+		isolateOverlayObjects( this.plotSelectionRoot, EditorOverlayLayer.PLOT_FEEDBACK );
+		if ( input.sessionRevision !== this._sessionRevision ) {
+			this._sessionRevision = input.sessionRevision;
+			this._requestRender?.( drafts.length > 0 ? 'draft' : 'selection' );
+		}
+		return Object.freeze( {
+			committed,
+			draft,
+			selection,
+			handleCount: this._handles.size,
+			gizmoCount: this._gizmo.size,
+		} );
+	}
+
+	/** 每个宿主帧在 depth/surface 结果交付与 sync 后调用一次。 */
+	public update( frameState: CesiumGroundFrameState ): void {
+		if ( this._disposed ) return;
+		this._committed.update( frameState );
+		this._draft.update( frameState );
+		this._selection.update( frameState );
+		const viewport = markerViewport( frameState );
+		this._handles.update( viewport );
+		this._gizmo.update( viewport );
+		this._feedbackMarkers.update( viewport );
+	}
+
+	public dispose(): void {
+		if ( this._disposed ) return;
+		this._disposed = true;
+		// 先摘根，保证后续 GPU dispose 过程中宿主 render 不会访问半销毁对象。
+		this._scene.remove(
+			this.plotCommittedRoot,
+			this.plotDraftRoot,
+			this.plotSelectionRoot,
+			this.plotHandleRoot,
+			this.plotGizmoRoot,
+		);
+		this._committed.dispose();
+		this._draft.dispose();
+		this._selection.dispose();
+		this._handles.dispose();
+		this._gizmo.dispose();
+		this._feedbackMarkers.dispose();
+		this._cameraLease.release();
+		this._requestRender?.( 'dispose' );
+	}
+
+	private _assertOpen(): void {
+		if ( this._disposed ) throw new Error( 'EditorOverlayRenderer 已销毁。' );
+	}
+}
+
+const EMPTY_RESOLVED: ReadonlyMap<PlotFeatureId, ResolvedPlotGeometry> = new Map();
+const EMPTY_SELECTION: SelectionState = Object.freeze( { ids: Object.freeze( [] ) } );
+
+function createBridge(
+	root: Group,
+	projection: PlotRenderProjection,
+	pass: OverlayRenderError[ 'pass' ],
+	options: EditorOverlayRendererOptions,
+): CanonicalPlotRenderBridge {
+	return new CanonicalPlotRenderBridge( {
+		root,
+		projection,
+		requestRender: ( reason ) => options.requestRender?.(
+			pass === 'committed' ? reason : pass === 'draft' ? 'draft' : 'selection',
+		),
+		onRenderError: ( error ) => options.onRenderError?.( Object.freeze( {
+			...error, pass,
+		} ) ),
+	} );
+}
+
+function namedRoot( name: string ): Group {
+	const root = new Group();
+	root.name = name;
+	root.matrixAutoUpdate = false;
+	return root;
+}
+
+function cloneTransientFeature(
+	feature: Readonly<PlotFeature>,
+	id: PlotFeatureId,
+	revision: number,
+	style: Readonly<PlotFeature[ 'style' ]>,
+): PlotFeature {
+	return Object.freeze( {
+		...feature,
+		id,
+		revision,
+		style: Object.freeze( style ),
+		properties: feature.properties,
+	} ) as PlotFeature;
+}
+
+function draftStyle(
+	feature: Readonly<PlotFeature>,
+	valid: boolean,
+): PlotFeature[ 'style' ] {
+	return {
+		...feature.style,
+		strokeColor: valid ? '#27c2ff' : '#ff3344',
+		strokeOpacity: 100,
+		fillColor: valid ? '#27c2ff' : '#ff3344',
+		fillOpacity: Math.min( feature.style.fillOpacity, valid ? 28 : 20 ),
+	} as PlotFeature[ 'style' ];
+}
+
+function selectionStyle( feature: Readonly<PlotFeature> ): PlotFeature[ 'style' ] {
+	return {
+		...feature.style,
+		strokeColor: '#00e5ff',
+		strokeWidth: Math.max( feature.style.strokeWidth + 3, 5 ),
+		strokeOpacity: 100,
+		fillOpacity: 0,
+	} as PlotFeature[ 'style' ];
+}
+
+function selectionRenderId( id: PlotFeatureId ): PlotFeatureId {
+	return `__editor_selection__:${ id }`;
+}
+
+function remapResolved(
+	targets: readonly Readonly<PlotFeature>[],
+	sources: readonly Readonly<PlotFeature>[],
+	resolved: ReadonlyMap<PlotFeatureId, ResolvedPlotGeometry>,
+): ReadonlyMap<PlotFeatureId, ResolvedPlotGeometry> {
+	const sourceByOriginalId = new Map( sources.map( ( feature ) => [ feature.id, feature ] ) );
+	const result = new Map<PlotFeatureId, ResolvedPlotGeometry>();
+	for ( const target of targets ) {
+		const originalId = target.id.startsWith( '__editor_selection__:' )
+			? target.id.slice( '__editor_selection__:'.length )
+			: target.id;
+		const source = sourceByOriginalId.get( originalId );
+		const value = source === undefined ? undefined : resolved.get( source.id );
+		if ( value === undefined || value.sourceRevision !== source?.revision ) continue;
+		result.set( target.id, Object.freeze( {
+			...value,
+			plotId: target.id,
+			sourceRevision: target.revision,
+		} ) );
+	}
+	return result;
+}
+
+function selectionFeedbackMarkers(
+	selected: readonly Readonly<PlotFeature>[],
+): readonly ScreenSpaceMarkerDescription[] {
+	return selected
+		.filter( ( feature ) => feature.visible && ( feature.type === 'point' || feature.type === 'text' ) )
+		.map( ( feature ) => {
+			const position = featureAnchorPosition( feature );
+			return Object.freeze( {
+				id: `selection-marker:${ feature.id }`,
+				entityId: feature.id,
+				position,
+				shape: 'diamond' as const,
+				fillColor: '#00131a',
+				borderColor: '#00e5ff',
+				sizeCssPixels: 18,
+				pickRadiusCssPixels: 8,
+				priority: 200,
+				visible: true,
+			} );
+		} );
+}
+
+function editHandleMarkers(
+	feature: Readonly<PlotFeature>,
+	adapters: GeometryAdapterRegistry,
+	activeHandleId?: string,
+	occludedIds?: ReadonlySet<string>,
+): readonly ScreenSpaceMarkerDescription[] {
+	if ( ! feature.visible ) return [];
+	return adapters.require( feature.type ).listHandles( feature as never )
+		.map( ( handle ) => handleMarker(
+			handle,
+			handle.id === activeHandleId,
+			occludedIds?.has( `${ feature.id }:${ handle.id }` ) === true
+				|| occludedIds?.has( handle.id ) === true,
+		) );
+}
+
+function handleMarker(
+	handle: EditHandle,
+	active: boolean,
+	occluded: boolean,
+): ScreenSpaceMarkerDescription {
+	const midpoint = handle.kind === 'midpoint';
+	const parameter = ! midpoint && handle.kind !== 'vertex' && handle.kind !== 'text-anchor';
+	return Object.freeze( {
+		id: `${ handle.entityId }:${ handle.id }`,
+		entityId: handle.entityId,
+		handleId: handle.id,
+		position: handle.position,
+		...( handle.screenOffsetCssPixels === undefined ? {} : {
+			screenOffsetCssPixels: handle.screenOffsetCssPixels,
+		} ),
+		shape: midpoint ? 'diamond' : parameter ? 'square' : 'circle',
+		fillColor: active ? '#fff5a8' : midpoint ? '#0b2530' : '#ffffff',
+		borderColor: active ? '#ff9d00' : parameter ? '#d946ef' : '#1473e6',
+		sizeCssPixels: active ? 16 : midpoint ? 9 : parameter ? 14 : 12,
+		pickRadiusCssPixels: active ? 14 : 8,
+		priority: active ? Math.max( 1000, handle.priority ) : handle.priority,
+		visible: true,
+		active,
+		occluded,
+	} );
+}
+
+function gizmoMarkers(
+	features: readonly Readonly<PlotFeature>[],
+	primaryId: PlotFeatureId,
+	mode: TransformMode,
+	adapters: GeometryAdapterRegistry,
+	activeHandleId?: string,
+): readonly ScreenSpaceMarkerDescription[] {
+	const pivot = computeSelectionPivot( features, adapters, { primaryId } );
+	const capabilities = getSelectionGizmoCapabilities( features, adapters );
+	return createGizmoHandleDescriptions( mode, capabilities )
+		.filter( ( handle ) => handle.visible )
+		.map( ( handle ) => gizmoMarker( handle, pivot.position, primaryId, activeHandleId ) );
+}
+
+function gizmoMarker(
+	handle: GizmoHandleDescription,
+	position: Position3D,
+	entityId: PlotFeatureId,
+	activeHandleId?: string,
+): ScreenSpaceMarkerDescription {
+	const active = handle.id === activeHandleId;
+	const visual = gizmoVisual( handle );
+	return Object.freeze( {
+		id: `gizmo:${ handle.id }`,
+		entityId,
+		handleId: handle.id,
+		position,
+		screenOffsetCssPixels: visual.offset,
+		shape: visual.shape,
+		fillColor: active ? '#fff5a8' : visual.color,
+		borderColor: '#111827',
+		sizeCssPixels: visual.size,
+		pickRadiusCssPixels: active ? 14 : handle.pickRadiusCssPixels,
+		priority: active ? handle.priority + 1000 : handle.priority,
+		visible: handle.visible,
+		active,
+	} );
+}
+
+function gizmoVisual( handle: GizmoHandleDescription ): Pick<
+	ScreenSpaceMarkerDescription,
+	'shape' | 'sizeCssPixels' | 'fillColor'
+> & { readonly offset: readonly [ number, number ]; readonly size: number; readonly color: string } {
+	if ( handle.kind === 'rotate-ring' ) {
+		const size = handle.rotation === 'heading' ? 96 : handle.rotation === 'pitch' ? 78 : 60;
+		return { shape: 'ring', sizeCssPixels: size, fillColor: axisColor( handle ), offset: [ 0, 0 ], size, color: axisColor( handle ) };
+	}
+	if ( handle.kind === 'translate-plane' || handle.kind === 'scale-uniform' ) {
+		return { shape: 'square', sizeCssPixels: 20, fillColor: '#ffd43b', offset: [ 16, -16 ], size: 20, color: '#ffd43b' };
+	}
+	const axis = handle.axis ?? 'uniform';
+	const shape = `${ handle.kind === 'scale-axis' ? 'scale' : 'axis' }-${ axis }` as
+		ScreenSpaceMarkerDescription[ 'shape' ];
+	const offset: readonly [ number, number ] = axis === 'east'
+		? [ 36, 0 ]
+		: axis === 'north' ? [ 0, -36 ] : [ -25, -25 ];
+	return {
+		shape,
+		sizeCssPixels: handle.screenSizeCssPixels,
+		fillColor: axisColor( handle ),
+		offset,
+		size: handle.screenSizeCssPixels,
+		color: axisColor( handle ),
+	};
+}
+
+function axisColor( handle: GizmoHandleDescription ): string {
+	if ( handle.axis === 'east' || handle.rotation === 'roll' ) return '#ef4444';
+	if ( handle.axis === 'north' || handle.rotation === 'pitch' ) return '#22c55e';
+	if ( handle.axis === 'up' || handle.rotation === 'heading' ) return '#3b82f6';
+	return '#ffd43b';
+}
+
+function markerViewport( frameState: CesiumGroundFrameState ): MarkerViewportState {
+	const camera = frameState.camera;
+	camera.updateMatrixWorld();
+	camera.matrixWorldInverse.copy( camera.matrixWorld ).invert();
+	const position = camera.getWorldPosition( new Vector3() );
+	const viewRotation = new Matrix4().copy( camera.matrixWorldInverse );
+	viewRotation.elements[ 12 ] = 0;
+	viewRotation.elements[ 13 ] = 0;
+	viewRotation.elements[ 14 ] = 0;
+	return Object.freeze( {
+		widthDevicePixels: frameState.width,
+		heightDevicePixels: frameState.height,
+		devicePixelRatio: frameState.pixelRatio ?? 1,
+		cameraPositionEcef: [ position.x, position.y, position.z ] as const,
+		viewProjectionRotation: viewRotation.toArray(),
+		projectionMatrix: camera.projectionMatrix.toArray(),
+	} );
+}
+
+function featureAnchorPosition( feature: Readonly<PlotFeature> ): Position3D {
+	if ( feature.type === 'point' ) return feature.geometry.position;
+	if ( feature.type === 'text' ) return feature.geometry.position;
+	throw new Error( `feature ${ feature.id } 不是点或文本。` );
+}
+
+function validateRevision( value: number, name: string ): void {
+	if ( ! Number.isSafeInteger( value ) || value < 0 ) {
+		throw new RangeError( `${ name } 必须是非负安全整数。` );
+	}
+}
