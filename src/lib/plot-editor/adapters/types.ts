@@ -29,14 +29,14 @@ export interface DrawingValidation {
 	readonly pointIndex?: number;
 }
 
-export interface DrawToolContext<TOptions extends object = Record<string, never>> {
+export interface DrawToolContext<TOptions extends object = object> {
 	readonly type: PlotFeatureType;
 	readonly heightReference: HeightReference;
 	readonly style?: Readonly<Partial<PlotStyle> & Record<string, unknown>>;
 	readonly options?: Readonly<TOptions>;
 }
 
-export interface DrawingDraft<TParameters extends object = Record<string, never>> {
+export interface DrawingDraft<TParameters extends object = object> {
 	readonly type: PlotFeatureType;
 	readonly heightReference: HeightReference;
 	readonly phase: DrawingPhase;
@@ -64,7 +64,12 @@ export type EditHandleKind =
 	| 'midpoint'
 	| 'center'
 	| 'radius'
-	| 'angle'
+	| 'start-angle'
+	| 'end-angle'
+	| 'size'
+	| 'width'
+	| 'height'
+	| 'rotation'
 	| 'text-anchor';
 
 export interface EditHandle {
