@@ -184,20 +184,38 @@ export class EditorOverlayRenderer {
 		const selected = selectionState.ids
 			.map( ( id ) => sourceById.get( id ) )
 			.filter( ( feature ): feature is Readonly<PlotFeature> => feature !== undefined );
-		const selectionFeatures = selected
+		const hovered = selectionState.hoverTarget?.entityId === undefined
+			|| selectionState.ids.includes( selectionState.hoverTarget.entityId )
+			? undefined
+			: sourceById.get( selectionState.hoverTarget.entityId );
+		const selectionFeatures = [
+			...selected
 			.filter( ( feature ) => feature.type !== 'point' && feature.type !== 'text' )
 			.map( ( feature ) => cloneTransientFeature(
 				feature,
 				selectionRenderId( feature.id ),
 				input.sessionRevision,
-				selectionStyle( feature ),
-			) );
-		const selectionResolved = remapResolved( selectionFeatures, selected, resolved );
+				selectionStyle( feature, false ),
+			) ),
+			...( hovered === undefined || hovered.type === 'point' || hovered.type === 'text'
+				? []
+				: [ cloneTransientFeature(
+					hovered,
+					hoverRenderId( hovered.id ),
+					input.sessionRevision,
+					selectionStyle( hovered, true ),
+				) ] ),
+		];
+		const selectionResolved = remapResolved(
+			selectionFeatures,
+			hovered === undefined ? selected : [ ...selected, hovered ],
+			resolved,
+		);
 		const selection = this._selection.sync(
 			selectionFeatures, input.sessionRevision, selectionResolved,
 		);
 
-		this._feedbackMarkers.sync( selectionFeedbackMarkers( selected ) );
+		this._feedbackMarkers.sync( selectionFeedbackMarkers( selected, hovered ) );
 		this._handles.sync( input.showHandles === true && selected.length === 1
 			? editHandleMarkers(
 				selected[ 0 ], this._adapters,
@@ -329,11 +347,14 @@ function draftStyle(
 	} as PlotFeature[ 'style' ];
 }
 
-function selectionStyle( feature: Readonly<PlotFeature> ): PlotFeature[ 'style' ] {
+function selectionStyle(
+	feature: Readonly<PlotFeature>,
+	hover: boolean,
+): PlotFeature[ 'style' ] {
 	return {
 		...feature.style,
-		strokeColor: '#00e5ff',
-		strokeWidth: Math.max( feature.style.strokeWidth + 3, 5 ),
+		strokeColor: hover ? '#ffd43b' : '#00e5ff',
+		strokeWidth: Math.max( feature.style.strokeWidth + ( hover ? 2 : 3 ), hover ? 4 : 5 ),
 		strokeOpacity: 100,
 		fillOpacity: 0,
 	} as PlotFeature[ 'style' ];
@@ -341,6 +362,10 @@ function selectionStyle( feature: Readonly<PlotFeature> ): PlotFeature[ 'style' 
 
 function selectionRenderId( id: PlotFeatureId ): PlotFeatureId {
 	return `__editor_selection__:${ id }`;
+}
+
+function hoverRenderId( id: PlotFeatureId ): PlotFeatureId {
+	return `__editor_hover__:${ id }`;
 }
 
 function remapResolved(
@@ -351,9 +376,7 @@ function remapResolved(
 	const sourceByOriginalId = new Map( sources.map( ( feature ) => [ feature.id, feature ] ) );
 	const result = new Map<PlotFeatureId, ResolvedPlotGeometry>();
 	for ( const target of targets ) {
-		const originalId = target.id.startsWith( '__editor_selection__:' )
-			? target.id.slice( '__editor_selection__:'.length )
-			: target.id;
+		const originalId = transientOriginalId( target.id );
 		const source = sourceByOriginalId.get( originalId );
 		const value = source === undefined ? undefined : resolved.get( source.id );
 		if ( value === undefined || value.sourceRevision !== source?.revision ) continue;
@@ -366,21 +389,34 @@ function remapResolved(
 	return result;
 }
 
+function transientOriginalId( id: PlotFeatureId ): PlotFeatureId {
+	for ( const prefix of [ '__editor_selection__:', '__editor_hover__:' ] ) {
+		if ( id.startsWith( prefix ) ) return id.slice( prefix.length );
+	}
+	return id;
+}
+
 function selectionFeedbackMarkers(
 	selected: readonly Readonly<PlotFeature>[],
+	hovered?: Readonly<PlotFeature>,
 ): readonly ScreenSpaceMarkerDescription[] {
-	return selected
-		.filter( ( feature ) => feature.visible && ( feature.type === 'point' || feature.type === 'text' ) )
-		.map( ( feature ) => {
+	const entries = [
+		...selected.map( ( feature ) => ( { feature, hover: false } ) ),
+		...( hovered === undefined ? [] : [ { feature: hovered, hover: true } ] ),
+	];
+	return entries
+		.filter( ( entry ) => entry.feature.visible
+			&& ( entry.feature.type === 'point' || entry.feature.type === 'text' ) )
+		.map( ( { feature, hover } ) => {
 			const position = featureAnchorPosition( feature );
 			return Object.freeze( {
-				id: `selection-marker:${ feature.id }`,
+				id: `${ hover ? 'hover' : 'selection' }-marker:${ feature.id }`,
 				entityId: feature.id,
 				position,
 				shape: 'diamond' as const,
 				fillColor: '#00131a',
-				borderColor: '#00e5ff',
-				sizeCssPixels: 18,
+				borderColor: hover ? '#ffd43b' : '#00e5ff',
+				sizeCssPixels: hover ? 16 : 18,
 				pickRadiusCssPixels: 8,
 				priority: 200,
 				visible: true,

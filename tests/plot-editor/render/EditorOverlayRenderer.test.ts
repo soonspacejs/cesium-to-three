@@ -155,6 +155,21 @@ describe( 'EditorOverlayRenderer', () => {
 		expect( overlay.plotSelectionRoot.getObjectByName( 'EditorMarker:selection-marker:point-a' ) ).toBeDefined();
 	} );
 
+	it( 'hover outline 与 selection 并存，且 hover 不改变文档', () => {
+		const { overlay } = createRenderer();
+		const features = [ line( 'selected' ), line( 'hovered', 0.03 ) ];
+		const result = overlay.sync( {
+			features, documentRevision: 7, sessionRevision: 2,
+			selection: {
+				ids: [ 'selected' ], primaryId: 'selected',
+				hoverTarget: { kind: 'entity', entityId: 'hovered', distanceCssPixels: 1, depth: 0.5, zOrder: 0 },
+			},
+		} );
+		expect( result.selection.renderedCount ).toBe( 2 );
+		expect( result.committed.documentRevision ).toBe( 7 );
+		expect( overlay.plotSelectionRoot.children.length ).toBeGreaterThan( 2 );
+	} );
+
 	it( 'update 更新三条图元路径和屏幕标记；dispose 幂等且不处置宿主资源', () => {
 		const { scene, camera, requestRender, overlay } = createRenderer();
 		overlay.sync( {
