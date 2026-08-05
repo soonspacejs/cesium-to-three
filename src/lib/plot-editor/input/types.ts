@@ -2,7 +2,13 @@ import type { HeightReference } from '../document/types';
 
 export type PointerDevice = 'mouse' | 'pen' | 'touch';
 export type PointerButton = 'primary' | 'auxiliary' | 'secondary' | 'eraser';
-export type PointerPhase = 'down' | 'move' | 'up' | 'cancel' | 'lost-capture';
+export type PointerPhase =
+	| 'down'
+	| 'move'
+	| 'up'
+	| 'cancel'
+	| 'lost-capture'
+	| 'double-click';
 export type PointerOwner = 'editor' | 'navigation' | 'native-ui';
 
 export interface ModifierState {
@@ -47,6 +53,33 @@ export interface PointerClaim {
 		| 'native-ui';
 	readonly capture: boolean;
 	readonly preventDefault: boolean;
+}
+
+export type PointerGesturePhase = 'pending' | 'click' | 'dragging' | 'ended';
+
+export interface PointerDispatch {
+	readonly input: NormalizedPointerInput;
+	readonly owner: PointerOwner;
+	readonly gesture: PointerGesturePhase;
+	readonly startModifiers: ModifierState;
+}
+
+export interface PointerInputOptions {
+	readonly canvas: HTMLCanvasElement;
+	readonly navigation: NavigationAdapter;
+	readonly claim: ( input: NormalizedPointerInput ) => PointerClaim;
+	readonly getKeyboardModifiers?: () => Pick<ModifierState, 'space'>;
+	readonly clickToleranceCssPixels?: number;
+	readonly touchClickToleranceCssPixels?: number;
+	readonly focusCanvasOnPrimaryDown?: boolean;
+	readonly onCancelOperation?: (
+		reason: 'pointercancel' | 'lost-capture' | 'blur' | 'hidden' | 'dispose' | 'second-pointer',
+	) => void;
+	readonly onError?: ( code: string, error: unknown ) => void;
+	readonly onCaptureChange?: ( active: boolean ) => void;
+	readonly shouldPreventContextMenu?: () => boolean;
+	readonly requestAnimationFrame?: ( callback: FrameRequestCallback ) => number;
+	readonly cancelAnimationFrame?: ( handle: number ) => void;
 }
 
 export type NavigationLeaseKind =
