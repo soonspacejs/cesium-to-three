@@ -115,9 +115,27 @@ export interface CommandContext {
 
 export interface EditorCommandDefinition {
 	readonly id: string;
+	/** 相同 scope 内的相同 stroke 才构成启动冲突。 */
+	readonly scope?: string;
 	readonly bindings: readonly KeyStroke[];
 	readonly repeat?: RepeatPolicy;
 	readonly priority?: number;
 	readonly when?: ( context: CommandContext ) => boolean;
 	execute( context: CommandContext ): KeyboardCommandResult;
+}
+
+export interface KeymapConflict {
+	readonly commandId: string;
+	readonly conflictWith: string;
+	readonly stroke: KeyStroke;
+}
+
+export interface EditorKeymap {
+	bind( commandId: string, stroke: KeyStroke ): void;
+	unbind( commandId: string, stroke?: KeyStroke ): void;
+	resolve(
+		event: KeyboardEvent,
+		context: CommandContext,
+	): EditorCommandDefinition | undefined;
+	validate(): readonly KeymapConflict[];
 }
