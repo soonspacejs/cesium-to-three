@@ -170,6 +170,25 @@ describe( 'EditorOverlayRenderer', () => {
 		expect( overlay.plotSelectionRoot.children.length ).toBeGreaterThan( 2 );
 	} );
 
+	it( '框选矩形位于 PLOT_FEEDBACK，不进入选择拾取或文档', () => {
+		const { overlay, camera } = createRenderer();
+		const result = overlay.sync( {
+			features: [], documentRevision: 3, sessionRevision: 1,
+			boxSelection: {
+				start: { x: 10, y: 20 }, current: { x: 120, y: 160 },
+				additive: true, valid: true,
+			},
+		} );
+		expect( result.boxSelectionVisible ).toBe( true );
+		expect( result.selection.renderedCount ).toBe( 0 );
+		expect( overlay.plotSelectionRoot.getObjectByName( 'boxSelectionFeedbackRoot' ) ).toBeDefined();
+		overlay.update( {
+			depthTexture: new Texture(), width: 1600, height: 1200, pixelRatio: 2, camera,
+		} );
+		expect( overlay.plotSelectionRoot.getObjectByName( 'boxSelectionFeedbackRoot' )?.children )
+			.toHaveLength( 2 );
+	} );
+
 	it( 'update 更新三条图元路径和屏幕标记；dispose 幂等且不处置宿主资源', () => {
 		const { scene, camera, requestRender, overlay } = createRenderer();
 		overlay.sync( {

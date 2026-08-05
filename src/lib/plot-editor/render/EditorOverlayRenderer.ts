@@ -23,6 +23,10 @@ import {
 } from '../transform/gizmo';
 import type { GizmoHandleDescription } from '../transform/types';
 import {
+	BoxSelectionFeedbackLayer,
+	type BoxSelectionFeedback,
+} from './BoxSelectionFeedbackLayer';
+import {
 	CanonicalPlotRenderBridge,
 	type PlotRenderError,
 	type RenderSyncResult,
@@ -80,6 +84,7 @@ export interface EditorOverlaySyncInput {
 	readonly transformMode?: TransformMode;
 	readonly activeGizmoHandleId?: string;
 	readonly occludedHandleIds?: ReadonlySet<string>;
+	readonly boxSelection?: BoxSelectionFeedback | null;
 }
 
 export interface EditorOverlaySyncResult {
@@ -89,6 +94,7 @@ export interface EditorOverlaySyncResult {
 	readonly handleCount: number;
 	readonly gizmoCount: number;
 	readonly drawingDraftVisible: boolean;
+	readonly boxSelectionVisible: boolean;
 }
 
 /**
@@ -113,6 +119,7 @@ export class EditorOverlayRenderer {
 	private readonly _handles: ScreenSpaceMarkerLayer;
 	private readonly _gizmo: ScreenSpaceMarkerLayer;
 	private readonly _feedbackMarkers: ScreenSpaceMarkerLayer;
+	private readonly _boxSelection = new BoxSelectionFeedbackLayer();
 	private _sessionRevision = -1;
 	private _disposed = false;
 
@@ -133,6 +140,7 @@ export class EditorOverlayRenderer {
 		this.plotHandleRoot = this._handles.root;
 		this.plotGizmoRoot = this._gizmo.root;
 		this.plotSelectionRoot.add( this._feedbackMarkers.root );
+		this.plotSelectionRoot.add( this._boxSelection.root );
 		this.plotDraftRoot.add( this._drawingDraft.root );
 
 		const projection = new PlotRenderProjection( options.adapters );
@@ -216,6 +224,7 @@ export class EditorOverlayRenderer {
 		);
 
 		this._feedbackMarkers.sync( selectionFeedbackMarkers( selected, hovered ) );
+		this._boxSelection.sync( input.boxSelection ?? null );
 		this._handles.sync( input.showHandles === true && selected.length === 1
 			? editHandleMarkers(
 				selected[ 0 ], this._adapters,
@@ -248,6 +257,7 @@ export class EditorOverlayRenderer {
 			handleCount: this._handles.size,
 			gizmoCount: this._gizmo.size,
 			drawingDraftVisible: this._drawingDraft.visible,
+			boxSelectionVisible: this._boxSelection.visible,
 		} );
 	}
 
@@ -262,6 +272,11 @@ export class EditorOverlayRenderer {
 		this._handles.update( viewport );
 		this._gizmo.update( viewport );
 		this._feedbackMarkers.update( viewport );
+		this._boxSelection.updateViewport(
+			frameState.width,
+			frameState.height,
+			frameState.pixelRatio ?? 1,
+		);
 	}
 
 	public dispose(): void {
@@ -282,6 +297,7 @@ export class EditorOverlayRenderer {
 		this._handles.dispose();
 		this._gizmo.dispose();
 		this._feedbackMarkers.dispose();
+		this._boxSelection.dispose();
 		this._cameraLease.release();
 		this._requestRender?.( 'dispose' );
 	}
