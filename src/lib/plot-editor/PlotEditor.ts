@@ -28,6 +28,7 @@ import {
 	ShapeEditController,
 	type ShapeEditPreview,
 } from './editing/ShapeEditController';
+import { TextEditController } from './editing/TextEditController';
 import {
 	PlotEditorEventDispatcher,
 	type PlotEditorEventListener,
@@ -140,6 +141,7 @@ export class PlotEditor {
 	private readonly _drawing: PlotDrawingController;
 	private readonly _shapeEditor: ShapeEditController;
 	private readonly _transform: EnuTransformController;
+	private readonly _textEditor: TextEditController;
 	private readonly _overlay: EditorOverlayRenderer;
 	private readonly _importer: PlotDocumentImporter;
 	private readonly _save?: SaveCoordinator;
@@ -152,6 +154,7 @@ export class PlotEditor {
 	private _drawingSession: DrawingSession | null = null;
 	private _shapePreview: ShapeEditPreview | null = null;
 	private _transformPreview: TransformPreview | null = null;
+	private _textPreview: Readonly<Extract<PlotFeature, { type: 'text' }>> | null = null;
 	private _mode: PlotEditorMode = 'select';
 	private _state: EditorState;
 	private _vertexEditId: PlotFeatureId | undefined;
@@ -213,6 +216,18 @@ export class PlotEditor {
 					message: diagnostic.message,
 				} ),
 			} ),
+		} );
+		this._textEditor = new TextEditController( {
+			root: options.root,
+			document: this._store,
+			executor: this._executor,
+			history: this._history,
+			onPreviewChange: ( preview ) => {
+				this._textPreview = preview;
+				this._invalidateTransient( 'draft' );
+			},
+			onCommitRequest: () => this._dispatch( { type: 'commitTextEdit' } ),
+			onCancelRequest: () => this._dispatch( { type: 'cancelTextEdit' } ),
 		} );
 		this._hitTester = new FeatureHitTester( this._store, adapters );
 		this._selectionController = new SelectionController( {
@@ -498,6 +513,7 @@ export class PlotEditor {
 		this._drawing.dispose();
 		this._shapeEditor.dispose();
 		this._transform.dispose();
+		this._textEditor.dispose();
 		this._selectionController.dispose();
 		this._selectionModel.dispose();
 		this._executor.dispose();
@@ -540,6 +556,7 @@ export class PlotEditor {
 				this._drawing.cancel( effect.transactionId );
 				this._shapeEditor.cancel();
 				this._transform.cancel();
+				this._textEditor.cancel();
 				this._pointerTransactionStart = null;
 				break;
 			case 'APPLY_SELECTION':
@@ -606,11 +623,10 @@ export class PlotEditor {
 			case 'ROLLBACK_TRANSACTION':
 				this._shapeEditor.cancel();
 				this._transform.cancel();
+				this._textEditor.cancel();
 				this._pointerTransactionStart = null;
 				break;
-			case 'FOCUS_TEXT_INPUT':
-				this._reportError( 'TEXT_INPUT_UNAVAILABLE', '文本编辑输入层尚未建立。' );
-				break;
+			case 'FOCUS_TEXT_INPUT': this._focusTextInput( effect.entityId ); break;
 			case 'REPORT_ERROR': this._reportError(
 				effect.code,
 				detailMessage( effect.detail, '编辑操作失败。' ),
@@ -709,7 +725,9 @@ export class PlotEditor {
 			? interaction.start
 			: undefined;
 		let ok = false;
-		if ( effect.handleId !== undefined && isGizmoHandleId( effect.handleId ) ) {
+		if ( interaction.kind === 'text-editing' ) {
+			return;
+		} else if ( effect.handleId !== undefined && isGizmoHandleId( effect.handleId ) ) {
 			const mode = transformModeForHandle( effect.handleId );
 			const active = this._transform.session;
 			let begun = active?.mode === mode;
@@ -804,9 +822,11 @@ export class PlotEditor {
 	}
 
 	private _commitEditorTransaction( transactionId: string ): void {
-		const result = this._runInternalCommand( () => this._shapeEditor.session !== null
-			? this._shapeEditor.commit()
-			: this._transform.commit() );
+		const result = this._runInternalCommand( () => this._textEditor.session !== null
+			? this._textEditor.commit()
+			: this._shapeEditor.session !== null
+				? this._shapeEditor.commit()
+				: this._transform.commit() );
 		this._pointerTransactionStart = null;
 		if ( result.ok || result.error?.code === 'EDIT_NO_VALID_PREVIEW'
 			|| result.error?.code === 'TRANSFORM_EMPTY' ) {
@@ -826,6 +846,27 @@ export class PlotEditor {
 			detail: result.error,
 		} );
 		this._flushPendingDocumentRevision();
+	}
+
+	private _focusTextInput( entityId: PlotFeatureId ): void {
+		const feature = this._store.get( entityId );
+		let placement: { x: number; y: number } | undefined;
+		if ( feature?.type === 'text' ) {
+			try {
+				const projected = this._createProjectionSnapshot().project( feature.geometry.position );
+				if ( projected !== null ) placement = { x: projected.x, y: projected.y };
+			} catch {
+				// 隐藏或零尺寸 viewport 时回退到编辑器左上角，文本事务仍可用。
+			}
+		}
+		if ( this._textEditor.begin( entityId, placement ) ) return;
+		const transactionId = this._state.activeTransaction?.id;
+		if ( transactionId !== undefined ) this._dispatch( {
+			type: 'TRANSACTION_FAILED',
+			transactionId,
+			code: 'TEXT_SELECTION_REQUIRED',
+			recoverable: false,
+		} );
 	}
 
 	private _onPointerDispatch( dispatch: PointerDispatch ): void {
@@ -1032,9 +1073,11 @@ export class PlotEditor {
 
 	private _syncOverlay(): void {
 		if ( this._disposed ) return;
-		const draftFeatures = this._shapePreview === null
-			? this._transformPreview?.features ?? []
-			: [ this._shapePreview.feature ];
+		const draftFeatures = this._shapePreview !== null
+			? [ this._shapePreview.feature ]
+			: this._transformPreview !== null
+				? this._transformPreview.features
+				: this._textPreview === null ? [] : [ this._textPreview ];
 		const drawingDraft = this._drawingSession === null
 			? null
 			: Object.freeze( {
@@ -1062,6 +1105,7 @@ export class PlotEditor {
 			drawingDraft,
 			draftValid: this._shapePreview?.committable
 				?? this._transformPreview?.committable
+				?? ( this._textPreview !== null )
 				?? true,
 			selection: this._selectionModel.state,
 			showHandles: this._vertexEditId !== undefined
@@ -1108,12 +1152,14 @@ export class PlotEditor {
 		this._drawing.cancel( 'mode-change' );
 		this._shapeEditor.cancel();
 		this._transform.cancel();
+		this._textEditor.cancel();
 	}
 
 	private _hasActivePreview(): boolean {
 		return this._drawing.session !== null
 			|| this._shapeEditor.session !== null
-			|| this._transform.session !== null;
+			|| this._transform.session !== null
+			|| this._textEditor.session !== null;
 	}
 
 	private _reportCommandResult( result: CommandResult ): CommandResult {

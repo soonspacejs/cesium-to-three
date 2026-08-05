@@ -38,6 +38,22 @@ class NavigationStub implements NavigationAdapter {
 	public dispose(): void { this.disposed = true; }
 }
 
+class FakeTextarea extends FakeEventHub {
+	public readonly tagName = 'TEXTAREA';
+	public className = '';
+	public value = '';
+	public spellcheck = true;
+	public readonly style: Record<string, string> = {};
+	public readonly attributes = new Map<string, string>();
+	public removed = false;
+	public constructor( private readonly _document: Document ) { super(); }
+	public setAttribute( name: string, value: string ): void { this.attributes.set( name, value ); }
+	public getAttribute( name: string ): string | null { return this.attributes.get( name ) ?? null; }
+	public focus(): void { Object.assign( this._document, { activeElement: this } ); }
+	public setSelectionRange(): void {}
+	public remove(): void { this.removed = true; }
+}
+
 function createDom() {
 	const windowHub = new FakeEventHub() as FakeEventHub & Window;
 	Object.assign( windowHub, {
@@ -54,13 +70,23 @@ function createDom() {
 		activeElement: null,
 		visibilityState: 'visible',
 	} );
+	const textareas: FakeTextarea[] = [];
+	Object.assign( documentHub, {
+		createElement: ( tag: string ) => {
+			if ( tag !== 'textarea' ) throw new Error( `不支持的测试元素：${ tag }。` );
+			const textarea = new FakeTextarea( documentHub );
+			textareas.push( textarea );
+			return textarea;
+		},
+	} );
 	const root = new FakeEventHub() as FakeEventHub & HTMLElement;
 	Object.assign( root, {
 		ownerDocument: documentHub,
 		tabIndex: -1,
-		contains: ( node: unknown ) => node === root,
+		contains: ( node: unknown ) => node === root || textareas.includes( node as FakeTextarea ),
 		focus: () => Object.assign( documentHub, { activeElement: root } ),
 		blur: () => Object.assign( documentHub, { activeElement: null } ),
+		appendChild: vi.fn(),
 	} );
 	const canvas = new FakeEventHub() as FakeEventHub & HTMLCanvasElement;
 	Object.assign( canvas, {
@@ -75,7 +101,7 @@ function createDom() {
 		releasePointerCapture: () => undefined,
 		hasPointerCapture: () => false,
 	} );
-	return { root, canvas, window: windowHub };
+	return { root, canvas, window: windowHub, textareas };
 }
 
 function point( id: string ) {
@@ -96,7 +122,7 @@ function point( id: string ) {
 }
 
 function createEditor( options: { autoAttachInputs?: boolean; pick?: () => any } = {} ) {
-	const { root, canvas, window } = createDom();
+	const { root, canvas, window, textareas } = createDom();
 	const scene = new Group();
 	const camera = new PerspectiveCamera( 60, 4 / 3, 1, 1e8 );
 	camera.position.set( 6_379_137, 0, 0 );
@@ -122,7 +148,7 @@ function createEditor( options: { autoAttachInputs?: boolean; pick?: () => any }
 		cameraController: navigation,
 		autoAttachInputs: options.autoAttachInputs ?? false,
 	} );
-	return { editor, scene, requestRender, navigation, canvas, window };
+	return { editor, scene, requestRender, navigation, canvas, window, root, textareas };
 }
 
 function pointerEvent(
@@ -155,6 +181,32 @@ function pointerEvent(
 		preventDefault: vi.fn(),
 		stopPropagation: vi.fn(),
 	} as unknown as PointerEvent;
+}
+
+function keyboardEvent( target: EventTarget, key: string, code: string, primary = false ): KeyboardEvent {
+	return {
+		type: 'keydown', target, key, code, repeat: false,
+		shiftKey: false, ctrlKey: primary, altKey: false, metaKey: false,
+		isComposing: false, keyCode: 0,
+		getModifierState: () => false,
+		preventDefault: vi.fn(), stopPropagation: vi.fn(),
+	} as unknown as KeyboardEvent;
+}
+
+function text( id: string ) {
+	return normalizeFeature( {
+		id, type: 'text', geometry: { position: [ 0, 0, 0 ] },
+		style: {
+			strokeColor: '#fff', strokeWidth: 1, strokeOpacity: 100,
+			fillColor: '#000', fillOpacity: 0,
+			content: '旧文本', fontColor: '#fff', fontSize: 14, scale: 1,
+			textAlign: 'left', verticalAlign: 'top', anchorX: 'left', anchorY: 'top',
+			padding: 0, layoutDirection: 'horizontal', rotation: 0,
+			offsetX: 0, offsetY: 0, showBorder: false,
+		},
+		heightReference: HeightReference.NONE,
+		visible: true, properties: {}, revision: 0,
+	} );
 }
 
 describe( 'PlotEditor facade', () => {
@@ -226,6 +278,28 @@ describe( 'PlotEditor facade', () => {
 		} );
 		expect( editor.canUndo ).toBe( true );
 		expect( editor.mode ).toBe( 'select' );
+		editor.dispose();
+	} );
+
+	it( 'F2 与 native textarea 经状态机提交中文文本且只形成一次 history', () => {
+		const { editor, root, textareas } = createEditor( { autoAttachInputs: true } );
+		editor.execute( { type: 'feature.add', feature: text( 'label-a' ) } );
+		editor.select( [ 'label-a' ] );
+		editor.focus();
+
+		root.dispatch( 'keydown', keyboardEvent( root, 'F2', 'F2' ) );
+		expect( editor.mode ).toBe( 'text-edit' );
+		expect( textareas ).toHaveLength( 1 );
+		const textarea = textareas[ 0 ];
+		textarea.value = '中文\n第二行';
+		textarea.dispatch( 'input', { type: 'input', target: textarea } as Event );
+		textarea.dispatch( 'keydown', keyboardEvent( textarea, 'Enter', 'Enter', true ) );
+
+		expect( editor.document.get( 'label-a' )?.style ).toMatchObject( {
+			content: '中文\n第二行',
+		} );
+		expect( editor.mode ).toBe( 'select' );
+		expect( textarea.removed ).toBe( true );
 		editor.dispose();
 	} );
 
