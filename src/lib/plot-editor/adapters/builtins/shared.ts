@@ -127,6 +127,14 @@ export function commonFeatureFields(
 export function drawingValidationFromError( error: unknown ): DrawingValidation {
 	const message = error instanceof Error ? error.message : '图形校验失败。';
 	if ( error instanceof PlotEditorValidationError ) {
+		if ( error.diagnostic.code === 'INVALID_STYLE'
+			|| error.diagnostic.code === 'INVALID_SCHEMA' ) {
+			return invalidDrawing( 'DRAW_INVALID_PARAMETER', message );
+		}
+		if ( error.diagnostic.code === 'INVALID_COORDINATE'
+			|| error.diagnostic.code === 'INVALID_HEIGHT_REFERENCE' ) {
+			return invalidDrawing( 'DRAW_INVALID_HEIGHT', message );
+		}
 		if ( /自交/.test( message ) ) {
 			return invalidDrawing( 'DRAW_SELF_INTERSECTION', message );
 		}

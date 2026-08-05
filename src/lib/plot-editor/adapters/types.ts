@@ -80,6 +80,8 @@ export interface EditHandle {
 	readonly vertexIndex?: number;
 	readonly segmentIndex?: number;
 	readonly parameter?: string;
+	/** 文本框等屏幕参数手柄相对 GIS anchor 的 CSS 像素偏移。 */
+	readonly screenOffsetCssPixels?: readonly [ x: number, y: number ];
 	readonly priority: number;
 }
 
@@ -103,6 +105,8 @@ export interface FinishFeatureOptions {
 
 export interface HandleMovement {
 	readonly authorPosition: Position3D;
+	readonly screenDeltaCssPixels?: readonly [ x: number, y: number ];
+	readonly parameterValue?: number;
 	readonly shift?: boolean;
 	readonly alt?: boolean;
 }
