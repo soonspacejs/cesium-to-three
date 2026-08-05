@@ -14,7 +14,8 @@
     "src/cesium-source-modules.d.ts",
     "src/earcut-module.d.ts",
     "src/lib/arrow/**/*.ts",
-    "src/lib/ground/**/*.ts"
+    "src/lib/ground/**/*.ts",
+    "src/lib/plot-editor/**/*.ts"
   ],
   "exclude": [
     "src/demo/**",

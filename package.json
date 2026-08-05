@@ -19,6 +19,10 @@
       "types": "./dist/types/lib/arrow/index.d.ts",
       "import": "./dist/arrow.js"
     },
+    "./plot-editor": {
+      "types": "./dist/types/lib/plot-editor/index.d.ts",
+      "import": "./dist/plot-editor.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

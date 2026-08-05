@@ -20,6 +20,14 @@ import {
 	type GroundRawShaderBuildContext as GroundEntryRawShaderBuildContext,
 	type PulsePointMaterialOptions as GroundEntryPulsePointMaterialOptions,
 } from 'cesium-to-three/ground';
+import {
+	HeightReference,
+	createPlotEditor,
+	type EditorCommand,
+	type PlotDocumentSnapshot,
+	type PlotEditor,
+	type PlotEditorOptions,
+} from 'cesium-to-three/plot-editor';
 
 const rootOptions: PulsePointMaterialOptions = { periodSeconds: 1.5, phase: 0.25 };
 const groundOptions: GroundEntryPulsePointMaterialOptions = rootOptions;
@@ -59,3 +67,18 @@ export type BuiltDeclarationParity = [
 	Assert<Equal<GroundRawShaderBuildContext, GroundEntryRawShaderBuildContext>>,
 	Assert<Equal<PulsePointMaterialOptions, GroundEntryPulsePointMaterialOptions>>,
 ];
+
+export const plotEditorHeightReference: number = HeightReference.CLAMP_TO_GROUND;
+export const plotEditorFactory: ( options: PlotEditorOptions ) => PlotEditor = createPlotEditor;
+export const plotEditorCommand: EditorCommand = Object.freeze( {
+	type: 'feature.remove',
+	ids: Object.freeze( [] ),
+} );
+export const emptyPlotDocument: PlotDocumentSnapshot = Object.freeze( {
+	schema: 'cesium-to-three/plot-document',
+	version: 1,
+	documentId: 'package-smoke',
+	revision: 0,
+	features: Object.freeze( [] ),
+	order: Object.freeze( [] ),
+} );

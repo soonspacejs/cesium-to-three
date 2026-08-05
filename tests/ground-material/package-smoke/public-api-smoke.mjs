@@ -4,6 +4,7 @@
 
 const rootEntry = await import( new URL( '../../../dist/index.js', import.meta.url ) );
 const groundEntry = await import( new URL( '../../../dist/ground.js', import.meta.url ) );
+const plotEditorEntry = await import( new URL( '../../../dist/plot-editor.js', import.meta.url ) );
 
 const requiredRuntimeExports = [
 	'C23_GROUND_SHADER_ABI_VERSION',
@@ -37,3 +38,22 @@ if ( rootEntry.C23_GROUND_SHADER_ABI_VERSION !== 1 ) {
 }
 
 console.log( `Verified ${ requiredRuntimeExports.length } built Ground Material runtime exports.` );
+
+for ( const name of [
+	'PlotEditor',
+	'createPlotEditor',
+	'HeightReference',
+	'decodePlotDocument',
+	'encodePlotDocument',
+	'EditorSurfacePicker',
+	'GlobeControlsNavigationAdapter',
+] ) {
+	if ( plotEditorEntry[ name ] === undefined ) {
+		throw new Error( `Built package is missing public Plot Editor export "${ name }".` );
+	}
+}
+if ( plotEditorEntry.HeightReference.NONE !== 0
+	|| plotEditorEntry.HeightReference.RELATIVE_TO_3D_TILE !== 6 ) {
+	throw new Error( 'Built Plot Editor exposes an incompatible HeightReference contract.' );
+}
+console.log( 'Verified built Plot Editor runtime and HeightReference exports.' );
