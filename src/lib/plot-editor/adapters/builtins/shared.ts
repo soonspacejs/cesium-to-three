@@ -199,6 +199,39 @@ export function geographicMidpoint(
 	);
 }
 
+/** 简单环的面积质心；退化时确定性回退 ECEF 平均中心。 */
+export function polygonCentroid( positions: readonly Position3D[] ): Position3D {
+	if ( positions.length < 3 ) return geographicCenter( positions );
+	const frame = createEnuFrame( [ positions[ 0 ][ 0 ], positions[ 0 ][ 1 ], 0 ] );
+	const planar = positions.map( ( position ) => ecefToEnu(
+		geodeticToEcef( [ position[ 0 ], position[ 1 ], 0 ] ), frame,
+	) );
+	let twiceArea = 0;
+	let weightedEast = 0;
+	let weightedNorth = 0;
+	for ( let index = 0; index < planar.length; index++ ) {
+		const current = planar[ index ];
+		const next = planar[ ( index + 1 ) % planar.length ];
+		const cross = current[ 0 ] * next[ 1 ] - next[ 0 ] * current[ 1 ];
+		twiceArea += cross;
+		weightedEast += ( current[ 0 ] + next[ 0 ] ) * cross;
+		weightedNorth += ( current[ 1 ] + next[ 1 ] ) * cross;
+	}
+	if ( Math.abs( twiceArea ) <= GEOMETRY_EPSILON_METERS ** 2 ) {
+		return geographicCenter( positions );
+	}
+	const ecef = enuToEcef( [
+		weightedEast / ( 3 * twiceArea ),
+		weightedNorth / ( 3 * twiceArea ),
+		0,
+	], frame );
+	const geographic = ecefToGeodetic( ecef, positions[ 0 ][ 0 ] );
+	return Object.freeze( [
+		geographic[ 0 ], geographic[ 1 ],
+		positions.reduce( ( sum, position ) => sum + position[ 2 ], 0 ) / positions.length,
+	] ) as Position3D;
+}
+
 /** 在 anchor 的局部 ENU 平面生成纯作者坐标，适合 handle 与派生采样。 */
 export function positionAtEnuOffset(
 	anchor: Position3D,
