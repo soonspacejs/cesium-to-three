@@ -139,3 +139,28 @@ export interface EditorKeymap {
 	): EditorCommandDefinition | undefined;
 	validate(): readonly KeymapConflict[];
 }
+
+export interface NormalizedKeyboardInput {
+	readonly phase: KeyPhase;
+	readonly key: string;
+	readonly code: string;
+	readonly repeat: boolean;
+	readonly focus: FocusDomain;
+	readonly modifiers: ModifierState;
+	readonly state: KeyboardStateSnapshot;
+	readonly commandId?: string;
+	readonly commandResult?: KeyboardCommandResult;
+	readonly originalEvent: KeyboardEvent;
+}
+
+export interface KeyboardInputOptions {
+	readonly root: HTMLElement;
+	readonly keymap: EditorKeymap;
+	readonly platform?: 'auto' | 'windows-linux' | 'macos';
+	readonly getCommandContext: (
+		keyboard: KeyboardStateSnapshot,
+		focus: FocusDomain,
+	) => CommandContext;
+	readonly onCommandError?: ( error: unknown, commandId: string ) => void;
+	readonly onCancelHeld?: ( reason: 'blur' | 'hidden' | 'pagehide' | 'detach' ) => void;
+}
