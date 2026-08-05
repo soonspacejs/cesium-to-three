@@ -16,7 +16,7 @@
 // redraw 同步策略：删除消失项；对签名未变项热更新；其余项释放旧图元后重建。
 // ============================================================
 
-import type { Group, Scene } from 'three';
+import type { Group, Object3D } from 'three';
 
 import {
 	CesiumGroundCirclePrimitive,
@@ -52,8 +52,14 @@ import { createPlainPlotPrimitive, PlainPlotPrimitive } from './PlainPlotPrimiti
  * 桥接器构造选项。
  */
 export interface PlotPrimitiveBridgeOptions {
-	/** 标绘图元挂载的目标场景。 */
-	scene: Scene;
+	/** 标绘图元挂载的目标节点；可为 Scene 或编辑器固定 committed root。 */
+	scene: Object3D;
+	/** 自定义稳定 renderOrder；编辑器混合 legacy/RTE 图元时按 canonical order 注入。 */
+	getRenderOrder?: ( id: string, fallbackPlotOrder: number ) => number;
+	/** 可选外部 revision；相同 revision 的帧跳过大型 points JSON signature。 */
+	getRevision?: ( id: string ) => string | number | undefined;
+	/** 构建失败保留旧图元，并把可诊断错误交给宿主。 */
+	onBuildError?: ( error: unknown, id: string ) => void;
 }
 
 /** 桥接器支持的全部贴地渲染图元联合。 */
@@ -82,6 +88,7 @@ interface PlotEntry {
 	group: Group;
 	signature: string;
 	styleSignature: string;
+	externalRevision?: string | number;
 }
 
 /**
@@ -211,7 +218,10 @@ export class PlotPrimitiveBridge {
 	private _opacity = 1;
 
 	/** 图元挂载的 Three 场景。 */
-	private readonly _scene: Scene;
+	private readonly _scene: Object3D;
+	private readonly _getRenderOrder?: PlotPrimitiveBridgeOptions[ 'getRenderOrder' ];
+	private readonly _getRevision?: PlotPrimitiveBridgeOptions[ 'getRevision' ];
+	private readonly _onBuildError?: PlotPrimitiveBridgeOptions[ 'onBuildError' ];
 
 	/** 是否已经释放。 */
 	private _disposed = false;
@@ -224,6 +234,9 @@ export class PlotPrimitiveBridge {
 	 */
 	public constructor( options: PlotPrimitiveBridgeOptions ) {
 		this._scene = options.scene;
+		this._getRenderOrder = options.getRenderOrder;
+		this._getRevision = options.getRevision;
+		this._onBuildError = options.onBuildError;
 	}
 
 	// ── 与 PlotSdfPlugin 对齐的协议 ──
@@ -291,10 +304,18 @@ export class PlotPrimitiveBridge {
 
 		let plotOrder = 0;
 		for ( const [ id, plot ] of this._shapes ) {
-			const renderOrder = plotOrderToRenderOrder( plotOrder );
+			const renderOrder = this._getRenderOrder?.( id, plotOrder )
+				?? plotOrderToRenderOrder( plotOrder );
 			plotOrder += 1;
 
 			const existing = this._entries.get( id );
+			const externalRevision = this._getRevision?.( id );
+			if ( existing !== undefined
+				&& externalRevision !== undefined
+				&& existing.externalRevision === externalRevision ) {
+				this._refreshLightweight( existing, renderOrder );
+				continue;
+			}
 			const geomSig = `${ clampModeSignature( plot ) }|${ geometrySignature( plot ) }`;
 			const styleSig = styleSignature( plot, this._opacity );
 
@@ -306,21 +327,29 @@ export class PlotPrimitiveBridge {
 			) {
 				this._refreshLightweight( existing, renderOrder );
 				existing.styleSignature = styleSig;
+				existing.externalRevision = externalRevision;
 				continue;
 			}
 
+			let primitive: AnyPlotPrimitive | null;
+			try {
+				// 候选先完整构建；失败时旧图元仍留在场景和 entry map 中。
+				primitive = this._buildPrimitive( plot, renderOrder );
+			} catch ( error ) {
+				this._onBuildError?.( error, id );
+				continue;
+			}
+			if ( primitive === null ) {
+				this._onBuildError?.( new Error( 'PlotPrimitiveBridge：图元构建返回空。' ), id );
+				continue;
+			}
+			const group = resolveGroup( primitive );
+			group.visible = plot.options.visible !== false;
 			if ( existing !== undefined ) {
 				this._scene.remove( existing.group );
 				existing.primitive.dispose();
 				this._entries.delete( id );
 			}
-
-			const primitive = this._buildPrimitive( plot, renderOrder );
-			if ( primitive === null ) {
-				continue;
-			}
-			const group = resolveGroup( primitive );
-			group.visible = plot.options.visible !== false;
 			if ( this._sceneAttached ) {
 				this._scene.add( group );
 			}
@@ -330,6 +359,7 @@ export class PlotPrimitiveBridge {
 				group,
 				signature: geomSig,
 				styleSignature: styleSig,
+				externalRevision,
 			};
 			this._entries.set( id, entry );
 
@@ -337,6 +367,11 @@ export class PlotPrimitiveBridge {
 				this._refreshLightweight( entry, renderOrder );
 			}
 		}
+	}
+
+	/** 仅供上层渲染协调器确认原子构建是否成功，不暴露 GPU 可变对象。 */
+	public hasRenderEntry( id: string ): boolean {
+		return this._entries.has( id );
 	}
 
 	/**
