@@ -211,6 +211,10 @@ export class ScreenSpaceMarkerLayer {
 		return this._entries.get( id )?.description;
 	}
 
+	public getDescriptions(): readonly ScreenSpaceMarkerDescription[] {
+		return Object.freeze( [ ...this._entries.values() ].map( ( entry ) => entry.description ) );
+	}
+
 	public dispose(): void {
 		if ( this._disposed ) return;
 		this._disposed = true;

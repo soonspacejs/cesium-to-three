@@ -93,6 +93,24 @@ describe( 'EditorOverlayRenderer', () => {
 		}
 	} );
 
+	it( '控制点/Gizmo 命中使用 CSS 形状代理，完全不依赖 Three Raycaster', () => {
+		const { overlay } = createRenderer();
+		overlay.sync( {
+			features: [ line( 'line-a' ) ], documentRevision: 0, sessionRevision: 1,
+			selection: { ids: [ 'line-a' ], primaryId: 'line-a' },
+			showHandles: true, transformMode: 'translate',
+		} );
+		const projection = {
+			project: () => ( { x: 100, y: 100, depth: 0.5, visible: true } ),
+		};
+		const handleHits = overlay.hitTestOverlayMarkers( { x: 100, y: 100 }, projection );
+		expect( handleHits.some( ( hit ) => hit.layer === 'handle' ) ).toBe( true );
+		const axisHits = overlay.hitTestOverlayMarkers( { x: 140, y: 100 }, projection );
+		expect( axisHits.some( ( hit ) =>
+			hit.layer === 'gizmo' && hit.target.handleId === 'translate:east',
+		) ).toBe( true );
+	} );
+
 	it( '多选只显示整体 Gizmo，不混入任一图形的顶点控制点', () => {
 		const { overlay } = createRenderer();
 		const features = [ line( 'a' ), line( 'b', 0.02 ) ];

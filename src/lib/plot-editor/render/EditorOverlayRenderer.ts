@@ -15,7 +15,11 @@ import type {
 	ResolvedPlotGeometry,
 } from '../document/types';
 import type { SelectionState } from '../state/SelectionModel';
-import type { TransformMode } from '../state/types';
+import type { HitTarget, ScreenPoint, TransformMode } from '../state/types';
+import type {
+	EditorProjectionSnapshot,
+	OverlayHitCandidate,
+} from '../selection/FeatureHitTester';
 import {
 	computeSelectionPivot,
 	createGizmoHandleDescriptions,
@@ -277,6 +281,18 @@ export class EditorOverlayRenderer {
 			frameState.height,
 			frameState.pixelRatio ?? 1,
 		);
+	}
+
+	/** 业务拾取使用 marker 的 CSS 几何，不调用 Three Raycaster。 */
+	public hitTestOverlayMarkers(
+		screen: ScreenPoint,
+		projection: EditorProjectionSnapshot,
+	): readonly OverlayHitCandidate[] {
+		if ( this._disposed ) return Object.freeze( [] );
+		return Object.freeze( [
+			...markerHitCandidates( this._handles.getDescriptions(), screen, projection, false ),
+			...markerHitCandidates( this._gizmo.getDescriptions(), screen, projection, true ),
+		] );
 	}
 
 	public dispose(): void {
@@ -585,4 +601,72 @@ function validateRevision( value: number, name: string ): void {
 	if ( ! Number.isSafeInteger( value ) || value < 0 ) {
 		throw new RangeError( `${ name } 必须是非负安全整数。` );
 	}
+}
+
+function markerHitCandidates(
+	descriptions: readonly ScreenSpaceMarkerDescription[],
+	screen: ScreenPoint,
+	projection: EditorProjectionSnapshot,
+	gizmo: boolean,
+): OverlayHitCandidate[] {
+	const results: OverlayHitCandidate[] = [];
+	for ( const description of descriptions ) {
+		if ( ! description.visible || description.entityId === undefined
+			|| description.handleId === undefined ) continue;
+		const projected = projection.project( description.position );
+		if ( projected === null || ! projected.visible ) continue;
+		const offset = description.screenOffsetCssPixels ?? [ 0, 0 ];
+		const center = { x: projected.x + offset[ 0 ], y: projected.y + offset[ 1 ] };
+		const distance = markerDistance( screen, projected, center, description );
+		if ( distance > description.pickRadiusCssPixels ) continue;
+		const kind: HitTarget[ 'kind' ] = gizmo
+			? 'gizmo'
+			: description.handleId.startsWith( 'vertex:' ) ? 'vertex'
+				: description.handleId.startsWith( 'midpoint:' ) ? 'midpoint' : 'gizmo';
+		results.push( Object.freeze( {
+			layer: description.active ? 'active-handle' : gizmo ? 'gizmo' : 'handle',
+			target: Object.freeze( {
+				kind,
+				entityId: description.entityId,
+				handleId: description.handleId,
+				distanceCssPixels: distance,
+				depth: projected.depth,
+				zOrder: description.priority,
+				depthApproximate: true,
+			} ),
+		} ) );
+	}
+	return results;
+}
+
+function markerDistance(
+	screen: ScreenPoint,
+	anchor: ScreenPoint,
+	center: ScreenPoint,
+	description: ScreenSpaceMarkerDescription,
+): number {
+	const distanceToCenter = Math.hypot( screen.x - center.x, screen.y - center.y );
+	if ( description.shape === 'ring' ) {
+		return Math.abs( distanceToCenter - description.sizeCssPixels / 2 );
+	}
+	if ( description.shape.startsWith( 'axis-' ) || description.shape.startsWith( 'scale-' ) ) {
+		const end = {
+			x: anchor.x + ( description.screenOffsetCssPixels?.[ 0 ] ?? 0 ) * 2,
+			y: anchor.y + ( description.screenOffsetCssPixels?.[ 1 ] ?? 0 ) * 2,
+		};
+		return distanceToSegment( screen, anchor, end );
+	}
+	const visibleRadius = description.sizeCssPixels / 2;
+	return Math.max( 0, distanceToCenter - visibleRadius );
+}
+
+function distanceToSegment( point: ScreenPoint, start: ScreenPoint, end: ScreenPoint ): number {
+	const dx = end.x - start.x;
+	const dy = end.y - start.y;
+	const lengthSquared = dx * dx + dy * dy;
+	if ( lengthSquared <= 1e-12 ) return Math.hypot( point.x - start.x, point.y - start.y );
+	const t = Math.max( 0, Math.min( 1,
+		( ( point.x - start.x ) * dx + ( point.y - start.y ) * dy ) / lengthSquared,
+	) );
+	return Math.hypot( point.x - ( start.x + dx * t ), point.y - ( start.y + dy * t ) );
 }
