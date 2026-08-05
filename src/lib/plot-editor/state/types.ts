@@ -19,6 +19,9 @@ export interface HitTarget {
 	readonly entityId?: PlotFeatureId;
 	readonly handleId?: string;
 	readonly distanceCssPixels: number;
+	readonly depth?: number;
+	readonly zOrder?: number;
+	readonly depthApproximate?: boolean;
 }
 
 export type SelectionOperation = 'replace' | 'add' | 'toggle';
