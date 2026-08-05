@@ -1,6 +1,7 @@
 import type { Object3D, PerspectiveCamera } from 'three';
 import type { CesiumGroundFrameState } from '../ground';
 import { createBuiltinGeometryAdapterRegistry } from './adapters/builtins';
+import type { GeometryAdapterRegistry } from './adapters/GeometryAdapterRegistry';
 import type { DrawToolContext } from './adapters/types';
 import { CommandExecutor } from './commands/CommandExecutor';
 import { HistoryManager, type HistoryLimits } from './commands/HistoryManager';
@@ -13,11 +14,15 @@ import {
 } from './document/PlotDocument';
 import type {
 	HeightReference,
+	PlotFeature,
 	PlotDocumentSnapshot,
 	PlotFeatureId,
 	PlotFeatureType,
+	Position3D,
 	ResolvedPlotGeometry,
 } from './document/types';
+import { HeightReference as HeightReferenceValue } from './document/types';
+import { createEnuFrame, ecefToEnu, geodeticToEcef } from './document/geodesy';
 import { PlotDrawingController, type DrawingSession } from './drawing/PlotDrawingController';
 import {
 	ShapeEditController,
@@ -31,6 +36,18 @@ import {
 	type PlotEditorMode,
 } from './events';
 import type { EditorKeymap, NavigationAdapter } from './input/types';
+import { createDefaultEditorKeymap } from './input/Keymap';
+import { KeyboardInput } from './input/KeyboardInput';
+import { PointerInput } from './input/PointerInput';
+import { CommandRouter, type RouterContext } from './input/CommandRouter';
+import type {
+	CommandContext,
+	FocusDomain,
+	KeyboardStateSnapshot,
+	NormalizedPointerInput,
+	PointerClaim,
+	PointerDispatch,
+} from './input/types';
 import {
 	PlotDocumentImporter,
 	type ImportPlotDocumentOptions,
@@ -49,12 +66,24 @@ import {
 	EditorOverlayRenderer,
 	type EditorRenderReason,
 } from './render/EditorOverlayRenderer';
-import { FeatureHitTester } from './selection/FeatureHitTester';
+import {
+	FeatureHitTester,
+	type EditorProjectionSnapshot,
+} from './selection/FeatureHitTester';
+import { createCameraProjectionSnapshot } from './selection/CameraProjectionSnapshot';
 import {
 	SelectionController,
 	createAdapterAwareSelectionModel,
 } from './selection/SelectionController';
 import type { SelectionState } from './state/SelectionModel';
+import {
+	createInitialEditorState,
+	reduceEditor,
+	type EditorEffect,
+	type EditorEvent,
+	type EditorState,
+} from './state/PlotEditorMachine';
+import type { HitTarget, ScreenPoint, TransformMode } from './state/types';
 import { EnuTransformController } from './transform/EnuTransformController';
 import { createEnuFeatureTransform } from './transform/feature-transform';
 import type { TransformPreview } from './transform/types';
@@ -96,14 +125,17 @@ export type DrawTool = PlotFeatureType | DrawToolContext<any>;
 export class PlotEditor {
 	public readonly document: PlotDocument;
 
-	private readonly _root: HTMLElement;
+	private readonly _canvas: HTMLCanvasElement;
 	private readonly _renderHost: EditorRenderHost;
 	private readonly _cameraController: NavigationAdapter;
+	private readonly _surfacePicker: PlotSurfacePicker;
+	private readonly _adapters: GeometryAdapterRegistry;
 	private readonly _store: PlotDocumentStore;
 	private readonly _executor: CommandExecutor;
 	private readonly _history: HistoryManager;
 	private readonly _events = new PlotEditorEventDispatcher();
 	private readonly _selectionModel;
+	private readonly _hitTester: FeatureHitTester;
 	private readonly _selectionController: SelectionController;
 	private readonly _drawing: PlotDrawingController;
 	private readonly _shapeEditor: ShapeEditController;
@@ -112,21 +144,29 @@ export class PlotEditor {
 	private readonly _importer: PlotDocumentImporter;
 	private readonly _save?: SaveCoordinator;
 	private readonly _heightResolver?: HeightResolutionManager;
+	private readonly _router: CommandRouter;
+	private readonly _keyboard: KeyboardInput;
+	private readonly _pointer: PointerInput;
 	private readonly _resolved = new Map<PlotFeatureId, ResolvedPlotGeometry>();
 	private readonly _unsubscribers: Array<() => void> = [];
 	private _drawingSession: DrawingSession | null = null;
 	private _shapePreview: ShapeEditPreview | null = null;
 	private _transformPreview: TransformPreview | null = null;
 	private _mode: PlotEditorMode = 'select';
+	private _state: EditorState;
 	private _vertexEditId: PlotFeatureId | undefined;
+	private _pointerTransactionStart: PointerTransactionStart | null = null;
+	private _internalCommandDepth = 0;
+	private _pendingDocumentRevision: number | undefined;
 	private _sessionRevision = 0;
 	private _disposed = false;
 
 	public constructor( options: PlotEditorOptions ) {
 		assertOptions( options );
-		this._root = options.root;
+		this._canvas = options.canvas;
 		this._renderHost = options.renderHost;
 		this._cameraController = options.cameraController;
+		this._surfacePicker = options.surfacePicker;
 
 		const initial = options.document === undefined
 			? createEmptySnapshot( options.documentId ?? 'plot-document' )
@@ -141,6 +181,7 @@ export class PlotEditor {
 		this.document = this._store;
 
 		const adapters = createBuiltinGeometryAdapterRegistry();
+		this._adapters = adapters;
 		this._executor = new CommandExecutor( this._store, {
 			transformFeature: createEnuFeatureTransform( adapters ),
 		} );
@@ -173,9 +214,10 @@ export class PlotEditor {
 				} ),
 			} ),
 		} );
+		this._hitTester = new FeatureHitTester( this._store, adapters );
 		this._selectionController = new SelectionController( {
 			model: this._selectionModel,
-			hitTester: new FeatureHitTester( this._store, adapters ),
+			hitTester: this._hitTester,
 			shapeEditor: this._shapeEditor,
 		} );
 		this._drawing = new PlotDrawingController( {
@@ -205,6 +247,46 @@ export class PlotEditor {
 		this._save = options.requestSave === undefined
 			? undefined
 			: new SaveCoordinator( options.requestSave );
+
+		this._state = createInitialEditorState(
+			this._store.revision,
+			this._selectionModel.state,
+		);
+		this._router = new CommandRouter( this._createRouterContext() );
+		const keymap = options.keymap ?? createDefaultEditorKeymap(
+			( id, context ) => this._router.canExecuteCommand( id, context ),
+		);
+		this._keyboard = new KeyboardInput( {
+			root: options.root,
+			keymap,
+			getCommandContext: ( keyboard, focus ) => this._createCommandContext( keyboard, focus ),
+			onCommandError: ( error, id ) => this._reportError(
+				'KEYBOARD_COMMAND_FAILED', `键盘命令 ${ id } 执行失败。`, error,
+			),
+			onCancelHeld: ( reason ) => this._dispatch( {
+				type: 'FOCUS_LOST', reason: reason === 'hidden' ? 'hidden' : 'blur',
+			} ),
+		} );
+		this._pointer = new PointerInput( {
+			canvas: options.canvas,
+			navigation: options.cameraController,
+			claim: ( input ) => this._claimPointer( input ),
+			getKeyboardModifiers: () => ( { space: this._keyboard.getSnapshot().space } ),
+			onCancelOperation: ( reason ) => this._dispatch( {
+				type: 'cancelCurrentOperation', reason,
+			} ),
+			onError: ( code, error ) => this._reportError( code, '指针 capture 失败。', error ),
+			onCaptureChange: ( active ) => this._keyboard.setPointerCaptureActive( active ),
+			shouldPreventContextMenu: () => this._state.interaction.kind === 'drawing',
+		} );
+		this._unsubscribers.push(
+			this._keyboard.subscribe( ( input ) => {
+				if ( input.commandId === undefined || input.commandResult === 'ignored' ) return;
+				const routed = this._router.routeCommand( input.commandId, input );
+				for ( const intent of routed.intents ) this._dispatch( intent );
+			} ),
+			this._pointer.subscribe( ( dispatch ) => this._onPointerDispatch( dispatch ) ),
+		);
 
 		this._unsubscribers.push(
 			this._store.subscribe( ( change ) => this._onDocumentChange( change ) ),
@@ -239,6 +321,11 @@ export class PlotEditor {
 
 		this._syncOverlay();
 		this._resolveAllHeights();
+		this._dispatch( { type: 'INITIALIZE' } );
+		if ( options.autoAttachInputs !== false ) {
+			this._keyboard.attach();
+			this._pointer.attach();
+		}
 	}
 
 	public get selection(): ReadonlySet<PlotFeatureId> {
@@ -265,14 +352,21 @@ export class PlotEditor {
 		this._assertOpen();
 		this._cancelPreviews();
 		if ( tool === 'select' ) {
-			this._setMode( 'select' );
+			this._dispatch( { type: 'SET_TOOL', tool: { kind: 'select' } } );
 			return;
 		}
 		const context: DrawToolContext<any> = typeof tool === 'string'
 			? { type: tool, heightReference: 0 as HeightReference }
 			: tool;
+		this._dispatch( {
+			type: 'SET_TOOL',
+			tool: {
+				kind: 'draw',
+				graphicsType: context.type,
+				heightReference: context.heightReference,
+			},
+		} );
 		this._drawing.arm( context );
-		this._setMode( `draw:${ context.type }` );
 	}
 
 	public execute( command: EditorCommand ): CommandResult {
@@ -336,12 +430,13 @@ export class PlotEditor {
 
 	public focus(): void {
 		this._assertOpen();
-		this._root.focus( { preventScroll: true } );
+		this._keyboard.focus();
 	}
 
 	public blur(): void {
 		if ( this._disposed ) return;
-		this._root.blur();
+		this._keyboard.blur();
+		this._dispatch( { type: 'FOCUS_LOST', reason: 'blur' } );
 	}
 
 	public export(): PlotDocumentSnapshot {
@@ -392,11 +487,14 @@ export class PlotEditor {
 
 	public dispose(): void {
 		if ( this._disposed ) return;
+		this._dispatch( { type: 'DISPOSE' } );
 		this._disposed = true;
 		this._cancelPreviews();
 		for ( const unsubscribe of this._unsubscribers.splice( 0 ) ) unsubscribe();
 		this._heightResolver?.dispose();
 		this._save?.dispose();
+		this._pointer.dispose();
+		this._keyboard.dispose();
 		this._drawing.dispose();
 		this._shapeEditor.dispose();
 		this._transform.dispose();
@@ -408,12 +506,516 @@ export class PlotEditor {
 		this._events.dispose();
 	}
 
+	private _dispatch( event: EditorEvent ): void {
+		if ( this._disposed && event.type !== 'DISPOSE' ) return;
+		const previous = this._state;
+		const transition = reduceEditor( previous, event );
+		this._state = transition.state;
+
+		// 轴约束和事务内模式切换是纯状态变化，没有单独 effect；在这里同步控制器。
+		if ( event.type === 'constrainTransform' && this._transform.session !== null ) {
+			const result = this._transform.constrain( event.axis );
+			if ( ! result.ok ) this._reportControllerError( result.error );
+		}
+		if ( event.type === 'beginTransform'
+			&& previous.interaction.kind === 'transforming'
+			&& previous.interaction.mode !== event.mode ) {
+			this._transform.cancel();
+			this._beginTransformController( event.mode );
+		}
+
+		this._refreshDerivedState();
+		for ( const effect of transition.effects ) this._executeEffect( effect );
+		this._syncOverlay();
+	}
+
+	private _executeEffect( effect: EditorEffect ): void {
+		switch ( effect.type ) {
+			case 'PICK_SURFACE': this._resolveDrawingSurface( effect ); break;
+			case 'CANCEL_SURFACE_REQUEST': break; // v1 picker 为同步端口，没有悬挂 Promise。
+			case 'VALIDATE_DRAFT': this._validateAndSynchronizeDraft( effect ); break;
+			case 'RENDER_DRAFT': this._invalidateTransient( 'draft' ); break;
+			case 'COMMIT_DRAFT': this._commitDrawing( effect.sessionId ); break;
+			case 'ROLLBACK_PREVIEW':
+				this._drawing.cancel( effect.transactionId );
+				this._shapeEditor.cancel();
+				this._transform.cancel();
+				this._pointerTransactionStart = null;
+				break;
+			case 'APPLY_SELECTION':
+				this._selectionController.applyHit(
+					effect.ids[ 0 ] === undefined ? null : Object.freeze( {
+						kind: 'entity', entityId: effect.ids[ 0 ], distanceCssPixels: 0,
+					} ),
+					effect.operation,
+				);
+				if ( effect.ids.length > 1 ) {
+					this.select( effect.ids.slice( 1 ), effect.operation === 'replace' ? 'add' : effect.operation );
+				}
+				break;
+			case 'APPLY_BOX_SELECTION':
+				this._selectionController.selectBox(
+					effect.start,
+					effect.end,
+					this._createProjectionSnapshot(),
+					effect.additive ? 'add' : 'replace',
+					{
+						onDiagnostic: ( diagnostic ) => this._events.dispatch( 'validationerror', {
+							diagnostic,
+						} ),
+					},
+				);
+				break;
+			case 'SET_ACTIVE_HANDLE':
+				try {
+					this._selectionModel.setActiveHandle( effect.handleId, effect.entityId );
+				} catch {
+					// Gizmo id 不是 adapter 的 shape handle，由 transform controller 持有。
+				}
+				break;
+			case 'HIT_TEST_HOVER': {
+				const hit = this._hitTest( effect.screen, 'mouse' );
+				this._selectionModel.setHover( hit );
+				this._dispatch( { type: 'HOVER_RESOLVED', hit } );
+				break;
+			}
+			case 'SELECT_ALL': this._selectionController.selectAll(); break;
+			case 'DELETE_SELECTION': this._runInternalCommand( () => {
+				const result = this._selectionController.deleteContext();
+				this._reportCommandResult( result );
+				if ( result.ok ) this._selectionController.clear();
+				return result;
+			} ); break;
+			case 'HISTORY_UNDO': this._reportCommandResult( this._history.undo() ); break;
+			case 'HISTORY_REDO': this._reportCommandResult( this._history.redo() ); break;
+			case 'REQUEST_SAVE': this.requestSave(); break;
+			case 'BEGIN_TRANSACTION': this._beginEditorTransaction( effect ); break;
+			case 'UPDATE_POINTER_TRANSACTION': this._updatePointerTransaction(
+				effect.transactionId,
+				effect.screen,
+			); break;
+			case 'UPDATE_KEYBOARD_TRANSACTION': {
+				const result = this._transform.nudge( effect.axis, effect.amountMeters );
+				if ( result.changed ) this._dispatch( {
+					type: 'TRANSACTION_UPDATED', transactionId: effect.transactionId,
+				} );
+				else if ( ! result.ok ) this._reportControllerError( result.error );
+				break;
+			}
+			case 'COMMIT_TRANSACTION': this._commitEditorTransaction( effect.transactionId ); break;
+			case 'ROLLBACK_TRANSACTION':
+				this._shapeEditor.cancel();
+				this._transform.cancel();
+				this._pointerTransactionStart = null;
+				break;
+			case 'FOCUS_TEXT_INPUT':
+				this._reportError( 'TEXT_INPUT_UNAVAILABLE', '文本编辑输入层尚未建立。' );
+				break;
+			case 'REPORT_ERROR': this._reportError(
+				effect.code,
+				detailMessage( effect.detail, '编辑操作失败。' ),
+				effect.detail,
+			); break;
+			case 'DISPOSE_RESOURCES': break;
+		}
+	}
+
+	private _resolveDrawingSurface(
+		effect: Extract<EditorEffect, { type: 'PICK_SURFACE' }>,
+	): void {
+		try {
+			const hit = this._pickSurface( effect.request.screen, effect.heightReference );
+			if ( hit === null ) {
+				this._dispatch( {
+					type: 'SURFACE_FAILED',
+					requestId: effect.request.requestId,
+					sessionId: effect.request.sessionId,
+					revision: effect.request.documentRevision,
+					error: new Error( '当前指针未命中可用 surface。' ),
+				} );
+				return;
+			}
+			if ( effect.request.purpose === 'point' ) this._drawing.addPick( hit );
+			else this._drawing.movePick( hit );
+			this._dispatch( {
+				type: 'SURFACE_RESOLVED',
+				requestId: effect.request.requestId,
+				sessionId: effect.request.sessionId,
+				revision: effect.request.documentRevision,
+				position: hit.authorPosition,
+			} );
+		} catch ( error ) {
+			this._dispatch( {
+				type: 'SURFACE_FAILED',
+				requestId: effect.request.requestId,
+				sessionId: effect.request.sessionId,
+				revision: effect.request.documentRevision,
+				error,
+			} );
+		}
+	}
+
+	private _validateAndSynchronizeDraft(
+		effect: Extract<EditorEffect, { type: 'VALIDATE_DRAFT' }>,
+	): void {
+		let session = this._drawing.session;
+		if ( session === null ) return;
+		while ( session.draft.points.length > effect.draft.coordinates.length ) {
+			this._drawing.removeLastPoint();
+			session = this._drawing.session as DrawingSession;
+		}
+		for ( let index = session.draft.points.length; index < effect.draft.coordinates.length; index++ ) {
+			this._drawing.addPick( draftPick(
+				effect.draft.coordinates[ index ],
+				session.draft.heightReference,
+			) );
+		}
+		const validation = this._drawing.session?.draft.validation;
+		this._dispatch( {
+			type: 'DRAFT_VALIDATED',
+			sessionId: effect.sessionId,
+			draftRevision: effect.draftRevision,
+			valid: validation?.valid === true,
+			errors: validation?.message === undefined
+				? Object.freeze( [] )
+				: Object.freeze( [ validation.message ] ),
+		} );
+	}
+
+	private _commitDrawing( sessionId: string ): void {
+		const result = this._runInternalCommand( () => this._drawing.finish() );
+		if ( result.ok ) {
+			this._dispatch( {
+				type: 'DRAFT_COMMITTED',
+				sessionId,
+				documentRevision: this._store.revision,
+			} );
+			this._flushPendingDocumentRevision();
+			return;
+		}
+		this._reportError(
+			result.validation?.code ?? result.command?.error?.code ?? 'DRAW_INVALID_PARAMETER',
+			result.validation?.message ?? result.command?.error?.message ?? '绘制草稿不能提交。',
+		);
+		this._dispatch( { type: 'cancelCurrentOperation', reason: 'escape' } );
+	}
+
+	private _beginEditorTransaction(
+		effect: Extract<EditorEffect, { type: 'BEGIN_TRANSACTION' }>,
+	): void {
+		const interaction = this._state.interaction;
+		const start = interaction.kind === 'dragging-handle'
+			|| interaction.kind === 'dragging-entity'
+			? interaction.start
+			: undefined;
+		let ok = false;
+		if ( effect.handleId !== undefined && isGizmoHandleId( effect.handleId ) ) {
+			const mode = transformModeForHandle( effect.handleId );
+			const active = this._transform.session;
+			let begun = active?.mode === mode;
+			if ( ! begun ) {
+				if ( active !== null ) this._transform.cancel();
+				begun = this._beginTransformController( mode, effect.selectedIds );
+			}
+			if ( begun ) {
+				const axis = transformAxisForHandle( effect.handleId );
+				if ( axis !== undefined ) this._transform.constrain( axis );
+				ok = true;
+			}
+		} else if ( effect.handleId !== undefined && effect.entityId !== undefined ) {
+			this._vertexEditId = effect.entityId;
+			ok = this._shapeEditor.begin( effect.entityId, effect.handleId ).ok;
+		} else {
+			ok = this._beginTransformController( 'translate', effect.selectedIds );
+		}
+		if ( ok && start !== undefined ) {
+			const feature = effect.entityId === undefined
+				? this._store.get( this._selectionModel.state.primaryId ?? '' )
+				: this._store.get( effect.entityId );
+			this._pointerTransactionStart = Object.freeze( {
+				screen: start,
+				surface: feature === undefined
+					? undefined
+					: this._pickSurface( start, feature.heightReference )?.authorPosition,
+			} );
+			return;
+		}
+		if ( ! ok ) this._dispatch( {
+			type: 'TRANSACTION_FAILED',
+			transactionId: effect.transaction.id,
+			code: 'TRANSACTION_BEGIN_FAILED',
+			recoverable: false,
+		} );
+	}
+
+	private _beginTransformController(
+		mode: TransformMode,
+		ids = this._selectionModel.state.ids,
+	): boolean {
+		const primary = this._selectionModel.state.primaryId ?? ids[ 0 ];
+		if ( primary === undefined ) return false;
+		const result = this._transform.begin( ids, primary, mode );
+		if ( ! result.ok ) this._reportControllerError( result.error );
+		return result.ok;
+	}
+
+	private _updatePointerTransaction( transactionId: string, screen: ScreenPoint ): void {
+		if ( this._shapeEditor.session !== null ) {
+			const feature = this._store.get( this._shapeEditor.session.entityId );
+			const hit = feature === undefined ? null : this._pickSurface( screen, feature.heightReference );
+			const start = this._pointerTransactionStart?.screen ?? screen;
+			const result = this._shapeEditor.update( hit === null ? null : {
+				authorPosition: hit.authorPosition,
+				screenDeltaCssPixels: [ screen.x - start.x, screen.y - start.y ],
+			} );
+			if ( result.changed ) this._dispatch( { type: 'TRANSACTION_UPDATED', transactionId } );
+			else if ( ! result.ok ) this._reportControllerError( result.error );
+			return;
+		}
+		const session = this._transform.session;
+		if ( session === null ) return;
+		const start = this._pointerTransactionStart;
+		let result;
+		if ( session.mode === 'translate' ) {
+			const primary = this._store.get( this._selectionModel.state.primaryId ?? '' );
+			const current = primary === undefined ? null : this._pickSurface( screen, primary.heightReference );
+			if ( current === null || start?.surface === undefined ) return;
+			const frame = createEnuFrame( session.pivot.position );
+			const origin = ecefToEnu( geodeticToEcef( start.surface ), frame );
+			const target = ecefToEnu( geodeticToEcef( current.authorPosition ), frame );
+			result = this._transform.update( {
+				translationMeters: [
+					target[ 0 ] - origin[ 0 ],
+					target[ 1 ] - origin[ 1 ],
+					target[ 2 ] - origin[ 2 ],
+				],
+			} );
+		} else if ( session.mode === 'rotate' ) {
+			const dx = screen.x - ( start?.screen.x ?? screen.x );
+			const dy = screen.y - ( start?.screen.y ?? screen.y );
+			result = this._transform.update( { rotationDegrees: [ dx, -dy, dx ] } );
+		} else {
+			const dx = screen.x - ( start?.screen.x ?? screen.x );
+			const factor = Math.max( 0.01, Math.exp( dx * 0.01 ) );
+			result = this._transform.update( { scale: [ factor, factor, factor ] } );
+		}
+		if ( result.changed ) this._dispatch( { type: 'TRANSACTION_UPDATED', transactionId } );
+		else if ( ! result.ok ) this._reportControllerError( result.error );
+	}
+
+	private _commitEditorTransaction( transactionId: string ): void {
+		const result = this._runInternalCommand( () => this._shapeEditor.session !== null
+			? this._shapeEditor.commit()
+			: this._transform.commit() );
+		this._pointerTransactionStart = null;
+		if ( result.ok || result.error?.code === 'EDIT_NO_VALID_PREVIEW'
+			|| result.error?.code === 'TRANSFORM_EMPTY' ) {
+			this._dispatch( {
+				type: 'TRANSACTION_COMMITTED',
+				transactionId,
+				documentRevision: this._store.revision,
+			} );
+			this._flushPendingDocumentRevision();
+			return;
+		}
+		this._dispatch( {
+			type: 'TRANSACTION_FAILED',
+			transactionId,
+			code: result.error?.code ?? 'TRANSACTION_COMMIT_FAILED',
+			recoverable: false,
+			detail: result.error,
+		} );
+		this._flushPendingDocumentRevision();
+	}
+
+	private _onPointerDispatch( dispatch: PointerDispatch ): void {
+		const screen = Object.freeze( {
+			x: dispatch.input.canvasX,
+			y: dispatch.input.canvasY,
+		} );
+		const needsHit = dispatch.input.phase === 'down'
+			|| dispatch.input.phase === 'up'
+			|| dispatch.input.phase === 'double-click';
+		const hit = needsHit ? this._hitTest( screen, dispatch.input.device ) : null;
+		if ( dispatch.input.phase === 'double-click'
+			&& this._state.interaction.kind !== 'drawing'
+			&& hit?.kind === 'entity'
+			&& hit.entityId !== undefined ) {
+			this.enterVertexEdit( hit.entityId );
+			return;
+		}
+		const intents = this._router.routePointer( dispatch, hit );
+		for ( const intent of intents ) this._dispatch( intent );
+	}
+
+	private _claimPointer( input: NormalizedPointerInput ): PointerClaim {
+		if ( input.modifiers.space ) return pointerClaim( 'navigation', 'camera-override', false, false );
+		if ( input.button !== 'primary' ) return pointerClaim( 'navigation', 'empty-surface', false, false );
+		if ( this._state.interaction.kind === 'drawing' ) {
+			return pointerClaim( 'editor', 'draw', true, true );
+		}
+		const hit = this._hitTest( { x: input.canvasX, y: input.canvasY }, input.device );
+		if ( hit?.kind === 'vertex' || hit?.kind === 'midpoint' ) {
+			return pointerClaim( 'editor', 'handle', true, true );
+		}
+		if ( hit?.kind === 'gizmo' ) return pointerClaim( 'editor', 'handle', true, true );
+		if ( hit?.kind === 'entity' ) return pointerClaim( 'editor', 'entity', true, true );
+		if ( input.modifiers.primary ) return pointerClaim( 'editor', 'box-select', true, true );
+		return pointerClaim( 'navigation', 'empty-surface', false, false );
+	}
+
+	private _hitTest(
+		screen: ScreenPoint,
+		pointerType: 'mouse' | 'pen' | 'touch',
+	): HitTarget | null {
+		let projection: EditorProjectionSnapshot;
+		try {
+			projection = this._createProjectionSnapshot();
+		} catch {
+			return null;
+		}
+		const selectedIds = this._vertexEditId === undefined
+			? Object.freeze( [] )
+			: Object.freeze( [ this._vertexEditId ] );
+		const overlayHits = this._overlay.hitTestOverlayMarkers( screen, projection );
+		return this._hitTester.hitTest( screen, projection, {
+			pointerType,
+			selectedIds,
+			activeHandleId: this._vertexEditId === undefined
+				? undefined
+				: this._selectionModel.state.activeHandleId,
+			overlayHits,
+		} );
+	}
+
+	private _createProjectionSnapshot(): EditorProjectionSnapshot {
+		return createCameraProjectionSnapshot( {
+			camera: this._renderHost.camera,
+			canvas: this._canvas,
+		} );
+	}
+
+	private _pickSurface( screen: ScreenPoint, heightReference: HeightReference ) {
+		const rect = this._canvas.getBoundingClientRect();
+		return this._surfacePicker.pick( {
+			clientX: rect.left + screen.x,
+			clientY: rect.top + screen.y,
+		}, { heightReference } );
+	}
+
+	private _createCommandContext(
+		keyboard: KeyboardStateSnapshot,
+		focus: FocusDomain,
+	): CommandContext {
+		const primary = this._selectionModel.state.primaryId;
+		const interaction = this._state.interaction;
+		const transaction: CommandContext[ 'transaction' ] = interaction.kind === 'drawing'
+			? 'draft'
+			: interaction.kind === 'dragging-handle' || interaction.kind === 'dragging-entity'
+				? 'pointer-drag'
+				: interaction.kind === 'transforming'
+					? 'keyboard-nudge'
+					: interaction.kind === 'text-editing' ? 'text' : 'none';
+		return Object.freeze( {
+			focus,
+			mode: interaction.kind === 'transforming'
+				? 'transform'
+				: interaction.kind === 'text-editing'
+					? 'text-edit'
+					: this._state.tool.kind === 'draw' ? 'draw' : 'select',
+			transaction,
+			selectionCount: this._selectionModel.state.ids.length,
+			...( primary === undefined ? {} : { primarySelectionId: primary } ),
+			...( this._selectionModel.state.activeHandleId === undefined ? {} : {
+				activeHandleId: this._selectionModel.state.activeHandleId,
+			} ),
+			...( this._state.tool.kind === 'draw' ? {
+				heightReference: this._state.tool.heightReference,
+			} : {} ),
+			keyboard,
+		} );
+	}
+
+	private _createRouterContext(): RouterContext {
+		const interaction = this._state.interaction;
+		const selection = this._selectionModel.state;
+		const selectedFeatures = selection.ids
+			.map( ( id ) => this._store.get( id ) )
+			.filter( ( feature ): feature is Readonly<PlotFeature> => feature !== undefined );
+		const routerInteraction = routerInteractionForState( interaction.kind );
+		return Object.freeze( {
+			lifecycle: this._state.lifecycle,
+			mode: interaction.kind === 'transforming'
+				? 'transform'
+				: interaction.kind === 'text-editing'
+					? 'text-edit'
+					: this._state.tool.kind === 'draw' ? 'draw' : 'select',
+			interaction: routerInteraction,
+			draftPointCount: interaction.kind === 'drawing'
+				? interaction.draft.coordinates.length
+				: 0,
+			draftRedoCount: interaction.kind === 'drawing'
+				? interaction.redoCoordinates.length
+				: 0,
+			selectionCount: selection.ids.length,
+			selectedText: selectedFeatures.length === 1 && selectedFeatures[ 0 ].type === 'text',
+			...( interaction.kind === 'pointer-pending' ? { pendingHit: interaction.hit } : {} ),
+			transformSupportsScale: selectedFeatures.length > 0 && selectedFeatures.every(
+				( feature ) => this._adapters.require( feature.type ).capabilities.scaleHorizontal,
+			),
+			...( interaction.kind === 'transforming' && interaction.axis !== undefined
+				? { transformAxis: interaction.axis }
+				: {} ),
+			clampToSurface: selectedFeatures.some( ( feature ) => isClampReference( feature.heightReference ) ),
+			nudgeStepMeters: 1,
+		} );
+	}
+
+	private _refreshDerivedState(): void {
+		this._router.setContext( this._createRouterContext() );
+		const interaction = this._state.interaction;
+		this._setMode(
+			interaction.kind === 'transforming'
+				? 'transform'
+				: interaction.kind === 'text-editing'
+					? 'text-edit'
+					: this._state.tool.kind === 'draw'
+						? `draw:${ this._state.tool.graphicsType }`
+						: 'select',
+		);
+	}
+
+	private _runInternalCommand<T>( operation: () => T ): T {
+		this._internalCommandDepth++;
+		try {
+			return operation();
+		} finally {
+			this._internalCommandDepth--;
+		}
+	}
+
+	private _flushPendingDocumentRevision(): void {
+		if ( this._internalCommandDepth > 0 ) return;
+		const revision = this._pendingDocumentRevision;
+		this._pendingDocumentRevision = undefined;
+		if ( revision !== undefined ) this._dispatch( { type: 'DOCUMENT_CHANGED', revision } );
+	}
+
+	private _reportControllerError( error: Readonly<{ code: string; message: string }> | undefined ): void {
+		if ( error !== undefined ) this._reportError( error.code, error.message );
+	}
+
 	private _onDocumentChange( change: PlotDocumentChange ): void {
 		const current = new Set( this._store.getAll().map( ( feature ) => feature.id ) );
 		for ( const id of this._resolved.keys() ) {
 			if ( ! current.has( id ) ) this._resolved.delete( id );
 		}
 		this._events.dispatch( 'documentchange', change );
+		if ( this._internalCommandDepth > 0 ) {
+			this._pendingDocumentRevision = change.revision;
+		} else {
+			this._dispatch( { type: 'DOCUMENT_CHANGED', revision: change.revision } );
+		}
 		this._syncOverlay();
 		this._resolveAllHeights();
 		this._renderHost.requestRender( 'document' );
@@ -424,6 +1026,7 @@ export class PlotEditor {
 			this._vertexEditId = undefined;
 		}
 		this._events.dispatch( 'selectionchange', { selection } );
+		this._dispatch( { type: 'SELECTION_SYNC', selection } );
 		this._invalidateTransient( 'selection' );
 	}
 
@@ -441,6 +1044,15 @@ export class PlotEditor {
 				heightReference: this._drawingSession.draft.heightReference,
 				valid: this._drawingSession.draft.validation.valid,
 			} );
+		const interaction = this._state.interaction;
+		const transformMode = interaction.kind === 'transforming'
+			? interaction.mode
+			: interaction.kind === 'dragging-entity'
+				? 'translate'
+				: interaction.kind === 'dragging-handle'
+					&& isGizmoHandleId( interaction.handleId )
+						? transformModeForHandle( interaction.handleId )
+						: this._transformPreview?.mode;
 		this._overlay.sync( {
 			features: this._store.getAll(),
 			documentRevision: this._store.revision,
@@ -454,7 +1066,22 @@ export class PlotEditor {
 			selection: this._selectionModel.state,
 			showHandles: this._vertexEditId !== undefined
 				&& this._selectionModel.state.ids.length === 1,
-			transformMode: this._transformPreview?.mode,
+			transformMode,
+			activeGizmoHandleId: interaction.kind === 'dragging-handle'
+				&& isGizmoHandleId( interaction.handleId )
+					? interaction.handleId
+					: undefined,
+			boxSelection: interaction.kind === 'box-selecting'
+				? Object.freeze( {
+					start: interaction.start,
+					current: interaction.current,
+					additive: interaction.additive,
+					valid: Math.hypot(
+						interaction.current.x - interaction.start.x,
+						interaction.current.y - interaction.start.y,
+					) >= 3,
+				} )
+				: null,
 		} );
 	}
 
@@ -560,6 +1187,76 @@ function assertOptions( options: PlotEditorOptions ): void {
 	if ( options.documentId !== undefined && options.documentId.trim().length === 0 ) {
 		throw new TypeError( 'documentId 不能为空。' );
 	}
+}
+
+interface PointerTransactionStart {
+	readonly screen: ScreenPoint;
+	readonly surface?: Position3D;
+}
+
+function draftPick( position: Position3D, heightReference: HeightReference ) {
+	return Object.freeze( {
+		authorPosition: position,
+		surfacePosition: position,
+		surface: 'ellipsoid' as const,
+		heightReference,
+	} );
+}
+
+function pointerClaim(
+	owner: PointerClaim[ 'owner' ],
+	reason: PointerClaim[ 'reason' ],
+	capture: boolean,
+	preventDefault: boolean,
+): PointerClaim {
+	return Object.freeze( { owner, reason, capture, preventDefault } );
+}
+
+function isGizmoHandleId( id: string ): boolean {
+	return id.startsWith( 'translate:' )
+		|| id.startsWith( 'rotate:' )
+		|| id.startsWith( 'scale:' );
+}
+
+function transformModeForHandle( id: string ): TransformMode {
+	if ( id.startsWith( 'translate:' ) ) return 'translate';
+	if ( id.startsWith( 'rotate:' ) ) return 'rotate';
+	if ( id.startsWith( 'scale:' ) ) return 'scale';
+	throw new Error( `未知 Gizmo handle：${ id }。` );
+}
+
+function transformAxisForHandle( id: string ): 'east' | 'north' | 'up' | 'uniform' | undefined {
+	const value = id.slice( id.indexOf( ':' ) + 1 );
+	if ( value === 'east' || value === 'north' || value === 'up' || value === 'uniform' ) {
+		return value;
+	}
+	if ( value === 'east-north' ) return 'uniform';
+	if ( value === 'heading' ) return 'up';
+	if ( value === 'pitch' ) return 'east';
+	if ( value === 'roll' ) return 'north';
+	return undefined;
+}
+
+function routerInteractionForState(
+	kind: EditorState[ 'interaction' ][ 'kind' ],
+): RouterContext[ 'interaction' ] {
+	if ( kind === 'hovering' || kind === 'error' ) return 'idle';
+	return kind;
+}
+
+function isClampReference( value: HeightReference ): boolean {
+	return value === HeightReferenceValue.CLAMP_TO_GROUND
+		|| value === HeightReferenceValue.CLAMP_TO_TERRAIN
+		|| value === HeightReferenceValue.CLAMP_TO_3D_TILE;
+}
+
+function detailMessage( detail: unknown, fallback: string ): string {
+	if ( detail instanceof Error ) return detail.message;
+	if ( detail !== null && typeof detail === 'object'
+		&& typeof ( detail as { message?: unknown } ).message === 'string' ) {
+		return ( detail as { message: string } ).message;
+	}
+	return fallback;
 }
 
 export type { PlotEditorEventMap };

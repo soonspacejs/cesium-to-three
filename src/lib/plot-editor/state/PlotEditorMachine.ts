@@ -621,8 +621,14 @@ function beginHandleDrag(
 	state: EditorState,
 	event: Extract<EditorIntent, { type: 'beginHandleDrag' }>,
 ): EditorTransition {
-	if ( state.activeTransaction !== undefined ) return transactionBusy( state );
-	const begun = beginTransactionState( state, 'pointer-drag' );
+	const continuingTransform = state.interaction.kind === 'transforming'
+		&& state.activeTransaction !== undefined;
+	if ( state.activeTransaction !== undefined && ! continuingTransform ) {
+		return transactionBusy( state );
+	}
+	const begun = continuingTransform
+		? { transaction: state.activeTransaction as EditorTransactionState, nextSequence: state.nextSequence }
+		: beginTransactionState( state, 'pointer-drag' );
 	const interaction = Object.freeze( {
 		kind: 'dragging-handle' as const,
 		pointerId: event.pointerId,

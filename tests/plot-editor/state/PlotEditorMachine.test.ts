@@ -291,6 +291,32 @@ describe( 'PlotEditorMachine selection and transactions', () => {
 		} ] );
 	} );
 
+	it( '已开启的 G/R/S 事务可以切换为 Gizmo 指针拖拽且复用同一事务', () => {
+		const transforming = step(
+			ready( [ 'a' ] ),
+			{ type: 'beginTransform', mode: 'translate' },
+		).state;
+		const transactionId = transforming.activeTransaction?.id as string;
+		const transition = step( transforming, {
+			type: 'beginHandleDrag',
+			pointerId: 7,
+			entityId: 'a',
+			handleId: 'translate:east',
+			screen: { x: 10, y: 20 },
+		} );
+
+		expect( transition.state.interaction ).toMatchObject( {
+			kind: 'dragging-handle',
+			transactionId,
+			handleId: 'translate:east',
+		} );
+		expect( transition.state.activeTransaction?.id ).toBe( transactionId );
+		expect( transition.effects.map( ( effect ) => effect.type ) ).toEqual( [
+			'SET_ACTIVE_HANDLE',
+			'BEGIN_TRANSACTION',
+		] );
+	} );
+
 	it( '外部 revision 冲突原子 rollback 并报告 STALE_TRANSACTION', () => {
 		let state = step( ready( [ 'a' ] ), { type: 'beginTransform', mode: 'translate' } ).state;
 		const id = state.activeTransaction?.id as string;
