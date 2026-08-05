@@ -22,7 +22,17 @@ export interface ScreenSpaceMarkerDescription {
 	readonly handleId?: string;
 	readonly position: Position3D;
 	readonly screenOffsetCssPixels?: readonly [ number, number ];
-	readonly shape: 'circle' | 'square' | 'diamond';
+	readonly shape:
+		| 'circle'
+		| 'square'
+		| 'diamond'
+		| 'ring'
+		| 'axis-east'
+		| 'axis-north'
+		| 'axis-up'
+		| 'scale-east'
+		| 'scale-north'
+		| 'scale-up';
 	readonly fillColor: string;
 	readonly borderColor: string;
 	readonly sizeCssPixels: number;
@@ -83,10 +93,33 @@ uniform int u_shape;
 out vec4 outColor;
 in vec2 v_corner;
 void main() {
+	vec2 point = v_corner * 2.0;
 	float metric;
-	if (u_shape == 0) metric = length(v_corner) * 2.0;
-	else if (u_shape == 2) metric = (abs(v_corner.x) + abs(v_corner.y)) * 2.0;
-	else metric = max(abs(v_corner.x), abs(v_corner.y)) * 2.0;
+	if (u_shape == 0 || u_shape == 3) metric = length(point);
+	else if (u_shape == 2) metric = abs(point.x) + abs(point.y);
+	else if (u_shape == 1) metric = max(abs(point.x), abs(point.y));
+	else {
+		// 轴杆 quad 从 pivot 向端点延伸；平移端是箭头，缩放端是方块。
+		bool vertical = u_shape == 5 || u_shape == 8;
+		bool diagonal = u_shape == 6 || u_shape == 9;
+		vec2 axisPoint = vertical ? vec2(point.y, -point.x)
+			: diagonal ? vec2((point.x - point.y) * 0.70710678, (point.x + point.y) * 0.70710678)
+			: point;
+		bool shaft = axisPoint.x > -1.0 && axisPoint.x < 0.62 && abs(axisPoint.y) < 0.075;
+		bool scaleHead = u_shape >= 7 && axisPoint.x > 0.50
+			&& max(abs(axisPoint.x - 0.72), abs(axisPoint.y)) < 0.22;
+		bool arrowHead = u_shape >= 4 && u_shape <= 6 && axisPoint.x > 0.42
+			&& axisPoint.x < 0.92 && abs(axisPoint.y) < (0.92 - axisPoint.x) * 0.72;
+		if (!shaft && !scaleHead && !arrowHead) discard;
+		outColor = abs(axisPoint.y) > 0.04 ? u_border : u_fill;
+		return;
+	}
+	if (u_shape == 3) {
+		if (metric > 1.0 || metric < 0.82) discard;
+		float ringEdge = max(smoothstep(0.82, 0.87, metric), smoothstep(0.94, 1.0, metric));
+		outColor = mix(u_fill, u_border, ringEdge);
+		return;
+	}
 	if (metric > 1.0) discard;
 	float edge = smoothstep(0.72, 0.94, metric);
 	outColor = mix(u_fill, u_border, edge);
@@ -205,7 +238,7 @@ function createMarker(
 			u_offsetCss: { value: new Vector2( offset[ 0 ], offset[ 1 ] ) },
 			u_fill: { value: new Vector4( fill.r, fill.g, fill.b, opacity ) },
 			u_border: { value: new Vector4( border.r, border.g, border.b, opacity ) },
-			u_shape: { value: description.shape === 'circle' ? 0 : description.shape === 'square' ? 1 : 2 },
+			u_shape: { value: markerShapeId( description.shape ) },
 		},
 		vertexShader: VERTEX_SHADER,
 		fragmentShader: FRAGMENT_SHADER,
@@ -226,6 +259,7 @@ function createMarker(
 		handleId: description.handleId,
 		priority: description.priority,
 		pickRadiusCssPixels: description.pickRadiusCssPixels,
+		screenOffsetCssPixels: Object.freeze( [ ...offset ] ),
 	} );
 	return { mesh, description: Object.freeze( { ...description } ) };
 }
@@ -317,6 +351,21 @@ function safeColor( value: string, fallback: string ): Color {
 	const color = new Color();
 	try { color.set( value ); } catch { color.set( fallback ); }
 	return color;
+}
+
+function markerShapeId( shape: ScreenSpaceMarkerDescription[ 'shape' ] ): number {
+	switch ( shape ) {
+		case 'circle': return 0;
+		case 'square': return 1;
+		case 'diamond': return 2;
+		case 'ring': return 3;
+		case 'axis-east': return 4;
+		case 'axis-north': return 5;
+		case 'axis-up': return 6;
+		case 'scale-east': return 7;
+		case 'scale-north': return 8;
+		case 'scale-up': return 9;
+	}
 }
 
 function encodeVector(

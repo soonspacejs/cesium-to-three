@@ -66,7 +66,20 @@ describe( 'ScreenSpaceMarkerLayer', () => {
 		expect( mesh.layers.test( layer.root.layers ) ).toBe( true );
 		expect( mesh.userData.editorPickProxy ).toEqual( {
 			entityId: 'feature-a', handleId: 'vertex:0', priority: 300, pickRadiusCssPixels: 8,
+			screenOffsetCssPixels: [ 0, 0 ],
 		} );
+	} );
+
+	it( '为平移轴、缩放轴和旋转环生成独立 shader 形状', () => {
+		const layer = new ScreenSpaceMarkerLayer( 'plotGizmoRoot', 26 );
+		layer.sync( [
+			{ ...BASE_MARKER, id: 'east', shape: 'axis-east' },
+			{ ...BASE_MARKER, id: 'scale-up', shape: 'scale-up' },
+			{ ...BASE_MARKER, id: 'heading', shape: 'ring' },
+		] );
+		expect( layer.root.children.map( ( child ) =>
+			( child as Mesh<BufferGeometry, RawShaderMaterial> ).material.uniforms.u_shape.value,
+		) ).toEqual( [ 4, 9, 3 ] );
 	} );
 
 	it( '普通遮挡控制点淡化，活动控制点始终置顶可见', () => {
