@@ -32,8 +32,11 @@ export class CircleGeometryAdapter implements GeometryAdapter<CircleDrawingDraft
 		insertVertices: false,
 		removeVertices: false,
 		translate: true,
-		rotateHeading: false,
+		// 圆没有自身 rotation 参数，但组 heading 可旋转其 center 相对 pivot 的位置。
+		rotateHeading: true,
+		rotatePitchRoll: false,
 		scaleHorizontal: true,
+		scaleVertical: false,
 		parameterHandles: Object.freeze( [ 'center', 'radius' ] as const ),
 	} );
 

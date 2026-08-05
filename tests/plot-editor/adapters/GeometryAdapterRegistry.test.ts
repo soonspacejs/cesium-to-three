@@ -8,7 +8,8 @@ function adapter( kind: 'point' | 'line' ): GeometryAdapter {
 		capabilities: {
 			editable: true, editVertices: true, insertVertices: false,
 			removeVertices: false, translate: true, rotateHeading: false,
-			scaleHorizontal: false, parameterHandles: [],
+			rotatePitchRoll: false, scaleHorizontal: false, scaleVertical: false,
+			parameterHandles: [],
 		},
 		begin: () => ( {} as never ), addPoint: () => ( {} as never ),
 		movePointer: () => ( {} as never ), removeLastPoint: () => ( {} as never ),

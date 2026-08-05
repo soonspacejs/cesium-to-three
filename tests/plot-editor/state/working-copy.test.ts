@@ -107,6 +107,26 @@ describe( 'WorkingCopy', () => {
 		expect( document.revision ).toBe( 0 );
 	} );
 
+	it( '批量 preview 任一候选非法时整组保持上一次合法状态', () => {
+		const document = createPlotDocumentStore( {
+			id: 'document', features: [ circle( 'a' ), circle( 'b', 10 ) ],
+		} );
+		const working = new WorkingCopy( document, [ 'a', 'b' ] );
+		expect( working.updateAll( ( current ) => ( {
+			...current,
+			geometry: { ...current.geometry, center: [ 1, 30, 0 ] },
+		} ) ).ok ).toBe( true );
+		const invalid = working.updateAll( ( current, id ) => ( {
+			...current,
+			geometry: { ...current.geometry, radius: id === 'b' ? 0 : 200 },
+		} ) );
+		expect( invalid.ok ).toBe( false );
+		const previews = working.getAll();
+		expect( previews.every( ( feature ) => feature.type === 'circle'
+			&& feature.geometry.radius === 100 ) ).toBe( true );
+		expect( document.revision ).toBe( 0 );
+	} );
+
 	it( '外部 document revision 改变时拒绝提交并关闭候选', () => {
 		const document = createPlotDocumentStore( {
 			id: 'document', features: [ circle( 'a' ), circle( 'external', 10 ) ],

@@ -49,7 +49,9 @@ export class LineGeometryAdapter implements GeometryAdapter<LineDrawingDraft, Li
 		removeVertices: true,
 		translate: true,
 		rotateHeading: true,
+		rotatePitchRoll: true,
 		scaleHorizontal: true,
+		scaleVertical: true,
 		parameterHandles: Object.freeze( [ 'vertex', 'midpoint', 'center', 'rotation' ] as const ),
 	} );
 

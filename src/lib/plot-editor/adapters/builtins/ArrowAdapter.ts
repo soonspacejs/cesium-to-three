@@ -64,7 +64,9 @@ export class ArrowGeometryAdapter implements GeometryAdapter<ArrowDrawingDraft, 
 		removeVertices: true,
 		translate: true,
 		rotateHeading: true,
+		rotatePitchRoll: true,
 		scaleHorizontal: true,
+		scaleVertical: true,
 		parameterHandles: Object.freeze( [ 'vertex', 'midpoint', 'center', 'rotation' ] as const ),
 	} );
 

@@ -92,7 +92,9 @@ export interface GeometryAdapterCapabilities {
 	readonly removeVertices: boolean;
 	readonly translate: boolean;
 	readonly rotateHeading: boolean;
+	readonly rotatePitchRoll: boolean;
 	readonly scaleHorizontal: boolean;
+	readonly scaleVertical: boolean;
 	readonly parameterHandles: readonly EditHandleKind[];
 }
 

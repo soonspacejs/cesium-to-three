@@ -60,7 +60,9 @@ export class TextGeometryAdapter implements GeometryAdapter<TextDrawingDraft, Te
 		removeVertices: false,
 		translate: true,
 		rotateHeading: true,
+		rotatePitchRoll: false,
 		scaleHorizontal: true,
+		scaleVertical: false,
 		parameterHandles: Object.freeze( [ 'text-anchor', 'width', 'height', 'rotation' ] as const ),
 	} );
 

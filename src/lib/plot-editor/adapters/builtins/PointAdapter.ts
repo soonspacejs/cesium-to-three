@@ -44,7 +44,9 @@ export class PointGeometryAdapter implements GeometryAdapter<PointDrawingDraft, 
 		removeVertices: false,
 		translate: true,
 		rotateHeading: true,
+		rotatePitchRoll: false,
 		scaleHorizontal: true,
+		scaleVertical: false,
 		parameterHandles: Object.freeze( [ 'center', 'size', 'width', 'height', 'rotation' ] as const ),
 	} );
 

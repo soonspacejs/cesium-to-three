@@ -16,6 +16,12 @@ export interface WorkingCopyUpdateResult {
 	readonly error?: PlotEditorValidationError;
 }
 
+export interface WorkingCopyBatchUpdateResult {
+	readonly ok: boolean;
+	readonly features?: readonly Readonly<PlotFeature>[];
+	readonly error?: PlotEditorValidationError;
+}
+
 /**
  * 连续交互使用的文档工作副本。
  *
@@ -83,21 +89,7 @@ export class WorkingCopy {
 			} );
 		}
 		try {
-			const candidate = normalizeFeature( producer( current ), {
-				path: `/working/${ id }`,
-			} );
-			if ( candidate.id !== source.id || candidate.type !== source.type ) {
-				throw workingCopyError(
-					'INVALID_COMMAND',
-					'working copy update 不得改变 feature id 或 type。',
-				);
-			}
-			const normalized = candidate.revision === source.revision + 1
-				? candidate
-				: normalizeFeature( {
-					...candidate,
-					revision: source.revision + 1,
-				}, { path: `/working/${ id }` } );
+			const normalized = this._normalizeCandidate( id, source, producer( current ) );
 			this._working.set( id, normalized );
 			return Object.freeze( { ok: true, feature: normalized } );
 		} catch ( error ) {
@@ -108,6 +100,44 @@ export class WorkingCopy {
 					: workingCopyError(
 						'INVALID_COMMAND',
 						error instanceof Error ? error.message : 'working copy update 失败。',
+					),
+			} );
+		}
+	}
+
+	/** 多选预览先全量校验，再一次替换候选；任一失败都不留下半组更新。 */
+	public updateAll(
+		producer: (
+			current: Readonly<PlotFeature>,
+			id: PlotFeatureId,
+		) => unknown,
+	): WorkingCopyBatchUpdateResult {
+		this._assertOpen();
+		try {
+			const candidates = new Map<PlotFeatureId, PlotFeature>();
+			for ( const [ id, current ] of this._working ) {
+				const source = this._source.get( id );
+				if ( source === undefined ) {
+					throw workingCopyError( 'FEATURE_NOT_FOUND', `working copy 不包含 feature：${ id }。` );
+				}
+				candidates.set(
+					id,
+					this._normalizeCandidate( id, source, producer( current, id ) ),
+				);
+			}
+			for ( const [ id, candidate ] of candidates ) this._working.set( id, candidate );
+			return Object.freeze( {
+				ok: true,
+				features: Object.freeze( [ ...candidates.values() ] ),
+			} );
+		} catch ( error ) {
+			return Object.freeze( {
+				ok: false,
+				error: error instanceof PlotEditorValidationError
+					? error
+					: workingCopyError(
+						'INVALID_COMMAND',
+						error instanceof Error ? error.message : 'working copy 批量更新失败。',
 					),
 			} );
 		}
@@ -154,6 +184,26 @@ export class WorkingCopy {
 			...current,
 			features: Object.freeze( features ),
 		} );
+	}
+
+	private _normalizeCandidate(
+		id: PlotFeatureId,
+		source: PlotFeature,
+		input: unknown,
+	): PlotFeature {
+		const candidate = normalizeFeature( input, { path: `/working/${ id }` } );
+		if ( candidate.id !== source.id || candidate.type !== source.type ) {
+			throw workingCopyError(
+				'INVALID_COMMAND',
+				'working copy update 不得改变 feature id 或 type。',
+			);
+		}
+		return candidate.revision === source.revision + 1
+			? candidate
+			: normalizeFeature( {
+				...candidate,
+				revision: source.revision + 1,
+			}, { path: `/working/${ id }` } );
 	}
 
 	private _assertOpen(): void {

@@ -37,7 +37,9 @@ export class SectorGeometryAdapter implements GeometryAdapter<SectorDrawingDraft
 		removeVertices: false,
 		translate: true,
 		rotateHeading: true,
+		rotatePitchRoll: false,
 		scaleHorizontal: true,
+		scaleVertical: false,
 		parameterHandles: Object.freeze( [ 'center', 'radius', 'start-angle', 'end-angle' ] as const ),
 	} );
 
