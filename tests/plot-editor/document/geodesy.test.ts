@@ -5,8 +5,10 @@ import {
 	ecefToEnu,
 	ecefToGeodetic,
 	enuToEcef,
+	geodesicDestination,
 	geodesicDistanceMeters,
 	geodeticToEcef,
+	initialGeodesicBearingDegrees,
 	WGS84_SEMI_MAJOR_AXIS,
 	WGS84_SEMI_MINOR_AXIS,
 } from '../../../src/lib/plot-editor/document/geodesy';
@@ -78,5 +80,21 @@ describe( 'WGS84 地理数学', () => {
 		const distance = geodesicDistanceMeters( [ 0, 0, 0 ], [ 179.999999, 0, 0 ] );
 		expect( Number.isFinite( distance ) ).toBe( true );
 		expect( distance ).toBeGreaterThan( 20_000_000 );
+	} );
+
+	it( 'Vincenty 正解与反解距离/初始方位相互一致', () => {
+		const start: Position3D = [ 116.391, 39.907, 88 ];
+		const destination = geodesicDestination( start, 73, 125_000, 99 );
+		expect( geodesicDistanceMeters( start, destination ) ).toBeCloseTo( 125_000, 5 );
+		expect( initialGeodesicBearingDegrees( start, destination ) ).toBeCloseTo( 73, 7 );
+		expect( destination[ 2 ] ).toBe( 99 );
+	} );
+
+	it( '正解跨日期变更线、近极点仍规范且有限', () => {
+		const acrossIdl = geodesicDestination( [ 179.9, 0, 0 ], 90, 30_000 );
+		expect( acrossIdl[ 0 ] ).toBeLessThan( -179.8 );
+		const polar = geodesicDestination( [ 45, 89.99, 0 ], 0, 5_000 );
+		expect( polar.every( Number.isFinite ) ).toBe( true );
+		expect( polar[ 1 ] ).toBeLessThanOrEqual( 90 );
 	} );
 } );

@@ -236,6 +236,150 @@ export function geodesicDistanceMeters(
 	return WGS84_SEMI_MINOR_AXIS * coefficientA * ( sigma - deltaSigma );
 }
 
+/**
+ * WGS84 椭球测地线初始方位：北为 0°，顺时针为正。
+ * 重合点返回 0；近对跖不收敛时使用确定性的球面短弧方位。
+ */
+export function initialGeodesicBearingDegrees(
+	start: Position3D,
+	end: Position3D,
+): number {
+	const latitude1 = start[ 1 ] * DEGREES_TO_RADIANS;
+	const latitude2 = end[ 1 ] * DEGREES_TO_RADIANS;
+	const [ unwrappedStart, unwrappedEnd ] = unwrapLongitudeDegrees( [ start[ 0 ], end[ 0 ] ] );
+	const longitudeDelta = ( unwrappedEnd - unwrappedStart ) * DEGREES_TO_RADIANS;
+	if ( latitude1 === latitude2 && longitudeDelta === 0 ) return 0;
+	const reducedLatitude1 = Math.atan( ( 1 - WGS84_FLATTENING ) * Math.tan( latitude1 ) );
+	const reducedLatitude2 = Math.atan( ( 1 - WGS84_FLATTENING ) * Math.tan( latitude2 ) );
+	const sinU1 = Math.sin( reducedLatitude1 );
+	const cosU1 = Math.cos( reducedLatitude1 );
+	const sinU2 = Math.sin( reducedLatitude2 );
+	const cosU2 = Math.cos( reducedLatitude2 );
+	let lambda = longitudeDelta;
+	let converged = false;
+	for ( let iteration = 0; iteration < VINCENTY_ITERATION_LIMIT; iteration++ ) {
+		const sinLambda = Math.sin( lambda );
+		const cosLambda = Math.cos( lambda );
+		const sinSigma = Math.hypot(
+			cosU2 * sinLambda,
+			cosU1 * sinU2 - sinU1 * cosU2 * cosLambda,
+		);
+		if ( sinSigma === 0 ) return 0;
+		const cosSigma = sinU1 * sinU2 + cosU1 * cosU2 * cosLambda;
+		const sigma = Math.atan2( sinSigma, cosSigma );
+		const sinAlpha = cosU1 * cosU2 * sinLambda / sinSigma;
+		const cosSqAlpha = 1 - sinAlpha ** 2;
+		const cos2SigmaM = cosSqAlpha === 0
+			? 0
+			: cosSigma - 2 * sinU1 * sinU2 / cosSqAlpha;
+		const coefficient = WGS84_FLATTENING / 16 * cosSqAlpha
+			* ( 4 + WGS84_FLATTENING * ( 4 - 3 * cosSqAlpha ) );
+		const previous = lambda;
+		lambda = longitudeDelta + ( 1 - coefficient ) * WGS84_FLATTENING
+			* sinAlpha * (
+				sigma + coefficient * sinSigma * (
+					cos2SigmaM + coefficient * cosSigma * ( -1 + 2 * cos2SigmaM ** 2 )
+				)
+			);
+		if ( Math.abs( lambda - previous ) <= VINCENTY_CONVERGENCE ) {
+			converged = true;
+			break;
+		}
+	}
+	const bearing = converged
+		? Math.atan2(
+			cosU2 * Math.sin( lambda ),
+			cosU1 * sinU2 - sinU1 * cosU2 * Math.cos( lambda ),
+		)
+		: Math.atan2(
+			Math.sin( longitudeDelta ) * Math.cos( latitude2 ),
+			Math.cos( latitude1 ) * Math.sin( latitude2 )
+				- Math.sin( latitude1 ) * Math.cos( latitude2 ) * Math.cos( longitudeDelta ),
+		);
+	return ( bearing * RADIANS_TO_DEGREES + 360 ) % 360;
+}
+
+/** Vincenty 正解：从 start 沿初始方位前进指定米数。 */
+export function geodesicDestination(
+	start: Position3D,
+	bearingDegrees: number,
+	distanceMeters: number,
+	heightMeters = start[ 2 ],
+): Position3D {
+	if ( ! Number.isFinite( bearingDegrees ) || ! Number.isFinite( distanceMeters )
+		|| distanceMeters < 0 || ! Number.isFinite( heightMeters ) ) {
+		throw new TypeError( '方位、高度必须有限，距离必须是非负有限数。' );
+	}
+	if ( distanceMeters === 0 ) {
+		return normalizePosition( [ start[ 0 ], start[ 1 ], heightMeters ], HeightReference.NONE );
+	}
+	const alpha1 = bearingDegrees * DEGREES_TO_RADIANS;
+	const latitude1 = start[ 1 ] * DEGREES_TO_RADIANS;
+	const longitude1 = start[ 0 ] * DEGREES_TO_RADIANS;
+	const tangentU1 = ( 1 - WGS84_FLATTENING ) * Math.tan( latitude1 );
+	const cosU1 = 1 / Math.sqrt( 1 + tangentU1 ** 2 );
+	const sinU1 = tangentU1 * cosU1;
+	const sinAlpha1 = Math.sin( alpha1 );
+	const cosAlpha1 = Math.cos( alpha1 );
+	const sigma1 = Math.atan2( tangentU1, cosAlpha1 );
+	const sinAlpha = cosU1 * sinAlpha1;
+	const cosSqAlpha = 1 - sinAlpha ** 2;
+	const uSq = cosSqAlpha
+		* ( WGS84_SEMI_MAJOR_AXIS ** 2 - WGS84_SEMI_MINOR_AXIS ** 2 )
+		/ WGS84_SEMI_MINOR_AXIS ** 2;
+	const coefficientA = 1 + uSq / 16_384
+		* ( 4096 + uSq * ( -768 + uSq * ( 320 - 175 * uSq ) ) );
+	const coefficientB = uSq / 1024
+		* ( 256 + uSq * ( -128 + uSq * ( 74 - 47 * uSq ) ) );
+	let sigma = distanceMeters / ( WGS84_SEMI_MINOR_AXIS * coefficientA );
+	for ( let iteration = 0; iteration < VINCENTY_ITERATION_LIMIT; iteration++ ) {
+		const twoSigmaM = 2 * sigma1 + sigma;
+		const sinSigma = Math.sin( sigma );
+		const cosSigma = Math.cos( sigma );
+		const cosTwoSigmaM = Math.cos( twoSigmaM );
+		const deltaSigma = coefficientB * sinSigma * (
+			cosTwoSigmaM + coefficientB / 4 * (
+				cosSigma * ( -1 + 2 * cosTwoSigmaM ** 2 )
+				- coefficientB / 6 * cosTwoSigmaM
+					* ( -3 + 4 * sinSigma ** 2 )
+					* ( -3 + 4 * cosTwoSigmaM ** 2 )
+			)
+		);
+		const next = distanceMeters / ( WGS84_SEMI_MINOR_AXIS * coefficientA ) + deltaSigma;
+		if ( Math.abs( next - sigma ) <= VINCENTY_CONVERGENCE ) {
+			sigma = next;
+			break;
+		}
+		sigma = next;
+	}
+	const sinSigma = Math.sin( sigma );
+	const cosSigma = Math.cos( sigma );
+	const twoSigmaM = 2 * sigma1 + sigma;
+	const temporary = sinU1 * sinSigma - cosU1 * cosSigma * cosAlpha1;
+	const latitude2 = Math.atan2(
+		sinU1 * cosSigma + cosU1 * sinSigma * cosAlpha1,
+		( 1 - WGS84_FLATTENING ) * Math.hypot( sinAlpha, temporary ),
+	);
+	const lambda = Math.atan2(
+		sinSigma * sinAlpha1,
+		cosU1 * cosSigma - sinU1 * sinSigma * cosAlpha1,
+	);
+	const coefficientC = WGS84_FLATTENING / 16 * cosSqAlpha
+		* ( 4 + WGS84_FLATTENING * ( 4 - 3 * cosSqAlpha ) );
+	const longitudeCorrection = lambda - ( 1 - coefficientC ) * WGS84_FLATTENING
+		* sinAlpha * (
+			sigma + coefficientC * sinSigma * (
+				Math.cos( twoSigmaM ) + coefficientC * cosSigma
+					* ( -1 + 2 * Math.cos( twoSigmaM ) ** 2 )
+			)
+		);
+	return normalizePosition( [
+		( longitude1 + longitudeCorrection ) * RADIANS_TO_DEGREES,
+		latitude2 * RADIANS_TO_DEGREES,
+		heightMeters,
+	], HeightReference.NONE );
+}
+
 function dot( left: Vector3Tuple, right: Vector3Tuple ): number {
 	return left[ 0 ] * right[ 0 ] + left[ 1 ] * right[ 1 ] + left[ 2 ] * right[ 2 ];
 }
