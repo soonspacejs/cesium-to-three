@@ -49,8 +49,8 @@ function key(
 describe( 'CommandRouter pointer', () => {
 	it( '绘制 click、move、双击和右键 click 进入统一意图', () => {
 		const router = new CommandRouter( context( { mode: 'draw', interaction: 'drawing' } ) );
-		expect( router.routePointer( pointer( 'down', {}, { gesture: 'pending' } ) )[ 0 ]?.type )
-			.toBe( 'beginDrawingAt' );
+		expect( router.routePointer( pointer( 'down', {}, { gesture: 'pending' } ) ) ).toHaveLength( 0 );
+		expect( router.routePointer( pointer( 'up' ) )[ 0 ]?.type ).toBe( 'beginDrawingAt' );
 		router.setContext( context( { mode: 'draw', interaction: 'drawing', draftPointCount: 1 } ) );
 		expect( router.routePointer( pointer( 'move' ) )[ 0 ] ).toMatchObject( {
 			type: 'updateDraftPointer', screen: { x: 12, y: 34 },
@@ -132,7 +132,7 @@ describe( 'CommandRouter keyboard commands', () => {
 		} ) );
 		expect( router.routeCommand( 'transform.nudgeEast', key( 'ArrowLeft', {
 			modifiers: { ...modifiers, shift: true },
-		} ) ).intents[ 0 ] ).toMatchObject( { axis: 'east', amountMeters: -20, phase: 'keydown' } );
+		} ) ).intents[ 0 ] ).toMatchObject( { axis: 'east', amountMeters: -20, phase: 'keydown', code: 'ArrowLeft' } );
 		expect( router.routeCommand( 'transform.nudgeNorth', key( 'ArrowUp', {
 			phase: 'keyup', modifiers: { ...modifiers, shift: true, alt: true },
 		} ) ).intents[ 0 ] ).toMatchObject( { axis: 'north', amountMeters: 2, phase: 'keyup' } );

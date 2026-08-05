@@ -148,9 +148,7 @@ export class CommandRouter {
 			return Object.freeze( [] );
 		}
 		if ( this._context.interaction === 'drawing' ) {
-			return this._context.draftPointCount === 0
-				? one( { type: 'beginDrawingAt', screen } )
-				: Object.freeze( [] );
+			return Object.freeze( [] );
 		}
 		if ( hit?.kind === 'vertex' || hit?.kind === 'midpoint' || hit?.kind === 'gizmo' ) {
 			return hit.entityId !== undefined && hit.handleId !== undefined
@@ -206,7 +204,9 @@ export class CommandRouter {
 		if ( this._context.interaction === 'drawing' ) {
 			if ( input.button === 'secondary' ) return one( { type: 'commitDrawing' } );
 			if ( input.button === 'primary' && dispatch.owner === 'editor' ) {
-				return one( { type: 'appendDraftPoint', screen } );
+				return this._context.draftPointCount === 0
+					? one( { type: 'beginDrawingAt', screen } )
+					: one( { type: 'appendDraftPoint', screen } );
 			}
 			return Object.freeze( [] );
 		}
@@ -317,7 +317,7 @@ function axisForCode( code: string ): EnuAxis {
 function nudgeIntent(
 	axis: EnuAxis,
 	sign: number,
-	input: Pick<NormalizedKeyboardInput, 'phase' | 'modifiers'>,
+	input: Pick<NormalizedKeyboardInput, 'phase' | 'code' | 'modifiers'>,
 	baseStep: number,
 ): EditorIntent {
 	const multiplier = ( input.modifiers.shift ? 10 : 1 )
@@ -327,6 +327,7 @@ function nudgeIntent(
 		axis,
 		amountMeters: sign * baseStep * multiplier,
 		phase: input.phase,
+		code: input.code,
 	};
 }
 

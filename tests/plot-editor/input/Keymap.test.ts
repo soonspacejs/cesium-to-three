@@ -100,6 +100,14 @@ describe( '默认 EditorKeymap', () => {
 		)?.id ).toBe( 'transform.nudgeEast' );
 	} );
 
+	it( 'held nudge 的 keyup 仍解析为同一 command 以结束合并事务', () => {
+		const keymap = createDefaultEditorKeymap( () => 'consumed' );
+		expect( keymap.resolve(
+			keyEvent( 'ArrowRight', 'ArrowRight', { type: 'keyup' } ),
+			context( { selectionCount: 1, mode: 'transform' } ),
+		)?.id ).toBe( 'transform.nudgeEast' );
+	} );
+
 	it( 'AltGraph、无选择或错误 mode 不误触发', () => {
 		const keymap = createDefaultEditorKeymap( () => 'consumed' );
 		expect( keymap.resolve(

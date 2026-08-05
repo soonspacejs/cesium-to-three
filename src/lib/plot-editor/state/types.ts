@@ -108,6 +108,7 @@ export type EditorIntent =
 		readonly axis: EnuAxis;
 		readonly amountMeters: number;
 		readonly phase: 'keydown' | 'keyup';
+		readonly code: string;
 	}
 	| { readonly type: 'beginTextEdit' }
 	| { readonly type: 'commitTextEdit' }

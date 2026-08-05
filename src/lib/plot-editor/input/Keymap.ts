@@ -70,11 +70,15 @@ export class ConfigurableEditorKeymap implements EditorKeymap {
 				&& ! command.definition.when( context ) ) {
 				return false;
 			}
-			return command.bindings.some( ( stroke ) => matchesStroke(
-				event,
-				context,
-				stroke,
-			) );
+			return command.bindings.some( ( stroke ) => {
+				// held 命令必须收到对应 keyup，状态机才能在最后一键释放时合并提交。
+				const effectiveStroke = event.type === 'keyup'
+					&& repeatPolicy === 'held'
+					&& ( stroke.phase ?? 'keydown' ) === 'keydown'
+					? { ...stroke, phase: 'keyup' as const }
+					: stroke;
+				return matchesStroke( event, context, effectiveStroke );
+			} );
 		} );
 		matches.sort( ( left, right ) =>
 			( right.definition.priority ?? 0 ) - ( left.definition.priority ?? 0 ),
