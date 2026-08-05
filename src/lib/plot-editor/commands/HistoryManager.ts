@@ -108,6 +108,10 @@ export class HistoryManager {
 		return this._redo.length > 0;
 	}
 
+	public get hasActiveTransaction(): boolean {
+		return this._active !== null;
+	}
+
 	public get state(): HistoryState {
 		return Object.freeze( {
 			canUndo: this.canUndo,
