@@ -120,8 +120,28 @@ describe( 'EditorOverlayRenderer', () => {
 			draftFeatures: [],
 		} );
 		expect( cancelled.draft.renderedCount ).toBe( 0 );
-		expect( overlay.plotDraftRoot.children ).toHaveLength( 0 );
+		expect( overlay.plotDraftRoot.children ).toHaveLength( 1 );
+		expect( overlay.plotDraftRoot.children[ 0 ].name ).toBe( 'drawingDraftPreviewRoot' );
 		expect( overlay.plotCommittedRoot.children[ 0 ] ).toBe( committedObject );
+	} );
+
+	it( '直接消费 DrawingSession preview，未达最小拓扑也不伪造 canonical feature', () => {
+		const { overlay } = createRenderer();
+		const result = overlay.sync( {
+			features: [], documentRevision: 0, sessionRevision: 1,
+			drawingDraft: {
+				id: 'drawing-raw', revision: 1, heightReference: HeightReference.NONE, valid: false,
+				preview: {
+					primitive: 'polyline', positions: [ [ 116, 39, 10 ] ],
+					closed: false, sourceType: 'line', generated: false,
+				},
+			},
+		} );
+		expect( result.drawingDraftVisible ).toBe( true );
+		expect( result.draft.renderedCount ).toBe( 0 );
+		expect( overlay.plotDraftRoot.getObjectByName(
+			'EditorMarker:drawing-raw:draft-vertex:0',
+		) ).toBeDefined();
 	} );
 
 	it( '点/文本选择使用独立屏幕反馈，不复制业务内容材质', () => {

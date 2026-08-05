@@ -27,6 +27,10 @@ import {
 	type PlotRenderError,
 	type RenderSyncResult,
 } from './CanonicalPlotRenderBridge';
+import {
+	DrawingDraftLayer,
+	type DrawingDraftOverlay,
+} from './DrawingDraftLayer';
 import { PlotRenderProjection } from './RenderProjection';
 import {
 	ScreenSpaceMarkerLayer,
@@ -67,6 +71,8 @@ export interface EditorOverlaySyncInput {
 	readonly resolved?: ReadonlyMap<PlotFeatureId, ResolvedPlotGeometry>;
 	/** working copy；提交或取消后传空数组即可，不进入 document/history。 */
 	readonly draftFeatures?: readonly Readonly<PlotFeature>[];
+	/** 尚不满足 canonical 最小拓扑的绘制预览。 */
+	readonly drawingDraft?: DrawingDraftOverlay | null;
 	readonly draftValid?: boolean;
 	readonly selection?: SelectionState;
 	/** 只有显式进入 vertex edit 时才显示单图形控制点。 */
@@ -82,6 +88,7 @@ export interface EditorOverlaySyncResult {
 	readonly selection: RenderSyncResult;
 	readonly handleCount: number;
 	readonly gizmoCount: number;
+	readonly drawingDraftVisible: boolean;
 }
 
 /**
@@ -102,6 +109,7 @@ export class EditorOverlayRenderer {
 	private readonly _committed: CanonicalPlotRenderBridge;
 	private readonly _draft: CanonicalPlotRenderBridge;
 	private readonly _selection: CanonicalPlotRenderBridge;
+	private readonly _drawingDraft = new DrawingDraftLayer();
 	private readonly _handles: ScreenSpaceMarkerLayer;
 	private readonly _gizmo: ScreenSpaceMarkerLayer;
 	private readonly _feedbackMarkers: ScreenSpaceMarkerLayer;
@@ -125,6 +133,7 @@ export class EditorOverlayRenderer {
 		this.plotHandleRoot = this._handles.root;
 		this.plotGizmoRoot = this._gizmo.root;
 		this.plotSelectionRoot.add( this._feedbackMarkers.root );
+		this.plotDraftRoot.add( this._drawingDraft.root );
 
 		const projection = new PlotRenderProjection( options.adapters );
 		this._committed = createBridge(
@@ -170,6 +179,7 @@ export class EditorOverlayRenderer {
 			) );
 		const draftResolved = remapResolved( drafts, input.draftFeatures ?? [], resolved );
 		const draft = this._draft.sync( drafts, input.sessionRevision, draftResolved );
+		this._drawingDraft.sync( input.drawingDraft ?? null );
 
 		const selected = selectionState.ids
 			.map( ( id ) => sourceById.get( id ) )
@@ -219,6 +229,7 @@ export class EditorOverlayRenderer {
 			selection,
 			handleCount: this._handles.size,
 			gizmoCount: this._gizmo.size,
+			drawingDraftVisible: this._drawingDraft.visible,
 		} );
 	}
 
@@ -229,6 +240,7 @@ export class EditorOverlayRenderer {
 		this._draft.update( frameState );
 		this._selection.update( frameState );
 		const viewport = markerViewport( frameState );
+		this._drawingDraft.update( frameState, viewport );
 		this._handles.update( viewport );
 		this._gizmo.update( viewport );
 		this._feedbackMarkers.update( viewport );
@@ -248,6 +260,7 @@ export class EditorOverlayRenderer {
 		this._committed.dispose();
 		this._draft.dispose();
 		this._selection.dispose();
+		this._drawingDraft.dispose();
 		this._handles.dispose();
 		this._gizmo.dispose();
 		this._feedbackMarkers.dispose();
