@@ -26,9 +26,18 @@ export interface SelectionFilter {
 
 export type SelectionListener = ( state: SelectionState ) => void;
 
+export interface SelectionModelOptions {
+	/** 外部 feature 替换或拓扑变化后，用 adapter 校验 transient handle 是否仍存在。 */
+	readonly isHandleValid?: (
+		feature: Readonly<PlotFeature>,
+		handleId: string,
+	) => boolean;
+}
+
 /** 确定性的选择集合；选择变化不接触 command history。 */
 export class SelectionModel {
 	private readonly _document: PlotDocument;
+	private readonly _isHandleValid?: SelectionModelOptions[ 'isHandleValid' ];
 	private readonly _listeners = new Set<SelectionListener>();
 	private readonly _unsubscribeDocument: () => void;
 	private _ids: PlotFeatureId[] = [];
@@ -38,8 +47,12 @@ export class SelectionModel {
 	private _hoverTarget: HitTarget | undefined;
 	private _disposed = false;
 
-	public constructor( document: PlotDocument ) {
+	public constructor(
+		document: PlotDocument,
+		options: SelectionModelOptions = {},
+	) {
 		this._document = document;
+		this._isHandleValid = options.isHandleValid;
 		this._unsubscribeDocument = document.subscribe( () => this.reconcile() );
 	}
 
@@ -135,6 +148,11 @@ export class SelectionModel {
 			if ( entityId === undefined || ! this._ids.includes( entityId ) ) {
 				throw new Error( 'active handle 必须属于当前选中实体。' );
 			}
+			const feature = this._document.get( entityId );
+			if ( feature === undefined
+				|| this._isHandleValid?.( feature, handleId ) === false ) {
+				throw new Error( 'active handle 已失效或不属于目标图形。' );
+			}
 		}
 		const previous = this.state;
 		this._activeHandleId = handleId;
@@ -171,6 +189,16 @@ export class SelectionModel {
 			&& ! this._ids.includes( this._activeHandleEntityId ) ) {
 			this._activeHandleId = undefined;
 			this._activeHandleEntityId = undefined;
+		}
+		if ( this._activeHandleEntityId !== undefined
+			&& this._activeHandleId !== undefined
+			&& this._isHandleValid !== undefined ) {
+			const feature = this._document.get( this._activeHandleEntityId );
+			if ( feature === undefined
+				|| ! this._isHandleValid( feature, this._activeHandleId ) ) {
+				this._activeHandleId = undefined;
+				this._activeHandleEntityId = undefined;
+			}
 		}
 		if ( this._hoverTarget?.entityId !== undefined
 			&& ! eligible.has( this._hoverTarget.entityId ) ) {
