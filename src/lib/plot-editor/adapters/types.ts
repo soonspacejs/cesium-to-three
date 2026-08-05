@@ -122,6 +122,8 @@ export interface GeometryAdapter<
 	addPoint( draft: TDraft, point: Position3D, hit?: PlotPickResult ): TDraft;
 	movePointer( draft: TDraft, point: Position3D, hit?: PlotPickResult ): TDraft;
 	removeLastPoint( draft: TDraft ): TDraft;
+	/** 只有 text adapter 实现；内容来自 native/IME editor。 */
+	setText?( draft: TDraft, content: string ): TDraft;
 	validateDraft( draft: TDraft ): DrawingValidation;
 	canFinish( draft: TDraft ): boolean;
 	finish( draft: TDraft, options: FinishFeatureOptions ): TFeature;
