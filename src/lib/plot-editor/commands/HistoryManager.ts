@@ -1,6 +1,7 @@
 import type { PlotDocumentStore } from '../document/PlotDocument';
 import { PlotEditorValidationError } from '../document/diagnostics';
 import type {
+	JsonValue,
 	PlotFeature,
 	PlotFeatureId,
 } from '../document/types';
@@ -42,6 +43,7 @@ interface DocumentState {
 	readonly revision: number;
 	readonly features: ReadonlyMap<PlotFeatureId, PlotFeature>;
 	readonly order: readonly PlotFeatureId[];
+	readonly metadata: Readonly<Record<string, JsonValue>>;
 }
 
 interface HistoryDelta {
@@ -57,6 +59,8 @@ interface HistoryEntry {
 	readonly deltas: readonly HistoryDelta[];
 	readonly orderBefore: readonly PlotFeatureId[];
 	readonly orderAfter: readonly PlotFeatureId[];
+	readonly metadataBefore: Readonly<Record<string, JsonValue>>;
+	readonly metadataAfter: Readonly<Record<string, JsonValue>>;
 	readonly estimatedBytes: number;
 }
 
@@ -226,6 +230,7 @@ export class HistoryManager {
 			label: `取消：${ active.token.label }`,
 			commandType: 'history.rollback',
 			affectedIds: changedIds( active.before, current ),
+			metadata: active.before.metadata,
 		} );
 	}
 
@@ -322,6 +327,7 @@ export class HistoryManager {
 			label,
 			commandType,
 			affectedIds: entry.deltas.map( ( delta ) => delta.id ),
+			metadata: side === 'before' ? entry.metadataBefore : entry.metadataAfter,
 		} );
 	}
 
@@ -366,6 +372,7 @@ function captureState( document: PlotDocumentStore ): DocumentState {
 		revision: document.revision,
 		features: new Map( ordered.map( ( feature ) => [ feature.id, feature ] ) ),
 		order: Object.freeze( ordered.map( ( feature ) => feature.id ) ),
+		metadata: document.snapshot().metadata ?? Object.freeze( {} ),
 	};
 }
 
@@ -400,6 +407,8 @@ function createEntry(
 		deltas,
 		orderBefore: active.before.order,
 		orderAfter: after.order,
+		metadataBefore: active.before.metadata,
+		metadataAfter: after.metadata,
 	} );
 }
 
@@ -412,6 +421,8 @@ function createHistoryEntry(
 		deltas: Object.freeze( [ ...input.deltas ] ),
 		orderBefore: Object.freeze( [ ...input.orderBefore ] ),
 		orderAfter: Object.freeze( [ ...input.orderAfter ] ),
+		metadataBefore: input.metadataBefore,
+		metadataAfter: input.metadataAfter,
 		estimatedBytes,
 	} );
 }
@@ -438,6 +449,8 @@ function mergeEntries( previous: HistoryEntry, next: HistoryEntry ): HistoryEntr
 		} ) ),
 		orderBefore: previous.orderBefore,
 		orderAfter: next.orderAfter,
+		metadataBefore: previous.metadataBefore,
+		metadataAfter: next.metadataAfter,
 	} );
 }
 
@@ -450,6 +463,11 @@ function verifyEntrySide(
 	const currentOrder = document.getAll().map( ( feature ) => feature.id );
 	if ( ! arraysEqual( expectedOrder, currentOrder ) ) {
 		return '当前 document order 与 history 预期不一致。';
+	}
+	const expectedMetadata = side === 'before' ? entry.metadataBefore : entry.metadataAfter;
+	const currentMetadata = document.snapshot().metadata ?? Object.freeze( {} );
+	if ( ! jsonEqual( expectedMetadata, currentMetadata ) ) {
+		return '当前 document metadata 与 history 预期不一致。';
 	}
 	for ( const delta of entry.deltas ) {
 		const expected = delta[ side ];
@@ -465,7 +483,7 @@ function statesEqual( left: DocumentState, right: DocumentState ): boolean {
 	if ( ! arraysEqual( left.order, right.order ) ) {
 		return false;
 	}
-	return left.order.every( ( id ) => featureSidesEqual(
+	return jsonEqual( left.metadata, right.metadata ) && left.order.every( ( id ) => featureSidesEqual(
 		left.features.get( id ) ?? null,
 		right.features.get( id ) ?? null,
 	) );
@@ -511,7 +529,13 @@ function estimateEntryBytes(
 		if ( delta.after !== null ) bytes += JSON.stringify( delta.after ).length * 2;
 	}
 	bytes += ( entry.orderBefore.join( '\0' ).length + entry.orderAfter.join( '\0' ).length ) * 2;
+	bytes += ( JSON.stringify( entry.metadataBefore ).length
+		+ JSON.stringify( entry.metadataAfter ).length ) * 2;
 	return bytes;
+}
+
+function jsonEqual( left: unknown, right: unknown ): boolean {
+	return left === right || JSON.stringify( left ) === JSON.stringify( right );
 }
 
 function arraysEqual<T>( left: readonly T[], right: readonly T[] ): boolean {

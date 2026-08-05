@@ -75,6 +75,26 @@ describe( 'HistoryManager 基本撤销与重做', () => {
 		} ).changed ).toBe( false );
 		expect( history.state.undoCount ).toBe( 0 );
 	} );
+
+	it( 'document.replace 的 metadata 与 feature/order 一样参与 undo/redo', () => {
+		const document = createPlotDocumentStore( {
+			id: 'document', features: [ circle( 'a' ) ], metadata: { phase: 'before' },
+		} );
+		const replacement = createPlotDocumentStore( {
+			id: 'document', features: [ circle( 'b' ) ], metadata: { phase: 'after', count: 2 },
+		} ).snapshot();
+		const executor = new CommandExecutor( document );
+		const history = new HistoryManager( document );
+		expect( history.execute( executor, {
+			type: 'document.replace', snapshot: replacement,
+		} ).ok ).toBe( true );
+		expect( document.snapshot().metadata ).toEqual( { phase: 'after', count: 2 } );
+		history.undo();
+		expect( document.snapshot().metadata ).toEqual( { phase: 'before' } );
+		expect( document.getAll().map( ( item ) => item.id ) ).toEqual( [ 'a' ] );
+		history.redo();
+		expect( document.snapshot().metadata ).toEqual( { phase: 'after', count: 2 } );
+	} );
 } );
 
 describe( '连续事务、回滚与合并', () => {

@@ -46,6 +46,8 @@ export interface DocumentCommit {
 	readonly label: string;
 	readonly commandType: string;
 	readonly affectedIds: readonly PlotFeatureId[];
+	/** 只有 document.replace/import/history 传入；普通 feature 命令保留当前 metadata。 */
+	readonly metadata?: Readonly<Record<string, JsonValue>>;
 }
 
 /**
@@ -60,7 +62,7 @@ export class PlotDocumentStore implements PlotDocument {
 	private _revision: number;
 	private _features: Map<PlotFeatureId, PlotFeature>;
 	private _order: readonly PlotFeatureId[];
-	private readonly _metadata: Readonly<Record<string, JsonValue>>;
+	private _metadata: Readonly<Record<string, JsonValue>>;
 	private readonly _listeners = new Set<PlotDocumentListener>();
 	private readonly _onListenerError: ( error: unknown ) => void;
 
@@ -130,7 +132,13 @@ export class PlotDocumentStore implements PlotDocument {
 	public commitCandidate( commit: DocumentCommit ): boolean {
 		const normalized = normalizeCandidateFeatures( commit.features, this._features );
 		const order = validateOrder( commit.order, normalized );
-		if ( documentsEqual( this._features, this._order, normalized, order ) ) {
+		const metadata = commit.metadata === undefined
+			? this._metadata
+			: normalizeProperties( commit.metadata, '/metadata' );
+		if ( documentsEqual(
+			this._features, this._order, this._metadata,
+			normalized, order, metadata,
+		) ) {
 			return false;
 		}
 		const previousRevision = this._revision;
@@ -138,6 +146,7 @@ export class PlotDocumentStore implements PlotDocument {
 			normalized.map( ( feature ) => [ feature.id, feature ] ),
 		);
 		this._order = order;
+		this._metadata = metadata;
 		this._revision++;
 		const change = Object.freeze( {
 			previousRevision,
@@ -249,14 +258,21 @@ function validateOrder(
 function documentsEqual(
 	current: ReadonlyMap<PlotFeatureId, PlotFeature>,
 	currentOrder: readonly PlotFeatureId[],
+	currentMetadata: Readonly<Record<string, JsonValue>>,
 	next: readonly PlotFeature[],
 	nextOrder: readonly PlotFeatureId[],
+	nextMetadata: Readonly<Record<string, JsonValue>>,
 ): boolean {
 	if ( currentOrder.length !== nextOrder.length
 		|| currentOrder.some( ( id, index ) => id !== nextOrder[ index ] ) ) {
 		return false;
 	}
-	return next.every( ( feature ) => current.get( feature.id ) === feature );
+	return next.every( ( feature ) => current.get( feature.id ) === feature )
+		&& jsonValuesEqual( currentMetadata, nextMetadata );
+}
+
+function jsonValuesEqual( left: unknown, right: unknown ): boolean {
+	return left === right || JSON.stringify( left ) === JSON.stringify( right );
 }
 
 function validateDocumentId( id: unknown ): string {

@@ -10,6 +10,7 @@ import type {
 	LineFeature,
 	PlotFeature,
 	PlotFeatureId,
+	PlotDocumentSnapshot,
 	PolygonFeature,
 	Position3D,
 	VertexId,
@@ -88,6 +89,7 @@ export class CommandExecutor {
 		let next: readonly PlotFeature[];
 		let nextOrder: readonly PlotFeatureId[] = order;
 		let affectedIds: readonly PlotFeatureId[];
+		let nextMetadata: PlotDocumentSnapshot[ 'metadata' ] | undefined;
 
 		switch ( command.type ) {
 			case 'feature.add': {
@@ -179,6 +181,7 @@ export class CommandExecutor {
 				}
 				next = command.snapshot.features;
 				nextOrder = command.snapshot.order;
+				nextMetadata = command.snapshot.metadata ?? Object.freeze( {} );
 				affectedIds = [ ...new Set( [ ...order, ...nextOrder ] ) ];
 				break;
 			}
@@ -192,6 +195,7 @@ export class CommandExecutor {
 			label: commandLabel( command ),
 			commandType: command.type,
 			affectedIds,
+			...( nextMetadata === undefined ? {} : { metadata: nextMetadata } ),
 		} );
 		return this._success( changed, affectedIds, diagnostics );
 	}
