@@ -54,7 +54,7 @@ export interface MarkerViewportState {
 
 interface MarkerEntry {
 	readonly mesh: Mesh<BufferGeometry, RawShaderMaterial>;
-	readonly description: ScreenSpaceMarkerDescription;
+	description: ScreenSpaceMarkerDescription;
 }
 
 const VERTEX_SHADER = /* glsl */ `
@@ -147,13 +147,20 @@ export class ScreenSpaceMarkerLayer {
 	public sync( descriptions: readonly ScreenSpaceMarkerDescription[] ): void {
 		this._assertOpen();
 		const ids = new Set<string>();
+		// 先全量校验，重复 id/非法参数不得造成半批 marker 已替换。
 		for ( const description of descriptions ) {
 			if ( ids.has( description.id ) ) throw new Error( `MARKER_ID_CONFLICT：${ description.id }。` );
 			ids.add( description.id );
 			validateDescription( description );
+		}
+		for ( const description of descriptions ) {
 			const previous = this._entries.get( description.id );
 			if ( previous !== undefined && markerDescriptionsEqual( previous.description, description ) ) {
 				previous.mesh.visible = description.visible;
+				continue;
+			}
+			if ( previous !== undefined && tupleEqual( previous.description.position, description.position ) ) {
+				updateMarkerState( previous, description );
 				continue;
 			}
 			const candidate = createMarker( description, this._layer );
@@ -217,6 +224,31 @@ export class ScreenSpaceMarkerLayer {
 	}
 }
 
+/** hover/active/occluded/style 只是 uniform/状态热更新，不重建 geometry/material。 */
+function updateMarkerState(
+	entry: MarkerEntry,
+	description: ScreenSpaceMarkerDescription,
+): void {
+	const material = entry.mesh.material;
+	const uniforms = material.uniforms;
+	const fill = safeColor( description.fillColor, '#ffffff' );
+	const border = safeColor( description.borderColor, '#111111' );
+	const opacity = description.occluded && ! description.active ? 0.35 : 1;
+	const offset = description.screenOffsetCssPixels ?? [ 0, 0 ];
+	uniforms.u_sizeCss.value = description.sizeCssPixels;
+	uniforms.u_offsetCss.value.set( offset[ 0 ], offset[ 1 ] );
+	uniforms.u_fill.value.set( fill.r, fill.g, fill.b, opacity );
+	uniforms.u_border.value.set( border.r, border.g, border.b, opacity );
+	uniforms.u_shape.value = markerShapeId( description.shape );
+	material.transparent = opacity < 1;
+	material.depthTest = description.active !== true;
+	material.needsUpdate = true;
+	entry.mesh.visible = description.visible;
+	entry.mesh.renderOrder = description.priority;
+	entry.mesh.userData.editorPickProxy = markerPickProxy( description, offset );
+	entry.description = Object.freeze( { ...description } );
+}
+
 function createMarker(
 	description: ScreenSpaceMarkerDescription,
 	layer: number,
@@ -254,14 +286,23 @@ function createMarker(
 	mesh.visible = description.visible;
 	mesh.renderOrder = description.priority;
 	mesh.layers.set( layer );
-	mesh.userData.editorPickProxy = Object.freeze( {
+	mesh.userData.editorPickProxy = markerPickProxy( description, offset );
+	return { mesh, description: Object.freeze( { ...description } ) };
+}
+
+function markerPickProxy(
+	description: ScreenSpaceMarkerDescription,
+	offset: readonly [ number, number ],
+): Readonly<Record<string, unknown>> {
+	return Object.freeze( {
 		entityId: description.entityId,
 		handleId: description.handleId,
 		priority: description.priority,
 		pickRadiusCssPixels: description.pickRadiusCssPixels,
 		screenOffsetCssPixels: Object.freeze( [ ...offset ] ),
+		shape: description.shape,
+		sizeCssPixels: description.sizeCssPixels,
 	} );
-	return { mesh, description: Object.freeze( { ...description } ) };
 }
 
 function markerGeometry( position: Position3D ): BufferGeometry {

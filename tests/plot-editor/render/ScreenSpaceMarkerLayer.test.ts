@@ -67,6 +67,7 @@ describe( 'ScreenSpaceMarkerLayer', () => {
 		expect( mesh.userData.editorPickProxy ).toEqual( {
 			entityId: 'feature-a', handleId: 'vertex:0', priority: 300, pickRadiusCssPixels: 8,
 			screenOffsetCssPixels: [ 0, 0 ],
+			shape: 'circle', sizeCssPixels: 12,
 		} );
 	} );
 
@@ -86,12 +87,18 @@ describe( 'ScreenSpaceMarkerLayer', () => {
 		const layer = new ScreenSpaceMarkerLayer( 'plotHandleRoot', 25 );
 		layer.sync( [ { ...BASE_MARKER, occluded: true } ] );
 		let mesh = onlyMesh( layer );
+		const sameMesh = mesh;
+		const sameGeometry = mesh.geometry;
+		const sameMaterial = mesh.material;
 		expect( mesh.material.uniforms.u_fill.value.w ).toBe( 0.35 );
 		expect( mesh.material.depthTest ).toBe( true );
 		expect( mesh.material.transparent ).toBe( true );
 
 		layer.sync( [ { ...BASE_MARKER, occluded: true, active: true } ] );
 		mesh = onlyMesh( layer );
+		expect( mesh ).toBe( sameMesh );
+		expect( mesh.geometry ).toBe( sameGeometry );
+		expect( mesh.material ).toBe( sameMaterial );
 		expect( mesh.material.uniforms.u_fill.value.w ).toBe( 1 );
 		expect( mesh.material.depthTest ).toBe( false );
 	} );
@@ -114,8 +121,14 @@ describe( 'ScreenSpaceMarkerLayer', () => {
 
 	it( '拒绝重复 id 与非法 viewport；dispose 幂等且禁止再次写入', () => {
 		const layer = new ScreenSpaceMarkerLayer( 'plotHandleRoot', 25 );
-		expect( () => layer.sync( [ BASE_MARKER, BASE_MARKER ] ) ).toThrow( /MARKER_ID_CONFLICT/ );
 		layer.sync( [ BASE_MARKER ] );
+		const previous = onlyMesh( layer );
+		expect( () => layer.sync( [
+			{ ...BASE_MARKER, fillColor: '#ff0000' },
+			BASE_MARKER,
+		] ) ).toThrow( /MARKER_ID_CONFLICT/ );
+		expect( onlyMesh( layer ) ).toBe( previous );
+		expect( previous.material.uniforms.u_fill.value.y ).toBeCloseTo( 1 );
 		expect( () => layer.update( { ...viewport(), widthDevicePixels: 0 } ) ).toThrow( /MARKER_VIEWPORT_INVALID/ );
 		layer.dispose();
 		layer.dispose();
