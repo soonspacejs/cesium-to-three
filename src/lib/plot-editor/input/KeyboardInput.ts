@@ -56,7 +56,9 @@ export class KeyboardInput {
 		this._root.addEventListener( 'keyup', this._onKeyUp, true );
 		this._root.addEventListener( 'compositionstart', this._onCompositionStart, true );
 		this._root.addEventListener( 'compositionend', this._onCompositionEnd, true );
-		this._window.addEventListener( 'blur', this._onBlur, true );
+		// blur 不冒泡；这里监听 window 自身失焦即可。若使用 capture，画布把焦点
+		// 交给原生 textarea 时，元素级 blur 也会被 window 捕获并误取消编辑事务。
+		this._window.addEventListener( 'blur', this._onBlur );
 		this._window.addEventListener( 'pagehide', this._onPageHide, true );
 		this._document.addEventListener( 'visibilitychange', this._onVisibilityChange, true );
 	}
@@ -68,7 +70,7 @@ export class KeyboardInput {
 		this._root.removeEventListener( 'keyup', this._onKeyUp, true );
 		this._root.removeEventListener( 'compositionstart', this._onCompositionStart, true );
 		this._root.removeEventListener( 'compositionend', this._onCompositionEnd, true );
-		this._window.removeEventListener( 'blur', this._onBlur, true );
+		this._window.removeEventListener( 'blur', this._onBlur );
 		this._window.removeEventListener( 'pagehide', this._onPageHide, true );
 		this._document.removeEventListener( 'visibilitychange', this._onVisibilityChange, true );
 		if ( this._originalTabIndex !== undefined ) {
@@ -154,7 +156,11 @@ export class KeyboardInput {
 		this._composing = false;
 	};
 
-	private readonly _onBlur = (): void => this._cancelHeld( 'blur' );
+	private readonly _onBlur = ( event: Event ): void => {
+		// 测试替身可能没有 target；真实 DOM 只接受 window 自身的 blur。
+		if ( event.target !== null && event.target !== undefined && event.target !== this._window ) return;
+		this._cancelHeld( 'blur' );
+	};
 	private readonly _onPageHide = (): void => this._cancelHeld( 'pagehide' );
 	private readonly _onVisibilityChange = (): void => {
 		if ( this._document.visibilityState === 'hidden' ) {

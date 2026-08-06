@@ -199,6 +199,18 @@ describe( '焦点、editable、IME 与 AltGraph', () => {
 } );
 
 describe( '异常清理与生命周期', () => {
+	it( '焦点从画布转入原生输入时不把元素 blur 误判为窗口失焦', () => {
+		const { root, window, input, onCancelHeld } = createInput();
+		input.attach();
+		root.dispatch( 'keydown', event( root, 'F2', 'F2' ) );
+		expect( input.getSnapshot().pressedCodes.has( 'F2' ) ).toBe( true );
+
+		window.dispatch( 'blur', { target: root } );
+
+		expect( input.getSnapshot().pressedCodes.has( 'F2' ) ).toBe( true );
+		expect( onCancelHeld ).not.toHaveBeenCalled();
+	} );
+
 	it.each( [ 'blur', 'pagehide' ] )( '%s 清空 held keys 并通知取消', ( reason ) => {
 		const { root, window, input, onCancelHeld } = createInput();
 		input.attach();
