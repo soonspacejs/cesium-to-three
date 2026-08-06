@@ -1,7 +1,7 @@
 // ============================================================
 // vite.lib.config.ts
 // Library build used for npm publishing. It intentionally exposes only
-// ground and arrow APIs; src/lib/plot stays demo/internal and is not bundled.
+// ground、arrow 与完整 plot-editor API；旧 src/lib/plot 仍保持 demo/internal。
 // ============================================================
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
@@ -19,6 +19,7 @@ export default defineConfig({
                 index: fromRoot('./src/cesium-three-ground.ts'),
                 ground: fromRoot('./src/lib/ground/index.ts'),
                 arrow: fromRoot('./src/lib/arrow/index.ts'),
+                'plot-editor': fromRoot('./src/lib/plot-editor/index.ts'),
             },
             formats: ['es'],
             fileName: function (_format, entryName) { return "".concat(entryName, ".js"); },

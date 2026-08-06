@@ -281,6 +281,17 @@ describe( 'PlotEditor facade', () => {
 		editor.dispose();
 	} );
 
+	it( 'DOM pointer 使用 ECEF/CSS 投影命中 canonical entity 并更新 selection', () => {
+		const { editor, canvas, window } = createEditor( { autoAttachInputs: true } );
+		editor.execute( { type: 'feature.add', feature: point( 'center-point' ) } );
+
+		canvas.dispatch( 'pointerdown', pointerEvent( canvas, window, 0, 'pointerdown' ) );
+		canvas.dispatch( 'pointerup', pointerEvent( canvas, window, 0, 'pointerup' ) );
+
+		expect( [ ...editor.selection ] ).toEqual( [ 'center-point' ] );
+		editor.dispose();
+	} );
+
 	it( 'F2 与 native textarea 经状态机提交中文文本且只形成一次 history', () => {
 		const { editor, root, textareas } = createEditor( { autoAttachInputs: true } );
 		editor.execute( { type: 'feature.add', feature: text( 'label-a' ) } );

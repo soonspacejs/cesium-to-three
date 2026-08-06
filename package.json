@@ -41,6 +41,7 @@
     "type-check": "tsc --noEmit",
     "test:unit": "vitest run tests/ground-material/unit",
     "test:plot-editor": "vitest run --config vitest.plot-editor.config.ts",
+    "test:plot-editor-browser": "playwright test tests/plot-editor/integration",
     "test:integration": "playwright test tests/ground-material/integration",
     "test:visual": "playwright test tests/ground-material/visual",
     "test:perf": "playwright test tests/ground-material/perf",
