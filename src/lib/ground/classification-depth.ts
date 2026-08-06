@@ -67,7 +67,10 @@ import {
 	EllipsoidDepthSource,
 	type EllipsoidDepthSourceOptions,
 } from './ellipsoid-depth-source';
-import { createPackDepthMaterial } from './materials';
+import {
+	configureAnalyticEllipsoidDepthMesh,
+	createPackDepthMaterial,
+} from './materials';
 import {
 	ClassificationType,
 	type CesiumGroundFrameState,
@@ -446,8 +449,8 @@ export class ClassificationDepthManager {
 
 		let fallbackMesh: Mesh | null = null;
 		// 仅当本目标需要兜底、且全局兜底未被关闭时，注入一份 packed 椭球兜底球。
-		// 该网格几何为 WGS84 椭球面；其材质在 packed 通道里会被 globeDepth 的
-		// overrideMaterial 覆盖（createPackDepthMaterial 仅为让网格自洽、零编码风险）。
+		// 该网格是 WGS84 椭球的覆盖代理；其材质在 packed 通道里会被 globeDepth 的
+		// overrideMaterial 覆盖，真实深度由共享材质的解析椭球分支逐片元计算。
 		if ( withFallback && this.fallbackSource !== null ) {
 			fallbackMesh = this.createPackedFallbackMesh();
 			globeDepth.addDepthMesh( fallbackMesh );
@@ -459,23 +462,26 @@ export class ClassificationDepthManager {
 	}
 
 	/**
-	 * 创建一份 packed 椭球兜底球网格（WGS84 椭球面）。
+	 * 创建一份 packed 椭球兜底覆盖代理。
 	 *
 	 * 与 EllipsoidDepthSource / createCesiumEllipsoidDepthMeshes 同口径：
-	 * 单位球绕 X 轴旋 90°（把极轴从 Three 默认 Y 改为 ECEF 的 Z），再缩放到 WGS84
-	 * 三轴半径。frustumCulled 关闭——它横跨整个可见半球。
+	 * 单位球绕 X 轴旋 90°（把极轴从 Three 默认 Y 改为 ECEF 的 Z），mesh scale
+	 * 定义 WGS84 三轴半径；实际深度由片元射线解析求交。frustumCulled 关闭。
 	 *
 	 * @returns packed 兜底网格。
 	 */
 	private createPackedFallbackMesh(): Mesh {
 		const geometry = new SphereGeometry( 1.0, 192, 96 );
 		geometry.rotateX( Math.PI * 0.5 );
-		geometry.scale( WGS84_X_RADIUS, WGS84_Y_RADIUS, WGS84_Z_RADIUS );
 		geometry.computeBoundingSphere();
 
 		const mesh = new Mesh( geometry, createPackDepthMaterial() );
 		mesh.name = 'CesiumClassificationPackedFallbackMesh';
 		mesh.frustumCulled = false;
+		mesh.scale.set( WGS84_X_RADIUS, WGS84_Y_RADIUS, WGS84_Z_RADIUS );
+		mesh.updateMatrix();
+		mesh.updateMatrixWorld( true );
+		configureAnalyticEllipsoidDepthMesh( mesh );
 		return mesh;
 	}
 }

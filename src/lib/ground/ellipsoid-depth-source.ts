@@ -25,13 +25,14 @@
 //   海平面以下以避免与地形 z-fighting。
 //
 //   本移植与 Cesium 的两点差异及理由：
-//     A. 几何用“完整 WGS84 椭球球面”而非 Cesium 的“天际线切平面四边形”。
+//     A. 几何用“完整 WGS84 椭球球面代理”而非 Cesium 的“天际线切平面四边形”。
 //        原因:Cesium 的切平面是“天际线圆所在平面”，其深度在“相机正下方点”处
 //        与真实椭球面相差最大（高轨可达数百 km）。Cesium 能接受这种近似是因为
 //        相机正下方区域总有地形瓦片覆盖并写入精确深度，切平面只在天际线附近
 //        （误差→0）与瓦片缺口处起作用。但本项目的核心诉求恰恰是“完全没有地形”
-//        时（用户俯视标绘，正处于相机正下方）的渲染，切平面在此处最不准。完整
-//        椭球球面在可见半球上逐像素给出精确椭球深度，是无地形场景的正确选择。
+//        时（用户俯视标绘，正处于相机正下方）的渲染，切平面在此处最不准。当前
+//        实现只用粗球面产生覆盖片元，真实 WGS84 深度由片元射线与解析椭球求交，
+//        因而精度不依赖球面分段数。
 //        Cesium 的天际线四边形几何作为可选工具函数保留见
 //        {@link computeEllipsoidLimbQuadPositions}（忠实移植 computeDepthQuad）。
 //     B. 主缓冲兜底材质写 log 深度（czm log-depth），而非朴素 NDC 深度。
@@ -48,11 +49,10 @@
 // ============================================================
 
 import {
-	GLSL3,
 	Mesh,
 	type Object3D,
 	type PerspectiveCamera,
-	RawShaderMaterial,
+	type RawShaderMaterial,
 	type Scene,
 	SphereGeometry,
 } from 'three';
@@ -63,11 +63,12 @@ import {
 	WGS84_Z_RADIUS,
 } from './constants';
 import type { CesiumGlobeDepth } from './depth';
-import { createPackDepthMaterial } from './materials';
 import {
-	terrainLogDepthUniforms,
-	updateTerrainLogDepthUniforms,
-} from './terrain-log-depth';
+	configureAnalyticEllipsoidDepthMesh,
+	createAnalyticEllipsoidMainDepthMaterial,
+	createPackDepthMaterial,
+} from './materials';
+import { updateTerrainLogDepthUniforms } from './terrain-log-depth';
 
 /**
  * 椭球三轴半径（米）。默认取 WGS84。
@@ -91,12 +92,11 @@ const DEFAULT_WGS84_RADII: Readonly<EllipsoidRadii> = {
 /** 构造 {@link EllipsoidDepthSource} 的选项。 */
 export interface EllipsoidDepthSourceOptions {
 	/**
-	 * 椭球球面经度方向分段数。越高越平滑、越贴合真实椭球。默认 192。
-	 * 高分段主要影响几何在天际线处的平滑度；192×96 即可让 14000 km 视高下的
-	 * 天际线无可见多边形棱角。
+	 * 椭球覆盖代理的经度方向分段数。默认 192。分段数只影响天际线轮廓覆盖，
+	 * 片元深度始终由解析椭球求交计算，不以代理三角面作为地表。
 	 */
 	widthSegments?: number;
-	/** 椭球球面纬度方向分段数。默认 96。 */
+	/** 椭球覆盖代理的纬度方向分段数。默认 96。 */
 	heightSegments?: number;
 	/**
 	 * 椭球半径偏移（米），等价于 Cesium DepthPlane 的 `depthPlaneEllipsoidOffset`。
@@ -122,105 +122,6 @@ export interface EllipsoidDepthAttachTarget {
 	 * 在 packed 深度纹理里为 color pass 提供深度。
 	 */
 	globeDepth: CesiumGlobeDepth;
-}
-
-/**
- * 创建“主帧缓冲兜底深度材质”。
- *
- * 与 ./terrain-log-depth.ts 注入瓦片材质的 `TERRAIN_FRAGMENT_WRITE` 同口径:
- * 顶点阶段算出 Cesium 的 `depthFromNearPlusOne`（线性于裁剪空间 w），片元阶段
- * 把它映射到 `log2(depth) / log2(farDepthFromNearPlusOne)` 写入 gl_FragDepth。
- * 这保证兜底椭球面与真实地形瓦片落在“同一 log 深度空间”，stencil 的
- * LESS_OR_EQUAL Z-fail 才能正确比对（见文件头“差异 B”）。
- *
- * 该材质 colorWrite 关闭——它只为深度缓冲服务，不产生任何颜色。out_FragColor
- * 仍需声明并写入（GLSL3 片元着色器要求有输出），但会被 colorWrite=false 屏蔽。
- *
- * 该材质复用 ./terrain-log-depth.ts 的【共享】log-depth uniform 对象引用:瓦片材质
- * （applyCesiumLogDepthToMaterial）用的就是这同一组 {value} 容器，宿主每帧调用
- * updateTerrainLogDepthUniforms（或本源 update()）刷新一次即同步到所有引用方。
- * 这样兜底椭球面与瓦片【逐字节】落在同一 log 深度空间，零漂移风险。
- *
- * @returns 配置好的主缓冲兜底深度 RawShaderMaterial。
- */
-function createEllipsoidMainDepthMaterial(): RawShaderMaterial {
-	const material = new RawShaderMaterial( {
-		glslVersion: GLSL3,
-		// 直接引用共享 uniform 对象（不是拷贝值），与瓦片材质共用同一组容器。
-		uniforms: {
-			// (near, far, 0)；仅用到 .x = near。
-			czm_currentFrustum: terrainLogDepthUniforms.czm_currentFrustum,
-			// (far - near) + 1。
-			czm_farDepthFromNearPlusOne: terrainLogDepthUniforms.czm_farDepthFromNearPlusOne,
-			// 1 / log2((far - near) + 1)，预除避免片元里每像素再做一次 log2 + 除法。
-			czm_oneOverLog2FarDepthFromNearPlusOne:
-				terrainLogDepthUniforms.czm_oneOverLog2FarDepthFromNearPlusOne,
-		},
-		vertexShader: /* glsl */ `
-precision highp float;
-precision highp int;
-
-uniform mat4 modelViewMatrix;
-uniform mat4 projectionMatrix;
-// czm_currentFrustum.x = near 裁剪面（米）。
-uniform vec3 czm_currentFrustum;
-
-in vec3 position;
-
-// Cesium log-depth:把“距近平面的线性深度 + 1”传到片元做 log 编码。
-out float v_depthFromNearPlusOne;
-
-void main() {
-	gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
-
-	// depthFromNearPlusOne = (w - near) + 1。+1 保证 log2 的输入恒 >= 1（log2(1)=0）。
-	v_depthFromNearPlusOne = ( gl_Position.w - czm_currentFrustum.x ) + 1.0;
-
-	// 把裁剪空间 z 钳到 [-w, w]（即 NDC z ∈ [-1,1]），避免几何因后续 gl_FragDepth
-	// 改写而被硬件 near/far 裁剪掉。真正的深度值在片元阶段由 v_depthFromNearPlusOne
-	// 决定，这里的 z 只用于光栅化阶段不被裁剪。
-	gl_Position.z = clamp( gl_Position.z / gl_Position.w, - 1.0, 1.0 ) * gl_Position.w;
-}
-`,
-		fragmentShader: /* glsl */ `
-precision highp float;
-precision highp int;
-
-uniform float czm_farDepthFromNearPlusOne;
-uniform float czm_oneOverLog2FarDepthFromNearPlusOne;
-
-in float v_depthFromNearPlusOne;
-
-// colorWrite=false 会屏蔽颜色输出，但 GLSL3 片元着色器仍需声明一个输出变量。
-out vec4 out_FragColor;
-
-void main() {
-	float depth = v_depthFromNearPlusOne;
-
-	// 与 terrain-log-depth.ts 的 TERRAIN_FRAGMENT_WRITE 完全一致:
-	// 近平面外（depth<=1，即 w<=near）写 0；远平面外写 1；区间内写 log 深度。
-	// 这里用 clamp 语义（写 0/1）而非 discard，让兜底椭球面在近/远边界处仍能
-	// 占据深度，从而正确遮挡。
-	if ( depth <= 1.0 ) {
-		gl_FragDepth = 0.0;
-	} else if ( depth > czm_farDepthFromNearPlusOne ) {
-		gl_FragDepth = 1.0;
-	} else {
-		gl_FragDepth = log2( depth ) * czm_oneOverLog2FarDepthFromNearPlusOne;
-	}
-
-	// 颜色被 colorWrite=false 屏蔽，此处写入仅为满足 GLSL3 片元输出要求。
-	out_FragColor = vec4( 0.0 );
-}
-`,
-		// 只写深度，不写颜色——兜底层不能污染最终画面。
-		colorWrite: false,
-		depthWrite: true,
-		depthTest: true,
-		toneMapped: false,
-	} );
-	material.name = 'EllipsoidFallbackMainDepthMaterial';
-	return material;
 }
 
 // ── computeEllipsoidLimbQuadPositions 的标量 scratch（零 GC）──
@@ -254,7 +155,7 @@ const limbScratch = {
  *   4. 东/北 = 由 Z 轴与 q 叉乘得到的该点切向。
  *   5. 四角 = center ± (东/北)·(wMagnitude/qMagnitude)，再乘回 radii 变换回真实空间。
  *
- * 用途说明:本模块的 {@link EllipsoidDepthSource} 默认使用“完整椭球球面”几何
+ * 用途说明:本模块的 {@link EllipsoidDepthSource} 默认使用“完整椭球球面代理”
  * （见文件头“差异 A”），不调用本函数。本函数作为公开工具忠实保留 Cesium 的
  * 天际线四边形几何，供需要“最小三角形数量兜底面”的高级宿主自行构建深度平面
  * （需自行配合写深度材质与 packed 通道；注意切平面深度在相机正下方点不精确，
@@ -432,7 +333,7 @@ export class EllipsoidDepthSource {
 		geometry.rotateX( Math.PI * 0.5 );
 		geometry.computeBoundingSphere();
 
-		this.mainDepthMaterial = createEllipsoidMainDepthMaterial();
+		this.mainDepthMaterial = createAnalyticEllipsoidMainDepthMaterial();
 
 		this.mainDepthMesh = new Mesh( geometry, this.mainDepthMaterial );
 		this.mainDepthMesh.name = 'EllipsoidFallbackMainDepthMesh';
@@ -440,6 +341,7 @@ export class EllipsoidDepthSource {
 		this.mainDepthMesh.renderOrder = -10000;
 		// 兜底面始终需要参与深度，不能被视锥剔除（它本来就横跨整个可见半球）。
 		this.mainDepthMesh.frustumCulled = false;
+		configureAnalyticEllipsoidDepthMesh( this.mainDepthMesh );
 
 		// packed 网格用独立几何克隆（dispose 各自独立），材质用项目既有的 packed
 		// depth 材质——在 packed 通道里会被 globeDepth.overrideMaterial 覆盖，
@@ -447,6 +349,7 @@ export class EllipsoidDepthSource {
 		this.packedDepthMesh = new Mesh( geometry.clone(), createPackDepthMaterial() );
 		this.packedDepthMesh.name = 'EllipsoidFallbackPackedDepthMesh';
 		this.packedDepthMesh.frustumCulled = false;
+		configureAnalyticEllipsoidDepthMesh( this.packedDepthMesh );
 
 		this.applyScale();
 	}
@@ -523,7 +426,7 @@ export class EllipsoidDepthSource {
 	 * 确保兜底椭球面的 log 深度编码随相机 near/far 正确更新（这正是“纯无地形”场景的
 	 * 关键）。若宿主已为瓦片调用过同一函数，此处为幂等重复（重算同值），无副作用。
 	 *
-	 * 球面几何本身不随相机变化（不像 Cesium 的天际线四边形需要每帧重算顶点），
+	 * 覆盖代理本身不随相机变化（不像 Cesium 的天际线四边形需要每帧重算顶点），
 	 * 故本方法只刷新 uniform。应在 renderer.render 主场景之前调用（通常也在
 	 * globeDepth.render 之前，以便两份深度都用上当帧 near/far）。
 	 *

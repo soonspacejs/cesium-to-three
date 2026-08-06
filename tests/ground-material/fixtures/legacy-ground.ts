@@ -108,7 +108,14 @@ export interface LegacyGroundFixtureApi {
 	measureAppearanceSwitchFrames(): LegacyGroundAppearanceSwitchReport;
 	measureAnimationKeyframes(): LegacyGroundAnimationReport;
 	measureMutationFrames(): LegacyGroundMutationFrameReport;
+	measureEllipsoidCenterDepth( altitudeMeters: number ): LegacyGroundEllipsoidDepthReport;
 	dispose(): LegacyGroundResourceSnapshot;
+}
+
+export interface LegacyGroundEllipsoidDepthReport {
+	packedPixel: [ number, number, number, number ];
+	logDepth: number;
+	reconstructedDistanceMeters: number;
 }
 
 export interface LegacyGroundSkyReport {
@@ -952,6 +959,41 @@ async function createFixture(): Promise<LegacyGroundFixtureApi> {
 					solidToOpenChangedPixels: changedPixels( arrowSolid, arrowOpen ),
 				},
 			};
+		},
+		measureEllipsoidCenterDepth( altitudeMeters: number ) {
+			const savedPosition = camera.position.clone();
+			const savedQuaternion = camera.quaternion.clone();
+			camera.position.copy( anchor ).addScaledVector( up, altitudeMeters );
+			camera.lookAt( anchor );
+			camera.updateMatrixWorld( true );
+			updateTerrainLogDepthUniforms( camera.near, camera.far );
+			globeDepth.render( renderer, camera );
+
+			const pixel = new Uint8Array( 4 );
+			renderer.readRenderTargetPixels(
+				globeDepth.target,
+				Math.floor( WIDTH / 2 ),
+				Math.floor( HEIGHT / 2 ),
+				1,
+				1,
+				pixel,
+			);
+			const packedPixel: [ number, number, number, number ] = [
+				pixel[ 0 ], pixel[ 1 ], pixel[ 2 ], pixel[ 3 ],
+			];
+			const logDepth =
+				pixel[ 0 ] / 255 +
+				pixel[ 1 ] / ( 255 * 255 ) +
+				pixel[ 2 ] / ( 255 * 65025 ) +
+				pixel[ 3 ] / ( 255 * 16581375 );
+			const farDepthFromNearPlusOne = ( camera.far - camera.near ) + 1;
+			const reconstructedDistanceMeters =
+				Math.pow( farDepthFromNearPlusOne, logDepth ) - 1 + camera.near;
+
+			camera.position.copy( savedPosition );
+			camera.quaternion.copy( savedQuaternion );
+			camera.updateMatrixWorld( true );
+			return { packedPixel, logDepth, reconstructedDistanceMeters };
 		},
 		dispose() {
 			if ( disposed ) return snapshotResources();

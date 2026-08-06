@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test( 'matches the immutable pre-Material composite rendering', async ( { page } ) => {
+test( 'matches the deterministic analytic-ellipsoid composite rendering', async ( { page } ) => {
 	await page.goto( '/tests/ground-material/fixtures/legacy-ground.html' );
 	await page.waitForFunction( () => window.__C23_LEGACY_GROUND__?.ready === true );
 

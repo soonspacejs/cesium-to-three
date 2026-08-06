@@ -21,8 +21,6 @@ import {
 	Vector3,
 	WebGLRenderTarget,
 	WebGLRenderer,
-	GLSL3,
-	LessEqualDepth,
 	type PerspectiveCamera,
 } from 'three';
 
@@ -31,8 +29,13 @@ import {
 	WGS84_Y_RADIUS,
 	WGS84_Z_RADIUS,
 } from './constants';
-import { createPackDepthMaterial, ENABLE_LOG_DEPTH } from './materials';
-import { terrainLogDepthUniforms } from './terrain-log-depth';
+import {
+	configureAnalyticEllipsoidDepthMesh,
+	createAnalyticEllipsoidMainDepthMaterial,
+	createPackDepthMaterial,
+	ENABLE_LOG_DEPTH,
+	resetAnalyticEllipsoidDepthMaterial,
+} from './materials';
 
 export interface CesiumGlobeDepthRenderOptions {
 	/**
@@ -184,6 +187,9 @@ export class CesiumGlobeDepth {
 			this.scene.overrideMaterial = previousFallbackOverride;
 		}
 
+		// 兜底 mesh 的 onBeforeRender 会把共享材质切到解析椭球模式；真实
+		// terrain/tiles 必须在自己的 draw 前恢复普通几何深度。
+		resetAnalyticEllipsoidDepthMaterial( this.packDepthMaterial );
 		sourceScene.overrideMaterial = this.packDepthMaterial;
 		renderer.render( sourceScene, camera );
 		sourceScene.overrideMaterial = previousOverrideMaterial;
@@ -255,56 +261,9 @@ export function createCesiumEllipsoidDepthMeshes(
 ): { mainDepthMesh: Mesh; packedDepthMesh: Mesh } {
 	const geometry = new SphereGeometry( 1.0, widthSegments, heightSegments );
 	geometry.rotateX( Math.PI * 0.5 );
-	geometry.scale( WGS84_X_RADIUS, WGS84_Y_RADIUS, WGS84_Z_RADIUS );
 	geometry.computeBoundingSphere();
 
-	const mainMaterial = new RawShaderMaterial( {
-		glslVersion: GLSL3,
-		uniforms: {
-			czm_currentFrustum: terrainLogDepthUniforms.czm_currentFrustum,
-			czm_farDepthFromNearPlusOne: terrainLogDepthUniforms.czm_farDepthFromNearPlusOne,
-			czm_oneOverLog2FarDepthFromNearPlusOne:
-				terrainLogDepthUniforms.czm_oneOverLog2FarDepthFromNearPlusOne,
-		},
-		vertexShader: /* glsl */ `
-precision highp float;
-precision highp int;
-uniform mat4 modelViewMatrix;
-uniform mat4 projectionMatrix;
-uniform vec3 czm_currentFrustum;
-in vec3 position;
-out float v_depthFromNearPlusOne;
-void main() {
-	gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-	v_depthFromNearPlusOne = ( gl_Position.w - czm_currentFrustum.x ) + 1.0;
-	gl_Position.z = clamp( gl_Position.z / gl_Position.w, - 1.0, 1.0 ) * gl_Position.w;
-}
-`,
-		fragmentShader: /* glsl */ `
-precision highp float;
-precision highp int;
-uniform float czm_farDepthFromNearPlusOne;
-uniform float czm_oneOverLog2FarDepthFromNearPlusOne;
-in float v_depthFromNearPlusOne;
-out vec4 out_FragColor;
-void main() {
-	float depth = v_depthFromNearPlusOne;
-	if ( depth <= 1.0 ) {
-		gl_FragDepth = 0.0;
-	} else if ( depth > czm_farDepthFromNearPlusOne ) {
-		gl_FragDepth = 1.0;
-	} else {
-		gl_FragDepth = log2( depth ) * czm_oneOverLog2FarDepthFromNearPlusOne;
-	}
-	out_FragColor = vec4(0.0);
-}
-`,
-		colorWrite: false,
-		depthWrite: true,
-		depthTest: true,
-		depthFunc: LessEqualDepth,
-		toneMapped: false,
-	} );
+	const mainMaterial = createAnalyticEllipsoidMainDepthMaterial();
 	mainMaterial.name = 'CesiumEllipsoidMainDepthMaterial';
 
 	const mainDepthMesh = new Mesh( geometry, mainMaterial );
@@ -314,10 +273,18 @@ void main() {
 	// instead of pre-emptively occluding real tile fragments.
 	mainDepthMesh.renderOrder = 5;
 	mainDepthMesh.frustumCulled = false;
+	mainDepthMesh.scale.set( WGS84_X_RADIUS, WGS84_Y_RADIUS, WGS84_Z_RADIUS );
+	mainDepthMesh.updateMatrix();
+	mainDepthMesh.updateMatrixWorld( true );
+	configureAnalyticEllipsoidDepthMesh( mainDepthMesh );
 
 	const packedDepthMesh = new Mesh( geometry.clone(), createPackDepthMaterial() );
 	packedDepthMesh.name = 'CesiumEllipsoidPackedDepthMesh';
 	packedDepthMesh.frustumCulled = false;
+	packedDepthMesh.scale.copy( mainDepthMesh.scale );
+	packedDepthMesh.updateMatrix();
+	packedDepthMesh.updateMatrixWorld( true );
+	configureAnalyticEllipsoidDepthMesh( packedDepthMesh );
 
 	return { mainDepthMesh, packedDepthMesh };
 }
