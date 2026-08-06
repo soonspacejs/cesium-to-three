@@ -104,6 +104,7 @@ export type {
 
 export {
 	ConfigurableEditorKeymap,
+	createEditorKeymap,
 	createDefaultEditorKeymap,
 } from './input/Keymap';
 export { GlobeControlsNavigationAdapter } from './input/NavigationAdapter';
@@ -111,6 +112,7 @@ export type {
 	CommandContext,
 	EditorCommandDefinition,
 	EditorKeymap,
+	EditorKeymapOverrides,
 	FocusDomain,
 	KeyboardCommandResult,
 	KeyboardStateSnapshot,

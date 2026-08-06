@@ -2,6 +2,7 @@ import type {
 	CommandContext,
 	EditorCommandDefinition,
 	EditorKeymap,
+	EditorKeymapOverrides,
 	KeyboardCommandResult,
 	KeymapConflict,
 	KeyStroke,
@@ -125,6 +126,23 @@ export type DefaultKeymapExecutor = (
 	context: CommandContext,
 ) => KeyboardCommandResult;
 
+/** 创建完整默认表，或在默认表上应用宿主提供的部分覆盖。 */
+export function createEditorKeymap(
+	execute: DefaultKeymapExecutor,
+	configuration?: EditorKeymap | EditorKeymapOverrides,
+): EditorKeymap {
+	if ( configuration !== undefined && isEditorKeymap( configuration ) ) return configuration;
+	const keymap = createDefaultEditorKeymap( execute );
+	if ( configuration === undefined ) return keymap;
+	for ( const [ commandId, bindings ] of Object.entries( configuration ) ) {
+		keymap.unbind( commandId );
+		if ( bindings !== null && bindings !== undefined ) {
+			for ( const stroke of bindings ) keymap.bind( commandId, stroke );
+		}
+	}
+	return keymap;
+}
+
 /** 创建设计文档锁定的 v1 默认键位矩阵。 */
 export function createDefaultEditorKeymap(
 	execute: DefaultKeymapExecutor,
@@ -185,6 +203,13 @@ export function createDefaultEditorKeymap(
 		command( 'text.cancel', 'text-edit', [ { key: 'Escape' } ],
 			( context ) => context.mode === 'text-edit', 'never', 110 ),
 	] );
+}
+
+function isEditorKeymap( value: EditorKeymap | EditorKeymapOverrides ): value is EditorKeymap {
+	return typeof ( value as EditorKeymap ).bind === 'function'
+		&& typeof ( value as EditorKeymap ).unbind === 'function'
+		&& typeof ( value as EditorKeymap ).resolve === 'function'
+		&& typeof ( value as EditorKeymap ).validate === 'function';
 }
 
 function matchesStroke(

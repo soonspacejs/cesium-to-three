@@ -173,6 +173,11 @@ export interface EditorKeymap {
 	validate(): readonly KeymapConflict[];
 }
 
+/** 对默认键位的部分覆盖；未列出的命令保留默认绑定。 */
+export type EditorKeymapOverrides = Readonly<
+	Record<string, readonly KeyStroke[] | null | undefined>
+>;
+
 export interface NormalizedKeyboardInput {
 	readonly phase: KeyPhase;
 	readonly key: string;

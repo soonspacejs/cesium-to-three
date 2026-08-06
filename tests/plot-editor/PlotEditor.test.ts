@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { PlotEditor } from '../../src/lib/plot-editor/PlotEditor';
 import { HeightReference } from '../../src/lib/plot-editor/document/types';
 import { normalizeFeature } from '../../src/lib/plot-editor/document/validate';
-import type { NavigationAdapter, NavigationLease } from '../../src/lib/plot-editor/input/types';
+import type {
+	EditorKeymapOverrides,
+	NavigationAdapter,
+	NavigationLease,
+} from '../../src/lib/plot-editor/input/types';
 
 class FakeEventHub {
 	public readonly listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
@@ -121,7 +125,11 @@ function point( id: string ) {
 	} );
 }
 
-function createEditor( options: { autoAttachInputs?: boolean; pick?: () => any } = {} ) {
+function createEditor( options: {
+	autoAttachInputs?: boolean;
+	pick?: () => any;
+	keymap?: EditorKeymapOverrides;
+} = {} ) {
 	const { root, canvas, window, textareas } = createDom();
 	const scene = new Group();
 	const camera = new PerspectiveCamera( 60, 4 / 3, 1, 1e8 );
@@ -146,6 +154,7 @@ function createEditor( options: { autoAttachInputs?: boolean; pick?: () => any }
 		},
 		surfacePicker: { pick: options.pick ?? ( () => null ) },
 		cameraController: navigation,
+		keymap: options.keymap,
 		autoAttachInputs: options.autoAttachInputs ?? false,
 	} );
 	return { editor, scene, requestRender, navigation, canvas, window, root, textareas };
@@ -232,6 +241,25 @@ describe( 'PlotEditor facade', () => {
 		expect( documentChanges ).toHaveBeenCalledTimes( 3 );
 		expect( historyChanges ).toHaveBeenCalledTimes( 3 );
 		expect( selectionChanges ).toHaveBeenCalled();
+		editor.dispose();
+	} );
+
+	it( 'facade 的部分 keymap 覆盖保留未修改的默认命令', () => {
+		const { editor, root } = createEditor( {
+			autoAttachInputs: true,
+			keymap: { 'document.save': [ { key: 'p', primary: true } ] },
+		} );
+		const save = vi.fn();
+		editor.addEventListener( 'saverequest', save );
+		editor.execute( { type: 'feature.add', feature: point( 'keymap-point' ) } );
+		editor.focus();
+
+		root.dispatch( 'keydown', keyboardEvent( root, 'Control', 'ControlLeft' ) );
+		root.dispatch( 'keydown', keyboardEvent( root, 'p', 'KeyP', true ) );
+		root.dispatch( 'keydown', keyboardEvent( root, 's', 'KeyS', true ) );
+		expect( save ).toHaveBeenCalledOnce();
+		root.dispatch( 'keydown', keyboardEvent( root, 'z', 'KeyZ', true ) );
+		expect( editor.document.has( 'keymap-point' ) ).toBe( false );
 		editor.dispose();
 	} );
 

@@ -36,8 +36,8 @@ import {
 	type PlotEditorEventType,
 	type PlotEditorMode,
 } from './events';
-import type { EditorKeymap, NavigationAdapter } from './input/types';
-import { createDefaultEditorKeymap } from './input/Keymap';
+import type { EditorKeymap, EditorKeymapOverrides, NavigationAdapter } from './input/types';
+import { createEditorKeymap } from './input/Keymap';
 import { KeyboardInput } from './input/KeyboardInput';
 import { PointerInput } from './input/PointerInput';
 import { CommandRouter, type RouterContext } from './input/CommandRouter';
@@ -105,7 +105,7 @@ export interface PlotEditorOptions {
 	readonly surfacePicker: PlotSurfacePicker;
 	readonly surfaceProvider?: PlotSurfaceHeightProvider;
 	readonly cameraController: NavigationAdapter;
-	readonly keymap?: EditorKeymap;
+	readonly keymap?: EditorKeymap | EditorKeymapOverrides;
 	readonly idGenerator?: () => PlotFeatureId;
 	readonly requestSave?: ( snapshot: PlotDocumentSnapshot ) => void | Promise<void>;
 	readonly historyLimits?: HistoryLimits;
@@ -268,8 +268,9 @@ export class PlotEditor {
 			this._selectionModel.state,
 		);
 		this._router = new CommandRouter( this._createRouterContext() );
-		const keymap = options.keymap ?? createDefaultEditorKeymap(
+		const keymap = createEditorKeymap(
 			( id, context ) => this._router.canExecuteCommand( id, context ),
+			options.keymap,
 		);
 		this._keyboard = new KeyboardInput( {
 			root: options.root,

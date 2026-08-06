@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
 	ConfigurableEditorKeymap,
+	createEditorKeymap,
 	createDefaultEditorKeymap,
 } from '../../../src/lib/plot-editor/input/Keymap';
 import type {
@@ -136,6 +137,21 @@ describe( '默认 EditorKeymap', () => {
 
 	it( '默认矩阵不同 scope 的复用键位没有启动冲突', () => {
 		expect( createDefaultEditorKeymap( () => 'ignored' ).validate() ).toEqual( [] );
+	} );
+
+	it( '部分覆盖只替换指定 command，其他默认键位继续可用', () => {
+		const keymap = createEditorKeymap( () => 'consumed', {
+			'document.save': [ { key: 'p', primary: true } ],
+		} );
+		const primaryContext = context( {
+			keyboard: keyboard( { primary: true, ctrl: true } ),
+		} );
+		expect( keymap.resolve( keyEvent( 'p', 'KeyP' ), primaryContext )?.id )
+			.toBe( 'document.save' );
+		expect( keymap.resolve( keyEvent( 's', 'KeyS' ), primaryContext ) )
+			.toBeUndefined();
+		expect( keymap.resolve( keyEvent( 'z', 'KeyZ' ), primaryContext )?.id )
+			.toBe( 'history.undo' );
 	} );
 } );
 
