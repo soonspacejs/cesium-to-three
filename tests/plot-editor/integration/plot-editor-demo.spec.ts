@@ -15,6 +15,7 @@ interface DemoEditorApi {
 	readonly editor: {
 		readonly mode: string;
 		readonly selection: ReadonlySet<string>;
+		readonly selectionState: { readonly activeHandleId?: string };
 		readonly document: {
 			readonly revision: number;
 			get( id: string ): Readonly<PlotFeature> | undefined;
@@ -25,7 +26,6 @@ interface DemoEditorApi {
 		select( ids: Iterable<string> ): void;
 		enterVertexEdit( id: string ): void;
 		focus(): void;
-		readonly _vertexEditId?: string;
 		readonly _pointer: { readonly activePointerId: number | null };
 		_createProjectionSnapshot(): {
 			project( position: readonly [ number, number, number ] ): {
@@ -162,40 +162,96 @@ test( '绘制、历史、原生文本和键盘变换形成完整浏览器闭环'
 	expect( browserErrors ).toEqual( [] );
 } );
 
+test( '八类图形经 DOM pointer 采点后均由键盘完成提交', async ( { page } ) => {
+	const browserErrors = collectBrowserErrors( page );
+	await openDemo( page );
+	const canvas = await page.locator( 'canvas' ).boundingBox();
+	if ( canvas === null ) throw new Error( 'Plot demo canvas 不可见。' );
+	const at = ( x: number, y: number ) => ( {
+		x: canvas.x + canvas.width * 0.5 + x,
+		y: canvas.y + canvas.height * 0.5 + y,
+	} );
+	const cases = [
+		{ type: 'point', points: [ at( -80, -45 ) ] },
+		{ type: 'line', points: [ at( -60, -20 ), at( -20, -35 ) ] },
+		{ type: 'polygon', points: [ at( 0, -30 ), at( 38, -20 ), at( 20, 12 ) ] },
+		{ type: 'rectangle', points: [ at( -45, 5 ), at( -10, 35 ) ] },
+		{ type: 'circle', points: [ at( 20, 30 ), at( 48, 30 ) ] },
+		{ type: 'sector', points: [ at( 65, 5 ), at( 90, 5 ), at( 65, -20 ) ] },
+		{ type: 'arrow', points: [ at( -90, 55 ), at( -45, 60 ) ] },
+		{ type: 'text', points: [ at( 65, 55 ) ] },
+	] as const;
+
+	for ( const item of cases ) {
+		const countBefore = await page.evaluate( () => window.__plotDemo!.editor.document.getAll().length );
+		await page.evaluate( ( type ) => {
+			window.__plotDemo!.editor.activateTool( type );
+			window.__plotDemo!.editor.focus();
+		}, item.type );
+		for ( const point of item.points ) await page.mouse.click( point.x, point.y );
+		if ( item.type === 'text' ) {
+			const textarea = page.locator( 'textarea[data-plot-editor-native-input]' );
+			await expect( textarea ).toHaveCount( 1 );
+			await textarea.fill( '八类键盘完成' );
+			await textarea.press( 'Control+Enter' );
+		} else {
+			await page.keyboard.press( 'Enter' );
+		}
+		await expect.poll( () => snapshot( page ) ).toMatchObject( {
+			count: countBefore + 1,
+			mode: 'select',
+		} );
+	}
+
+	const createdTypes = await page.evaluate( () => window.__plotDemo!.editor.document.getAll()
+		.slice( 8 ).map( ( feature ) => feature.type ) );
+	expect( createdTypes ).toEqual( cases.map( ( item ) => item.type ) );
+	expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) ).toBe( 8 );
+	expect( browserErrors ).toEqual( [] );
+} );
+
 test( '控制点拖拽只更新图形，且相机姿态保持不变', async ( { page } ) => {
 	const browserErrors = collectBrowserErrors( page );
 	const handle = await prepareLineVertexEdit( page );
 	const initialVertex = await firstVertexPosition( page, 'demo-line' );
 	const initialRevision = await page.evaluate( () => window.__plotDemo!.editor.document.revision );
-	const cameraBeforeHandleDrag = await cameraPose( page );
 	await page.mouse.move( handle.x, handle.y );
+	await page.evaluate( () => { window.__plotDemo!.controls.enabled = true; } );
+	const cameraBeforeHandleDrag = await cameraPose( page );
 	await page.mouse.down();
 	await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( false );
+	await expect.poll( () => page.evaluate(
+		() => window.__plotDemo!.editor.selectionState.activeHandleId,
+	) ).toBe( 'vertex:0' );
 	await page.mouse.move( handle.x + 24, handle.y + 8, { steps: 4 } );
 	await page.mouse.up();
 	await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( true );
-	await expect.poll( () => firstVertexPosition( page, 'demo-line' ) ).not.toEqual( initialVertex );
-	expectPoseEqual( await cameraPose( page ), cameraBeforeHandleDrag );
-	expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
+	await page.evaluate( () => { window.__plotDemo!.controls.enabled = false; } );
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
 		.toBe( initialRevision + 1 );
+	expect( await linePositions( page, 'demo-line' ) ).not.toContainEqual( initialVertex );
+	expectPoseEqual( await cameraPose( page ), cameraBeforeHandleDrag );
 	expect( browserErrors ).toEqual( [] );
 } );
 
 test( 'Space 从控制点起步时只导航相机，不修改图形', async ( { page } ) => {
+	test.slow();
 	const browserErrors = collectBrowserErrors( page );
 	const handle = await prepareLineVertexEdit( page );
 	// Space 必须在 pointerdown 前固定 owner；即使从 handle 起步也只允许相机响应。
 	const vertexBeforeNavigation = await firstVertexPosition( page, 'demo-line' );
 	const revisionBeforeNavigation = await page.evaluate( () => window.__plotDemo!.editor.document.revision );
+	await page.mouse.move( handle.x, handle.y );
+	await page.evaluate( () => { window.__plotDemo!.controls.enabled = true; } );
 	const cameraBeforeNavigation = await cameraPose( page );
 	await page.keyboard.down( 'Space' );
-	await page.mouse.move( handle.x, handle.y );
 	await page.mouse.down();
 	expect( await page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( true );
 	await page.mouse.move( handle.x + 36, handle.y + 18, { steps: 5 } );
 	await page.mouse.up();
 	await page.keyboard.up( 'Space' );
 	await expect.poll( () => cameraPose( page ) ).not.toEqual( cameraBeforeNavigation );
+	await page.evaluate( () => { window.__plotDemo!.controls.enabled = false; } );
 	expect( await firstVertexPosition( page, 'demo-line' ) ).toEqual( vertexBeforeNavigation );
 	expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
 		.toBe( revisionBeforeNavigation );
@@ -212,8 +268,12 @@ for ( const [ label, reason ] of [
 		const vertexBefore = await firstVertexPosition( page, 'demo-line' );
 		const revisionBefore = await page.evaluate( () => window.__plotDemo!.editor.document.revision );
 		await page.mouse.move( handle.x, handle.y );
+		await page.evaluate( () => { window.__plotDemo!.controls.enabled = true; } );
 		await page.mouse.down();
 		await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( false );
+		await expect.poll( () => page.evaluate(
+			() => window.__plotDemo!.editor.selectionState.activeHandleId,
+		) ).toBe( 'vertex:0' );
 		await page.mouse.move( handle.x + 28, handle.y - 10, { steps: 4 } );
 		if ( reason === 'blur' ) {
 			await page.evaluate( () => window.dispatchEvent( new Event( 'blur' ) ) );
@@ -231,6 +291,7 @@ for ( const [ label, reason ] of [
 			} );
 		}
 		await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( true );
+		await page.evaluate( () => { window.__plotDemo!.controls.enabled = false; } );
 		expect( await firstVertexPosition( page, 'demo-line' ) ).toEqual( vertexBefore );
 		expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
 			.toBe( revisionBefore );
@@ -271,19 +332,20 @@ async function snapshot( page: Page ): Promise<{
 async function prepareLineVertexEdit( page: Page ): Promise<{ x: number; y: number }> {
 	await openDemo( page );
 	await page.evaluate( () => {
-		window.__plotDemo!.controls.enabled = true;
 		window.__plotDemo!.editor.enterVertexEdit( 'demo-line' );
 	} );
-	await expect.poll( () => page.evaluate( () => window.__plotDemo!.editor._vertexEditId ) )
-		.toBe( 'demo-line' );
 	return firstVertexProjection( page, 'demo-line' );
 }
 
 async function firstVertexPosition( page: Page, id: string ): Promise<number[]> {
+	return ( await linePositions( page, id ) )[ 0 ];
+}
+
+async function linePositions( page: Page, id: string ): Promise<number[][]> {
 	return page.evaluate( ( featureId ) => {
 		const feature = window.__plotDemo!.editor.document.get( featureId );
 		if ( feature?.type !== 'line' ) throw new Error( `${ featureId } 不是 line。` );
-		return [ ...feature.geometry.positions[ 0 ] ];
+		return feature.geometry.positions.map( ( position ) => [ ...position ] );
 	}, id );
 }
 
