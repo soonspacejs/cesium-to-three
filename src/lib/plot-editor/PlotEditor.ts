@@ -278,7 +278,14 @@ export class PlotEditor {
 		);
 		this._router = new CommandRouter( this._createRouterContext() );
 		const keymap = createEditorKeymap(
-			( id, context ) => this._router.canExecuteCommand( id, context ),
+			( id, context ) => {
+				const result = this._router.canExecuteCommand( id, context );
+				if ( id === 'document.save' && result === 'blocked'
+					&& ! this._hasSaveHandler() ) {
+					this._reportMissingSaveHandler();
+				}
+				return result;
+			},
 			options.keymap,
 		);
 		this._keyboard = new KeyboardInput( {
@@ -306,7 +313,7 @@ export class PlotEditor {
 		} );
 		this._unsubscribers.push(
 			this._keyboard.subscribe( ( input ) => {
-				if ( input.commandId === undefined || input.commandResult === 'ignored' ) return;
+				if ( input.commandId === undefined || input.commandResult !== 'consumed' ) return;
 				const routed = this._router.routeCommand( input.commandId, input );
 				for ( const intent of routed.intents ) this._dispatch( intent );
 			} ),
@@ -489,6 +496,10 @@ export class PlotEditor {
 
 	public requestSave(): void {
 		this._assertOpen();
+		if ( ! this._hasSaveHandler() ) {
+			this._reportMissingSaveHandler();
+			return;
+		}
 		const snapshot = this._store.snapshot();
 		this._events.dispatch( 'saverequest', { snapshot, revision: snapshot.revision } );
 		void this._save?.request( snapshot ).catch( ( error ) => this._reportError(
@@ -501,6 +512,7 @@ export class PlotEditor {
 		listener: PlotEditorEventListener<K>,
 	): void {
 		this._events.addEventListener( type, listener );
+		if ( type === 'saverequest' ) this._refreshDerivedState();
 	}
 
 	public removeEventListener<K extends PlotEditorEventType>(
@@ -508,6 +520,7 @@ export class PlotEditor {
 		listener: PlotEditorEventListener<K>,
 	): void {
 		this._events.removeEventListener( type, listener );
+		if ( type === 'saverequest' && ! this._disposed ) this._refreshDerivedState();
 	}
 
 	public dispose(): void {
@@ -1092,6 +1105,7 @@ export class PlotEditor {
 				? { transformAxis: interaction.axis }
 				: {} ),
 			clampToSurface: selectedFeatures.some( ( feature ) => isClampReference( feature.heightReference ) ),
+			saveHandlerAvailable: this._hasSaveHandler(),
 			nudgeStepMeters: 1,
 		} );
 	}
@@ -1277,6 +1291,17 @@ export class PlotEditor {
 				message: detail instanceof Error ? `${ message } ${ detail.message }` : message,
 			} ),
 		} );
+	}
+
+	private _hasSaveHandler(): boolean {
+		return this._save !== undefined || this._events.hasListeners( 'saverequest' );
+	}
+
+	private _reportMissingSaveHandler(): void {
+		this._reportError(
+			'SAVE_HANDLER_MISSING',
+			'未配置保存回调，也没有 saverequest 事件监听器。',
+		);
 	}
 
 	private _assertOpen(): void {

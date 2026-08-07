@@ -16,7 +16,8 @@ function context( patch: Partial<RouterContext> = {} ): RouterContext {
 	return {
 		lifecycle: 'ready', mode: 'select', interaction: 'idle',
 		draftPointCount: 0, draftRedoCount: 0, selectionCount: 0, selectedText: false,
-		transformSupportsScale: true, clampToSurface: false, nudgeStepMeters: 1,
+		transformSupportsScale: true, clampToSurface: false,
+		saveHandlerAvailable: true, nudgeStepMeters: 1,
 		...patch,
 	};
 }
@@ -148,6 +149,17 @@ describe( 'CommandRouter keyboard commands', () => {
 		expect( router.routeCommand( 'transform.scale', key( 'KeyS' ) ).result ).toBe( 'blocked' );
 		expect( router.routeCommand( 'text.beginEdit', key( 'F2' ) ).result ).toBe( 'blocked' );
 		expect( router.routeCommand( 'unknown', key( 'KeyQ' ) ).result ).toBe( 'blocked' );
+	} );
+
+	it( '缺少宿主保存处理器时 save 命令 blocked', () => {
+		const router = new CommandRouter( context( { saveHandlerAvailable: false } ) );
+		expect( router.canExecuteCommand( 'document.save', {
+			focus: 'canvas', mode: 'select', transaction: 'none', selectionCount: 0,
+			keyboard: {} as never,
+		} ) ).toBe( 'blocked' );
+		expect( router.routeCommand( 'document.save', key( 'KeyS' ) ) ).toMatchObject( {
+			result: 'blocked', intents: [],
+		} );
 	} );
 
 	it( 'active transaction 阻止全局 undo，outside 焦点 ignored', () => {

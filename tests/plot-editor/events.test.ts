@@ -35,14 +35,18 @@ describe( 'PlotEditorEventDispatcher', () => {
 	it( 'remove 与 dispose 幂等，销毁后不再分发', () => {
 		const dispatcher = new PlotEditorEventDispatcher();
 		const listener = vi.fn();
+		expect( dispatcher.hasListeners( 'historystatechange' ) ).toBe( false );
 		dispatcher.addEventListener( 'historystatechange', listener );
+		expect( dispatcher.hasListeners( 'historystatechange' ) ).toBe( true );
 		dispatcher.removeEventListener( 'historystatechange', listener );
+		expect( dispatcher.hasListeners( 'historystatechange' ) ).toBe( false );
 		dispatcher.dispatch( 'historystatechange', {
 			canUndo: false, canRedo: false, undoCount: 0, redoCount: 0, estimatedBytes: 0,
 		} );
 		expect( listener ).not.toHaveBeenCalled();
 		dispatcher.dispose();
 		dispatcher.dispose();
+		expect( dispatcher.hasListeners( 'historystatechange' ) ).toBe( false );
 		expect( () => dispatcher.addEventListener( 'historystatechange', listener ) ).toThrow( /已销毁/ );
 	} );
 } );

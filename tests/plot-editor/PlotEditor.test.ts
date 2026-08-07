@@ -1,6 +1,6 @@
 import { Group, PerspectiveCamera, Texture } from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import { PlotEditor } from '../../src/lib/plot-editor/PlotEditor';
+import { PlotEditor, type PlotEditorOptions } from '../../src/lib/plot-editor/PlotEditor';
 import { HeightReference } from '../../src/lib/plot-editor/document/types';
 import { normalizeFeature } from '../../src/lib/plot-editor/document/validate';
 import type {
@@ -130,6 +130,7 @@ function createEditor( options: {
 	pick?: () => any;
 	keymap?: EditorKeymapOverrides;
 	idGenerator?: () => string;
+	requestSave?: PlotEditorOptions[ 'requestSave' ];
 } = {} ) {
 	const { root, canvas, window, document, textareas } = createDom();
 	const scene = new Group();
@@ -157,6 +158,7 @@ function createEditor( options: {
 		cameraController: navigation,
 		keymap: options.keymap,
 		idGenerator: options.idGenerator,
+		requestSave: options.requestSave,
 		autoAttachInputs: options.autoAttachInputs ?? false,
 	} );
 	return {
@@ -264,6 +266,60 @@ describe( 'PlotEditor facade', () => {
 		expect( save ).toHaveBeenCalledOnce();
 		root.dispatch( 'keydown', keyboardEvent( root, 'z', 'KeyZ', true ) );
 		expect( editor.document.has( 'keymap-point' ) ).toBe( false );
+		editor.dispose();
+	} );
+
+	it( 'Primary+S 缺少宿主处理器时 blocked 并报告稳定诊断', () => {
+		const { editor, root } = createEditor( { autoAttachInputs: true } );
+		const validation = vi.fn();
+		editor.addEventListener( 'validationerror', validation );
+		editor.focus();
+
+		root.dispatch( 'keydown', keyboardEvent( root, 'Control', 'ControlLeft' ) );
+		const saveKey = keyboardEvent( root, 's', 'KeyS', true );
+		root.dispatch( 'keydown', saveKey );
+
+		expect( saveKey.preventDefault ).toHaveBeenCalledOnce();
+		expect( saveKey.stopPropagation ).toHaveBeenCalledOnce();
+		expect( validation ).toHaveBeenCalledOnce();
+		expect( validation.mock.calls[ 0 ]?.[ 0 ] ).toMatchObject( {
+			diagnostic: { code: 'SAVE_HANDLER_MISSING', severity: 'error' },
+		} );
+		editor.dispose();
+	} );
+
+	it( 'requestSave 回调与 saverequest 事件共享同一 revision 快照', () => {
+		const requestSave = vi.fn();
+		const { editor } = createEditor( { requestSave } );
+		const saveEvent = vi.fn();
+		editor.addEventListener( 'saverequest', saveEvent );
+		editor.execute( { type: 'feature.add', feature: point( 'save-point' ) } );
+
+		editor.requestSave();
+
+		expect( saveEvent ).toHaveBeenCalledOnce();
+		expect( saveEvent.mock.calls[ 0 ]?.[ 0 ] ).toMatchObject( { revision: 1 } );
+		expect( requestSave ).toHaveBeenCalledOnce();
+		expect( requestSave.mock.calls[ 0 ]?.[ 0 ] ).toEqual(
+			saveEvent.mock.calls[ 0 ]?.[ 0 ].snapshot,
+		);
+		editor.dispose();
+	} );
+
+	it( '移除最后一个 saverequest listener 后直接保存报告处理器缺失', () => {
+		const { editor } = createEditor();
+		const save = vi.fn();
+		const validation = vi.fn();
+		editor.addEventListener( 'saverequest', save );
+		editor.addEventListener( 'validationerror', validation );
+		editor.removeEventListener( 'saverequest', save );
+
+		editor.requestSave();
+
+		expect( save ).not.toHaveBeenCalled();
+		expect( validation.mock.calls[ 0 ]?.[ 0 ] ).toMatchObject( {
+			diagnostic: { code: 'SAVE_HANDLER_MISSING' },
+		} );
 		editor.dispose();
 	} );
 

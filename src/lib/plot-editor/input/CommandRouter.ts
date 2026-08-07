@@ -34,6 +34,7 @@ export interface RouterContext {
 	readonly transformSupportsScale: boolean;
 	readonly transformAxis?: EnuAxis;
 	readonly clampToSurface: boolean;
+	readonly saveHandlerAvailable: boolean;
 	readonly nudgeStepMeters: number;
 }
 
@@ -283,7 +284,7 @@ export class CommandRouter {
 				? context.draftRedoCount > 0
 				: ! hasActiveTransaction( context.interaction );
 			case 'selection.selectAll': return context.mode === 'select';
-			case 'document.save': return true;
+			case 'document.save': return context.saveHandlerAvailable;
 			case 'transform.translate':
 			case 'transform.rotate': return context.selectionCount > 0
 				&& ( context.mode === 'select' || context.mode === 'transform' );

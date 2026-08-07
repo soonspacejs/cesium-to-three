@@ -108,6 +108,11 @@ export class PlotEditorEventDispatcher {
 		this._listeners.get( type )?.delete( listener as ( event: never ) => void );
 	}
 
+	/** 供 facade 判断可选宿主协议是否已有消费者，不暴露 listener 集合。 */
+	public hasListeners( type: PlotEditorEventType ): boolean {
+		return ! this._disposed && ( this._listeners.get( type )?.size ?? 0 ) > 0;
+	}
+
 	public dispatch<K extends PlotEditorEventType>(
 		type: K,
 		event: Omit<PlotEditorEventMap[ K ], 'type'>,
