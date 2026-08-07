@@ -31,6 +31,7 @@ interface DemoEditorApi {
 		};
 		activateTool( tool: string ): void;
 		clearSelection(): void;
+		dispose(): void;
 		select( ids: Iterable<string> ): void;
 		enterVertexEdit( id: string ): void;
 		focus(): void;
@@ -342,6 +343,7 @@ test( 'Space 从控制点起步时只导航相机，不修改图形', async ( { 
 
 for ( const [ label, reason ] of [
 	[ 'window blur', 'blur' ],
+	[ 'document hidden', 'hidden' ],
 	[ 'lostpointercapture', 'lost-capture' ],
 ] as const ) {
 	test( `${ label } 回滚控制点 working copy 并恢复相机`, async ( { page } ) => {
@@ -359,6 +361,14 @@ for ( const [ label, reason ] of [
 		await page.mouse.move( handle.x + 28, handle.y - 10, { steps: 4 } );
 		if ( reason === 'blur' ) {
 			await page.evaluate( () => window.dispatchEvent( new Event( 'blur' ) ) );
+		} else if ( reason === 'hidden' ) {
+			await page.evaluate( () => {
+				Object.defineProperty( document, 'visibilityState', {
+					configurable: true,
+					value: 'hidden',
+				} );
+				document.dispatchEvent( new Event( 'visibilitychange' ) );
+			} );
 		} else {
 			await page.evaluate( () => {
 				const editor = window.__plotDemo!.editor;
@@ -381,6 +391,27 @@ for ( const [ label, reason ] of [
 		expect( browserErrors ).toEqual( [] );
 	} );
 }
+
+test( 'active drag 中 dispose 回滚 working copy 并恢复相机', async ( { page } ) => {
+	const browserErrors = collectBrowserErrors( page );
+	const handle = await prepareLineVertexEdit( page );
+	const vertexBefore = await firstVertexPosition( page, 'demo-line' );
+	const revisionBefore = await page.evaluate( () => window.__plotDemo!.editor.document.revision );
+	await page.mouse.move( handle.x, handle.y );
+	await page.evaluate( () => { window.__plotDemo!.controls.enabled = true; } );
+	await page.mouse.down();
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( false );
+	await page.mouse.move( handle.x + 28, handle.y - 10, { steps: 4 } );
+
+	await page.evaluate( () => window.__plotDemo!.editor.dispose() );
+
+	expect( await page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( true );
+	expect( await firstVertexPosition( page, 'demo-line' ) ).toEqual( vertexBefore );
+	expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
+		.toBe( revisionBefore );
+	await page.mouse.up();
+	expect( browserErrors ).toEqual( [] );
+} );
 
 function collectBrowserErrors( page: Page ): string[] {
 	const errors: string[] = [];
