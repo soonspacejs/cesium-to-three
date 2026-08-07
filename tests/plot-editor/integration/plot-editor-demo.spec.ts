@@ -40,6 +40,7 @@ interface DemoEditorApi {
 			readonly session: {
 				readonly mode: string;
 				readonly axis?: string;
+				readonly pivot: { readonly position: Position3D };
 			} | null;
 		};
 		_createProjectionSnapshot(): {
@@ -367,6 +368,55 @@ test( '贴地多选的 G/R/S、轴约束和一次撤销保持三元作者高度'
 	expect( browserErrors ).toEqual( [] );
 } );
 
+test( '贴地多选的 translate、heading 与 uniform Gizmo 拖拽均原子提交', async ( { page } ) => {
+	const browserErrors = collectBrowserErrors( page );
+	await openDemo( page );
+	const ids = [ 'demo-point', 'demo-circle' ];
+	await page.evaluate( ( selectedIds ) => {
+		window.__plotDemo!.editor.select( selectedIds );
+		window.__plotDemo!.editor.focus();
+	}, ids );
+	const cases = [
+		{ key: 'g', handleId: 'translate:east' },
+		{ key: 'r', handleId: 'rotate:heading' },
+		{ key: 's', handleId: 'scale:uniform' },
+	] as const;
+
+	for ( const item of cases ) {
+		const before = await page.evaluate( ( selectedIds ) => selectedIds.map(
+			( id ) => window.__plotDemo!.editor.document.get( id ),
+		), ids );
+		const revisionBefore = await page.evaluate( () => window.__plotDemo!.editor.document.revision );
+		await page.keyboard.press( item.key );
+		const target = await gizmoHandleTarget( page, item.handleId );
+		await page.mouse.move( target.x, target.y );
+		await page.evaluate( () => { window.__plotDemo!.controls.enabled = true; } );
+		const cameraBefore = await cameraPose( page );
+		await page.mouse.down();
+		await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( false );
+		await page.mouse.move( target.x + 22, target.y + 6, { steps: 4 } );
+		await page.mouse.up();
+		await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( true );
+		await page.evaluate( () => { window.__plotDemo!.controls.enabled = false; } );
+		await expect.poll( () => page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
+			.toBe( revisionBefore + 1 );
+		const changed = await page.evaluate( ( selectedIds ) => selectedIds.map(
+			( id ) => window.__plotDemo!.editor.document.get( id ),
+		), ids );
+		expect( changed ).not.toEqual( before );
+		expect( authorHeights( changed ) ).toEqual( [ 0, 0 ] );
+		expectPoseEqual( await cameraPose( page ), cameraBefore );
+
+		await page.keyboard.press( 'Control+z' );
+		await expect.poll( () => page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
+			.toBe( revisionBefore + 2 );
+		expect( await page.evaluate( ( selectedIds ) => selectedIds.map(
+			( id ) => window.__plotDemo!.editor.document.get( id ),
+		), ids ) ).toEqual( before );
+	}
+	expect( browserErrors ).toEqual( [] );
+} );
+
 test( '控制点拖拽只更新图形，且相机姿态保持不变', async ( { page } ) => {
 	const browserErrors = collectBrowserErrors( page );
 	const handle = await prepareLineVertexEdit( page );
@@ -581,6 +631,35 @@ async function gizmoMarkerNames( page: Page ): Promise<string[]> {
 	return page.evaluate( () => window.__plotDemo!.scene
 		.getObjectByName( 'plotGizmoRoot' )?.children
 		.map( ( child ) => ( child as { name?: string } ).name ?? '' ) ?? [] );
+}
+
+async function gizmoHandleTarget(
+	page: Page,
+	handleId: string,
+): Promise<{ x: number; y: number }> {
+	return page.evaluate( ( id ) => {
+		const demo = window.__plotDemo!;
+		const session = demo.editor._transform.session;
+		if ( session === null ) throw new Error( '缺少活动 Gizmo session。' );
+		const projected = demo.editor._createProjectionSnapshot().project( session.pivot.position );
+		if ( projected === null || ! projected.visible ) throw new Error( 'Gizmo pivot 不可见。' );
+		const marker = demo.scene.getObjectByName( 'plotGizmoRoot' )?.children.find(
+			( child ) => ( child as { name?: string } ).name === `EditorMarker:gizmo:${ id }`,
+		) as {
+			userData?: { editorPickProxy?: {
+				shape?: string;
+				sizeCssPixels?: number;
+				screenOffsetCssPixels?: readonly [ number, number ];
+			} };
+		} | undefined;
+		const proxy = marker?.userData?.editorPickProxy;
+		if ( proxy === undefined ) throw new Error( `Gizmo handle ${ id } 不存在。` );
+		if ( proxy.shape === 'ring' ) {
+			return { x: projected.x + ( proxy.sizeCssPixels ?? 0 ) / 2, y: projected.y };
+		}
+		const offset = proxy.screenOffsetCssPixels ?? [ 0, 0 ];
+		return { x: projected.x + offset[ 0 ], y: projected.y + offset[ 1 ] };
+	}, handleId );
 }
 
 function authorHeights( features: readonly ( Readonly<PlotFeature> | undefined )[] ): number[] {
