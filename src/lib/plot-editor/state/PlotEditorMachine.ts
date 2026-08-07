@@ -206,6 +206,7 @@ export type EditorEffect =
 		readonly type: 'BEGIN_TRANSACTION';
 		readonly transaction: EditorTransactionState;
 		readonly selectedIds: readonly PlotFeatureId[];
+		readonly transformMode?: TransformMode;
 		readonly entityId?: PlotFeatureId;
 		readonly handleId?: string;
 	}
@@ -819,6 +820,7 @@ function beginTransform( state: EditorState, mode: TransformMode ): EditorTransi
 	} ), {
 		type: 'BEGIN_TRANSACTION', transaction: begun.transaction,
 		selectedIds: Object.freeze( [ ...state.selection.ids ] ),
+		transformMode: mode,
 	} );
 }
 

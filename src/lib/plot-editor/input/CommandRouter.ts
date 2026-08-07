@@ -10,6 +10,7 @@ import type {
 	HitTarget,
 	ScreenPoint,
 	SelectionOperation,
+	TransformMode,
 } from '../state/types';
 
 export type RouterInteraction =
@@ -32,8 +33,9 @@ export interface RouterContext {
 	readonly selectedText: boolean;
 	readonly pendingHit?: HitTarget;
 	readonly transformSupportsScale: boolean;
+	readonly transformMode?: TransformMode;
 	readonly transformAxis?: EnuAxis;
-	readonly clampToSurface: boolean;
+	readonly transformAxisEnabled: Readonly<Record<EnuAxis, boolean>>;
 	readonly saveHandlerAvailable: boolean;
 	readonly nudgeStepMeters: number;
 }
@@ -247,9 +249,9 @@ export class CommandRouter {
 			case 'transform.scale': return { type: 'beginTransform', mode: 'scale' };
 			case 'transform.constrainAxis': {
 				const axis = axisForCode( input.code );
-				return axis === 'up' && this._context.clampToSurface
-					? null
-					: { type: 'constrainTransform', axis };
+				return this._context.transformAxisEnabled[ axis ]
+					? { type: 'constrainTransform', axis }
+					: null;
 			}
 			case 'transform.nudgeEast': return nudgeIntent(
 				'east', input.code === 'ArrowLeft' ? -1 : 1, input, this._context.nudgeStepMeters,
@@ -291,11 +293,14 @@ export class CommandRouter {
 			case 'transform.scale': return context.selectionCount > 0
 				&& context.transformSupportsScale
 				&& ( context.mode === 'select' || context.mode === 'transform' );
-			case 'transform.constrainAxis': return context.interaction === 'transforming';
-			case 'transform.nudgeEast':
-			case 'transform.nudgeNorth': return context.interaction === 'transforming';
+			case 'transform.constrainAxis': return context.interaction === 'transforming'
+				&& Object.values( context.transformAxisEnabled ).some( Boolean );
+			case 'transform.nudgeEast': return context.interaction === 'transforming'
+				&& context.transformMode === 'translate' && context.transformAxisEnabled.east;
+			case 'transform.nudgeNorth': return context.interaction === 'transforming'
+				&& context.transformMode === 'translate' && context.transformAxisEnabled.north;
 			case 'transform.nudgeUp': return context.interaction === 'transforming'
-				&& ! context.clampToSurface;
+				&& context.transformMode === 'translate' && context.transformAxisEnabled.up;
 			case 'text.beginEdit': return context.selectionCount === 1 && context.selectedText;
 			case 'text.commit':
 			case 'text.cancel': return context.interaction === 'text-editing';
@@ -346,6 +351,7 @@ function freezeContext( context: RouterContext ): RouterContext {
 	}
 	return Object.freeze( {
 		...context,
+		transformAxisEnabled: Object.freeze( { ...context.transformAxisEnabled } ),
 		...( context.pendingHit === undefined
 			? {}
 			: { pendingHit: Object.freeze( { ...context.pendingHit } ) } ),

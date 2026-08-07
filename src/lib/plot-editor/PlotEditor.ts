@@ -21,7 +21,6 @@ import type {
 	Position3D,
 	ResolvedPlotGeometry,
 } from './document/types';
-import { HeightReference as HeightReferenceValue } from './document/types';
 import { createEnuFrame, ecefToEnu, geodeticToEcef } from './document/geodesy';
 import {
 	PlotDrawingController,
@@ -91,7 +90,8 @@ import {
 import type { HitTarget, ScreenPoint, TransformMode } from './state/types';
 import { EnuTransformController } from './transform/EnuTransformController';
 import { createEnuFeatureTransform } from './transform/feature-transform';
-import type { TransformPreview } from './transform/types';
+import { getSelectionGizmoCapabilities } from './transform/gizmo';
+import type { GizmoCapabilities, TransformPreview } from './transform/types';
 
 export interface EditorRenderHost {
 	readonly scene: Object3D;
@@ -283,6 +283,8 @@ export class PlotEditor {
 				if ( id === 'document.save' && result === 'blocked'
 					&& ! this._hasSaveHandler() ) {
 					this._reportMissingSaveHandler();
+				} else if ( id.startsWith( 'transform.' ) && result === 'blocked' ) {
+					this._reportBlockedTransformCommand( id );
 				}
 				return result;
 			},
@@ -315,6 +317,12 @@ export class PlotEditor {
 			this._keyboard.subscribe( ( input ) => {
 				if ( input.commandId === undefined || input.commandResult !== 'consumed' ) return;
 				const routed = this._router.routeCommand( input.commandId, input );
+				if ( routed.result === 'blocked' ) {
+					if ( input.commandId.startsWith( 'transform.' ) ) {
+						this._reportBlockedTransformCommand( input.commandId );
+					}
+					return;
+				}
 				for ( const intent of routed.intents ) this._dispatch( intent );
 			} ),
 			this._pointer.subscribe( ( dispatch ) => this._onPointerDispatch( dispatch ) ),
@@ -802,7 +810,10 @@ export class PlotEditor {
 			this._vertexEditId = effect.entityId;
 			ok = this._shapeEditor.begin( effect.entityId, effect.handleId ).ok;
 		} else {
-			ok = this._beginTransformController( 'translate', effect.selectedIds );
+			ok = this._beginTransformController(
+				effect.transformMode ?? 'translate',
+				effect.selectedIds,
+			);
 		}
 		if ( ok && start !== undefined ) {
 			const feature = effect.entityId === undefined
@@ -1081,6 +1092,8 @@ export class PlotEditor {
 			.map( ( id ) => this._store.get( id ) )
 			.filter( ( feature ): feature is Readonly<PlotFeature> => feature !== undefined );
 		const routerInteraction = routerInteractionForState( interaction.kind );
+		const transformMode = interaction.kind === 'transforming' ? interaction.mode : undefined;
+		const gizmoCapabilities = getSelectionGizmoCapabilities( selectedFeatures, this._adapters );
 		return Object.freeze( {
 			lifecycle: this._state.lifecycle,
 			mode: interaction.kind === 'transforming'
@@ -1101,10 +1114,14 @@ export class PlotEditor {
 			transformSupportsScale: selectedFeatures.length > 0 && selectedFeatures.every(
 				( feature ) => this._adapters.require( feature.type ).capabilities.scaleHorizontal,
 			),
+			...( transformMode === undefined ? {} : { transformMode } ),
 			...( interaction.kind === 'transforming' && interaction.axis !== undefined
 				? { transformAxis: interaction.axis }
 				: {} ),
-			clampToSurface: selectedFeatures.some( ( feature ) => isClampReference( feature.heightReference ) ),
+			transformAxisEnabled: routerTransformAxisCapabilities(
+				transformMode,
+				gizmoCapabilities,
+			),
 			saveHandlerAvailable: this._hasSaveHandler(),
 			nudgeStepMeters: 1,
 		} );
@@ -1304,6 +1321,13 @@ export class PlotEditor {
 		);
 	}
 
+	private _reportBlockedTransformCommand( commandId: string ): void {
+		this._reportError(
+			'TRANSFORM_CAPABILITY_BLOCKED',
+			`当前选择不支持键盘变换命令 ${ commandId }。`,
+		);
+	}
+
 	private _assertOpen(): void {
 		if ( this._disposed ) throw new Error( 'PlotEditor 已销毁。' );
 	}
@@ -1399,10 +1423,26 @@ function routerInteractionForState(
 	return kind;
 }
 
-function isClampReference( value: HeightReference ): boolean {
-	return value === HeightReferenceValue.CLAMP_TO_GROUND
-		|| value === HeightReferenceValue.CLAMP_TO_TERRAIN
-		|| value === HeightReferenceValue.CLAMP_TO_3D_TILE;
+function routerTransformAxisCapabilities(
+	mode: TransformMode | undefined,
+	capabilities: GizmoCapabilities,
+): Readonly<Record<'east' | 'north' | 'up', boolean>> {
+	if ( mode === 'translate' ) return Object.freeze( {
+		east: capabilities.translateEast,
+		north: capabilities.translateNorth,
+		up: capabilities.translateUp,
+	} );
+	if ( mode === 'rotate' ) return Object.freeze( {
+		east: capabilities.rotatePitch,
+		north: capabilities.rotateRoll,
+		up: capabilities.rotateHeading,
+	} );
+	if ( mode === 'scale' ) return Object.freeze( {
+		east: capabilities.scaleHorizontal,
+		north: capabilities.scaleHorizontal,
+		up: capabilities.scaleVertical,
+	} );
+	return Object.freeze( { east: false, north: false, up: false } );
 }
 
 function detailMessage( detail: unknown, fallback: string ): string {

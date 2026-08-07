@@ -310,7 +310,9 @@ describe( 'PlotEditorMachine selection and transactions', () => {
 		let transition = step( ready( [ 'a' ] ), { type: 'beginTransform', mode: 'translate' } );
 		let state = transition.state;
 		const transactionId = state.activeTransaction?.id as string;
-		expect( transition.effects[ 0 ]?.type ).toBe( 'BEGIN_TRANSACTION' );
+		expect( transition.effects[ 0 ] ).toMatchObject( {
+			type: 'BEGIN_TRANSACTION', transformMode: 'translate',
+		} );
 		transition = step( state, { type: 'beginTransform', mode: 'rotate' } );
 		state = transition.state;
 		expect( transition.effects ).toEqual( [] );

@@ -323,6 +323,53 @@ describe( 'PlotEditor facade', () => {
 		editor.dispose();
 	} );
 
+	it( '贴地选择按 G/R/S 模式精确门禁 X/Y/Z 并报告 blocked 诊断', () => {
+		const { editor, root } = createEditor( { autoAttachInputs: true } );
+		const clampPoint = normalizeFeature( {
+			...point( 'clamp-axis' ),
+			heightReference: HeightReference.CLAMP_TO_GROUND,
+		} );
+		editor.execute( { type: 'feature.add', feature: clampPoint } );
+		editor.select( [ clampPoint.id ] );
+		const diagnostics: string[] = [];
+		editor.addEventListener( 'validationerror', ( event ) => {
+			diagnostics.push( event.diagnostic.code );
+		} );
+		editor.focus();
+		const transformSession = () => ( editor as unknown as {
+			_transform: { session: { axis?: string; mode: string } | null };
+		} )._transform.session;
+
+		root.dispatch( 'keydown', keyboardEvent( root, 'r', 'KeyR' ) );
+		expect( transformSession()?.mode ).toBe( 'rotate' );
+		root.dispatch( 'keydown', keyboardEvent( root, 'x', 'KeyX' ) );
+		expect( transformSession()?.axis ).toBeUndefined();
+		root.dispatch( 'keydown', keyboardEvent( root, 'z', 'KeyZ' ) );
+		expect( transformSession()?.axis ).toBe( 'up' );
+		root.dispatch( 'keydown', keyboardEvent( root, 'Escape', 'Escape' ) );
+
+		root.dispatch( 'keydown', keyboardEvent( root, 'g', 'KeyG' ) );
+		expect( transformSession()?.mode ).toBe( 'translate' );
+		root.dispatch( 'keydown', keyboardEvent( root, 'z', 'KeyZ' ) );
+		expect( transformSession()?.axis ).toBeUndefined();
+		root.dispatch( 'keydown', keyboardEvent( root, 'x', 'KeyX' ) );
+		expect( transformSession()?.axis ).toBe( 'east' );
+		root.dispatch( 'keydown', keyboardEvent( root, 'Escape', 'Escape' ) );
+
+		root.dispatch( 'keydown', keyboardEvent( root, 's', 'KeyS' ) );
+		expect( transformSession()?.mode ).toBe( 'scale' );
+		root.dispatch( 'keydown', keyboardEvent( root, 'z', 'KeyZ' ) );
+		expect( transformSession()?.axis ).toBeUndefined();
+		root.dispatch( 'keydown', keyboardEvent( root, 'y', 'KeyY' ) );
+		expect( transformSession()?.axis ).toBe( 'north' );
+		expect( diagnostics ).toEqual( [
+			'TRANSFORM_CAPABILITY_BLOCKED',
+			'TRANSFORM_CAPABILITY_BLOCKED',
+			'TRANSFORM_CAPABILITY_BLOCKED',
+		] );
+		editor.dispose();
+	} );
+
 	it( '连续切换绘制工具不会让旧 session 的回滚取消新工具', () => {
 		const { editor } = createEditor();
 		const modes: string[] = [];

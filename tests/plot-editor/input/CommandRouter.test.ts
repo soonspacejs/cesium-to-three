@@ -16,7 +16,8 @@ function context( patch: Partial<RouterContext> = {} ): RouterContext {
 	return {
 		lifecycle: 'ready', mode: 'select', interaction: 'idle',
 		draftPointCount: 0, draftRedoCount: 0, selectionCount: 0, selectedText: false,
-		transformSupportsScale: true, clampToSurface: false,
+		transformSupportsScale: true,
+		transformAxisEnabled: { east: true, north: true, up: true },
 		saveHandlerAvailable: true, nudgeStepMeters: 1,
 		...patch,
 	};
@@ -129,7 +130,7 @@ describe( 'CommandRouter keyboard commands', () => {
 	it( 'ENU nudge 使用方向、keyup phase 与 Shift/Alt 固定倍率', () => {
 		const router = new CommandRouter( context( {
 			mode: 'transform', interaction: 'transforming', selectionCount: 1,
-			nudgeStepMeters: 2,
+			transformMode: 'translate', nudgeStepMeters: 2,
 		} ) );
 		expect( router.routeCommand( 'transform.nudgeEast', key( 'ArrowLeft', {
 			modifiers: { ...modifiers, shift: true },
@@ -139,12 +140,26 @@ describe( 'CommandRouter keyboard commands', () => {
 		} ) ).intents[ 0 ] ).toMatchObject( { axis: 'north', amountMeters: 2, phase: 'keyup' } );
 	} );
 
-	it( '贴地 Up、无选择 scale、非文本 F2 和未知命令均 blocked', () => {
+	it( '当前模式的禁用轴、无选择 scale、非文本 F2 和未知命令均 blocked', () => {
 		const router = new CommandRouter( context( {
 			mode: 'transform', interaction: 'transforming', selectionCount: 1,
-			clampToSurface: true,
+			transformMode: 'translate',
+			transformAxisEnabled: { east: true, north: true, up: false },
 		} ) );
 		expect( router.routeCommand( 'transform.nudgeUp', key( 'PageUp' ) ).result ).toBe( 'blocked' );
+		expect( router.routeCommand( 'transform.constrainAxis', key( 'KeyZ' ) ).result ).toBe( 'blocked' );
+		expect( router.routeCommand( 'transform.constrainAxis', key( 'KeyX' ) ).intents[ 0 ] )
+			.toEqual( { type: 'constrainTransform', axis: 'east' } );
+		router.setContext( context( {
+			mode: 'transform', interaction: 'transforming', selectionCount: 1,
+			transformMode: 'rotate',
+			transformAxisEnabled: { east: false, north: false, up: true },
+		} ) );
+		expect( router.routeCommand( 'transform.constrainAxis', key( 'KeyX' ) ).result ).toBe( 'blocked' );
+		expect( router.routeCommand( 'transform.constrainAxis', key( 'KeyZ' ) ).intents[ 0 ] )
+			.toEqual( { type: 'constrainTransform', axis: 'up' } );
+		expect( router.routeCommand( 'transform.nudgeEast', key( 'ArrowRight' ) ).result )
+			.toBe( 'blocked' );
 		router.setContext( context( { selectionCount: 0 } ) );
 		expect( router.routeCommand( 'transform.scale', key( 'KeyS' ) ).result ).toBe( 'blocked' );
 		expect( router.routeCommand( 'text.beginEdit', key( 'F2' ) ).result ).toBe( 'blocked' );
