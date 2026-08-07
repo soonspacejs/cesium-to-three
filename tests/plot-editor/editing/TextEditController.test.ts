@@ -61,20 +61,27 @@ function createController() {
 	const executor = new CommandExecutor( document );
 	const history = new HistoryManager( document );
 	const onPreviewChange = vi.fn();
+	const onDraftChange = vi.fn();
 	const onCommitRequest = vi.fn();
 	const onCancelRequest = vi.fn();
+	const onDraftCommitRequest = vi.fn();
+	const onDraftCancelRequest = vi.fn();
 	const controller = new TextEditController( {
 		root,
 		document,
 		executor,
 		history,
 		onPreviewChange,
+		onDraftChange,
 		onCommitRequest,
 		onCancelRequest,
+		onDraftCommitRequest,
+		onDraftCancelRequest,
 	} );
 	return {
 		controller, textarea, document, history,
-		onPreviewChange, onCommitRequest, onCancelRequest,
+		onPreviewChange, onDraftChange, onCommitRequest, onCancelRequest,
+		onDraftCommitRequest, onDraftCancelRequest,
 	};
 }
 
@@ -145,5 +152,18 @@ describe( 'TextEditController', () => {
 		value.controller.cancel();
 		value.textarea.dispatch( 'blur' );
 		expect( value.onCommitRequest ).toHaveBeenCalledOnce();
+	} );
+
+	it( 'draft 输入只回调 transient content，Primary+Enter 不产生独立 history', () => {
+		const value = createController();
+		value.controller.beginDraft( '占位' );
+		value.textarea.value = '新建中文';
+		value.textarea.dispatch( 'input' );
+		expect( value.onDraftChange ).toHaveBeenLastCalledWith( '新建中文' );
+		value.textarea.dispatch( 'keydown', keyEvent( 'Enter', { ctrlKey: true } ) );
+		expect( value.onDraftCommitRequest ).toHaveBeenCalledOnce();
+		expect( value.document.revision ).toBe( 0 );
+		value.controller.closeDraft();
+		expect( value.textarea.removed ).toBe( true );
 	} );
 } );

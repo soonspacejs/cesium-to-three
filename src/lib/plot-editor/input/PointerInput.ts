@@ -70,7 +70,8 @@ export class PointerInput {
 		this._canvas.addEventListener( 'dblclick', this._onDoubleClick, listenerOptions );
 		this._canvas.addEventListener( 'contextmenu', this._onContextMenu, listenerOptions );
 		this._canvas.addEventListener( 'wheel', this._onWheel, listenerOptions );
-		this._window.addEventListener( 'blur', this._onBlur, true );
+		// 元素间焦点迁移也会在 capture 阶段经过 window；这里只监听浏览器窗口自身失焦。
+		this._window.addEventListener( 'blur', this._onBlur );
 		this._document.addEventListener( 'visibilitychange', this._onVisibilityChange, true );
 	}
 
@@ -85,7 +86,7 @@ export class PointerInput {
 		this._canvas.removeEventListener( 'dblclick', this._onDoubleClick, true );
 		this._canvas.removeEventListener( 'contextmenu', this._onContextMenu, true );
 		this._canvas.removeEventListener( 'wheel', this._onWheel, true );
-		this._window.removeEventListener( 'blur', this._onBlur, true );
+		this._window.removeEventListener( 'blur', this._onBlur );
 		this._document.removeEventListener( 'visibilitychange', this._onVisibilityChange, true );
 		this._cancelSession( 'dispose', false );
 	}
@@ -240,7 +241,11 @@ export class PointerInput {
 		// v1 滚轮完整交给 navigation；保留 capture listener 只为固定仲裁顺序。
 	};
 
-	private readonly _onBlur = (): void => this._cancelSession( 'blur', true );
+	private readonly _onBlur = ( event: Event ): void => {
+		// 测试替身可能没有 target；真实 DOM 只接受 window 自身的 blur。
+		if ( event.target !== null && event.target !== undefined && event.target !== this._window ) return;
+		this._cancelSession( 'blur', true );
+	};
 	private readonly _onVisibilityChange = (): void => {
 		if ( this._document.visibilityState === 'hidden' ) {
 			this._cancelSession( 'hidden', true );

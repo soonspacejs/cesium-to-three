@@ -15,23 +15,44 @@ export interface TextEditControllerOptions {
 	readonly executor: CommandExecutor;
 	readonly history: HistoryManager;
 	readonly onPreviewChange?: ( feature: Readonly<TextFeature> | null ) => void;
+	readonly onDraftChange?: ( content: string ) => void;
 	readonly onCommitRequest?: () => void;
 	readonly onCancelRequest?: () => void;
+	readonly onDraftCommitRequest?: () => void;
+	readonly onDraftCancelRequest?: () => void;
 }
 
 export interface TextEditSession {
+	readonly kind: 'feature';
 	readonly entityId: PlotFeatureId;
 	readonly sourceRevision: number;
 	readonly content: string;
 }
 
-interface ActiveTextSession {
-	readonly entityId: PlotFeatureId;
-	readonly source: TextFeature;
+export interface TextDraftInputSession {
+	readonly kind: 'draft';
+	readonly content: string;
+}
+
+export type TextInputSession = TextEditSession | TextDraftInputSession;
+
+interface ActiveTextSessionBase {
 	readonly textarea: HTMLTextAreaElement;
 	composing: boolean;
 	closing: boolean;
 }
+
+interface ActiveFeatureTextSession extends ActiveTextSessionBase {
+	readonly kind: 'feature';
+	readonly entityId: PlotFeatureId;
+	readonly source: TextFeature;
+}
+
+interface ActiveDraftTextSession extends ActiveTextSessionBase {
+	readonly kind: 'draft';
+}
+
+type ActiveTextSession = ActiveFeatureTextSession | ActiveDraftTextSession;
 
 /**
  * 真实 textarea 文本事务。浏览器负责 IME/composition 和换行，本控制器只拦截
@@ -46,13 +67,17 @@ export class TextEditController {
 		this._options = options;
 	}
 
-	public get session(): TextEditSession | null {
+	public get session(): TextInputSession | null {
 		const session = this._session;
-		return session === null ? null : Object.freeze( {
-			entityId: session.entityId,
-			sourceRevision: session.source.revision,
-			content: session.textarea.value,
-		} );
+		if ( session === null ) return null;
+		return session.kind === 'draft'
+			? Object.freeze( { kind: 'draft', content: session.textarea.value } )
+			: Object.freeze( {
+				kind: 'feature',
+				entityId: session.entityId,
+				sourceRevision: session.source.revision,
+				content: session.textarea.value,
+			} );
 	}
 
 	public begin( entityId: PlotFeatureId, placement?: TextInputPlacement ): boolean {
@@ -65,44 +90,45 @@ export class TextEditController {
 			|| feature.properties.locked === true ) {
 			return false;
 		}
-		const textarea = this._options.root.ownerDocument.createElement( 'textarea' );
-		textarea.className = 'plot-editor-text-input';
-		textarea.value = feature.style.content;
-		textarea.spellcheck = false;
-		textarea.setAttribute( 'aria-label', '编辑标绘文本' );
-		textarea.setAttribute( 'data-plot-editor-native-input', 'true' );
-		applyTextareaStyle( textarea, placement );
+		const textarea = this._createTextarea( feature.style.content, placement );
 		const session: ActiveTextSession = {
+			kind: 'feature',
 			entityId,
 			source: feature,
 			textarea,
 			composing: false,
 			closing: false,
 		};
-		this._session = session;
-		textarea.addEventListener( 'input', this._onInput );
-		textarea.addEventListener( 'keydown', this._onKeyDown );
-		textarea.addEventListener( 'compositionstart', this._onCompositionStart );
-		textarea.addEventListener( 'compositionend', this._onCompositionEnd );
-		textarea.addEventListener( 'blur', this._onBlur );
-		this._options.root.appendChild( textarea );
-		this._emitPreview();
-		textarea.focus( { preventScroll: true } );
-		textarea.setSelectionRange( textarea.value.length, textarea.value.length );
+		this._open( session );
 		return true;
+	}
+
+	/** 新建 text 时复用同一原生输入控件，正文只写入 transient drawing draft。 */
+	public beginDraft( content = '', placement?: TextInputPlacement ): void {
+		this._assertOpen();
+		this.cancel();
+		const textarea = this._createTextarea( content, placement );
+		this._open( {
+			kind: 'draft', textarea, composing: false, closing: false,
+		} );
 	}
 
 	public commit( label = '编辑文本' ): CommandResult {
 		this._assertOpen();
 		const session = this._session;
 		if ( session === null ) return failure( this._options.document, 'TEXT_TRANSACTION_MISSING', '没有活动文本事务。' );
-		const current = this._options.document.get( session.entityId );
-		if ( current?.type !== 'text' || current.revision !== session.source.revision ) {
+		if ( session.kind !== 'feature' ) {
+			return failure( this._options.document, 'TEXT_TRANSACTION_MISSING', '当前是新建文本输入，不是已有文本事务。' );
+		}
+		const source = session.source;
+		const entityId = session.entityId;
+		const current = this._options.document.get( entityId );
+		if ( current?.type !== 'text' || current.revision !== source.revision ) {
 			this._close( session );
 			return failure( this._options.document, 'REVISION_CONFLICT', '文本编辑期间图形已被外部修改。' );
 		}
 		const content = session.textarea.value;
-		if ( content === session.source.style.content ) {
+		if ( content === source.style.content ) {
 			this._close( session );
 			return success( this._options.document.revision, false, [] );
 		}
@@ -110,8 +136,8 @@ export class TextEditController {
 			this._options.executor,
 			{
 				type: 'feature.patch',
-				id: session.entityId,
-				beforeRevision: session.source.revision,
+				id: entityId,
+				beforeRevision: source.revision,
 				patch: { style: { content } },
 			},
 			undefined,
@@ -124,6 +150,11 @@ export class TextEditController {
 	public cancel(): void {
 		const session = this._session;
 		if ( session !== null ) this._close( session );
+	}
+
+	/** 绘制事务已成功写入文档后关闭 draft 输入，不触发额外命令。 */
+	public closeDraft(): void {
+		if ( this._session?.kind === 'draft' ) this._close( this._session );
 	}
 
 	public dispose(): void {
@@ -148,27 +179,36 @@ export class TextEditController {
 		if ( event.key === 'Escape' ) {
 			event.preventDefault();
 			event.stopPropagation();
-			this._options.onCancelRequest?.();
+			if ( session.kind === 'draft' ) this._options.onDraftCancelRequest?.();
+			else this._options.onCancelRequest?.();
 			return;
 		}
 		if ( event.key === 'Enter' && ( event.ctrlKey || event.metaKey ) ) {
 			event.preventDefault();
 			event.stopPropagation();
-			this._options.onCommitRequest?.();
+			if ( session.kind === 'draft' ) this._options.onDraftCommitRequest?.();
+			else this._options.onCommitRequest?.();
 		}
 	};
 	private readonly _onBlur = (): void => {
 		const session = this._session;
-		if ( session !== null && ! session.closing ) this._options.onCommitRequest?.();
+		if ( session === null || session.closing ) return;
+		if ( session.kind === 'draft' ) this._options.onDraftCommitRequest?.();
+		else this._options.onCommitRequest?.();
 	};
 
 	private _emitPreview(): void {
 		const session = this._session;
 		if ( session === null ) return;
+		if ( session.kind === 'draft' ) {
+			this._options.onDraftChange?.( session.textarea.value );
+			return;
+		}
+		const source = session.source;
 		this._options.onPreviewChange?.( Object.freeze( {
-			...session.source,
+			...source,
 			style: Object.freeze( {
-				...session.source.style,
+				...source.style,
 				content: session.textarea.value,
 			} ),
 		} ) );
@@ -184,7 +224,32 @@ export class TextEditController {
 		session.textarea.removeEventListener( 'compositionend', this._onCompositionEnd );
 		session.textarea.removeEventListener( 'blur', this._onBlur );
 		session.textarea.remove();
-		this._options.onPreviewChange?.( null );
+		if ( session.kind === 'feature' ) this._options.onPreviewChange?.( null );
+	}
+
+	private _createTextarea( content: string, placement?: TextInputPlacement ): HTMLTextAreaElement {
+		const textarea = this._options.root.ownerDocument.createElement( 'textarea' );
+		textarea.className = 'plot-editor-text-input';
+		textarea.value = content;
+		textarea.spellcheck = false;
+		textarea.setAttribute( 'aria-label', '编辑标绘文本' );
+		textarea.setAttribute( 'data-plot-editor-native-input', 'true' );
+		applyTextareaStyle( textarea, placement );
+		return textarea;
+	}
+
+	private _open( session: ActiveTextSession ): void {
+		this._session = session;
+		const textarea = session.textarea;
+		textarea.addEventListener( 'input', this._onInput );
+		textarea.addEventListener( 'keydown', this._onKeyDown );
+		textarea.addEventListener( 'compositionstart', this._onCompositionStart );
+		textarea.addEventListener( 'compositionend', this._onCompositionEnd );
+		textarea.addEventListener( 'blur', this._onBlur );
+		this._options.root.appendChild( textarea );
+		this._emitPreview();
+		textarea.focus( { preventScroll: true } );
+		textarea.setSelectionRange( textarea.value.length, textarea.value.length );
 	}
 
 	private _assertOpen(): void {

@@ -226,8 +226,13 @@ export class PlotEditor {
 				this._textPreview = preview;
 				this._invalidateTransient( 'draft' );
 			},
+			onDraftChange: ( content ) => this._updateDraftText( content ),
 			onCommitRequest: () => this._dispatch( { type: 'commitTextEdit' } ),
 			onCancelRequest: () => this._dispatch( { type: 'cancelTextEdit' } ),
+			onDraftCommitRequest: () => this._dispatch( { type: 'commitDrawing' } ),
+			onDraftCancelRequest: () => this._dispatch( {
+				type: 'cancelCurrentOperation', reason: 'escape',
+			} ),
 		} );
 		this._hitTester = new FeatureHitTester( this._store, adapters );
 		this._selectionController = new SelectionController( {
@@ -553,6 +558,7 @@ export class PlotEditor {
 			case 'VALIDATE_DRAFT': this._validateAndSynchronizeDraft( effect ); break;
 			case 'RENDER_DRAFT': this._invalidateTransient( 'draft' ); break;
 			case 'COMMIT_DRAFT': this._commitDrawing( effect.sessionId ); break;
+			case 'FOCUS_DRAFT_TEXT_INPUT': this._focusDraftTextInput( effect ); break;
 			case 'ROLLBACK_PREVIEW':
 				this._drawing.cancel( effect.transactionId );
 				this._shapeEditor.cancel();
@@ -700,8 +706,22 @@ export class PlotEditor {
 	}
 
 	private _commitDrawing( sessionId: string ): void {
+		const textDraft = this._textEditor.session?.kind === 'draft'
+			? this._textEditor.session.content
+			: undefined;
+		if ( textDraft !== undefined ) {
+			const update = this._drawing.updateText( textDraft );
+			if ( ! update.ok ) {
+				this._reportError(
+					update.validation?.code ?? 'DRAW_TEXT_INPUT_REQUIRED',
+					update.validation?.message ?? '文本内容不能提交。',
+				);
+				return;
+			}
+		}
 		const result = this._runInternalCommand( () => this._drawing.finish() );
 		if ( result.ok ) {
+			this._textEditor.closeDraft();
 			this._dispatch( {
 				type: 'DRAFT_COMMITTED',
 				sessionId,
@@ -847,6 +867,45 @@ export class PlotEditor {
 			detail: result.error,
 		} );
 		this._flushPendingDocumentRevision();
+	}
+
+	private _focusDraftTextInput(
+		effect: Extract<EditorEffect, { type: 'FOCUS_DRAFT_TEXT_INPUT' }>,
+	): void {
+		const interaction = this._state.interaction;
+		const session = this._drawing.session;
+		if ( interaction.kind !== 'drawing' || interaction.sessionId !== effect.sessionId
+			|| session?.type !== 'text' ) return;
+		let placement: { x: number; y: number } | undefined;
+		try {
+			const projected = this._createProjectionSnapshot().project( effect.position );
+			if ( projected !== null ) placement = { x: projected.x, y: projected.y };
+		} catch {
+			// viewport 尚未稳定时沿用 textarea 默认位置，不能阻断文本事务。
+		}
+		this._textEditor.beginDraft( session.preview.text ?? '', placement );
+	}
+
+	private _updateDraftText( content: string ): void {
+		const interaction = this._state.interaction;
+		const session = this._drawing.session;
+		if ( interaction.kind !== 'drawing' || session?.type !== 'text' ) return;
+		try {
+			this._drawing.updateText( content );
+		} catch ( error ) {
+			this._reportError( 'DRAW_TEXT_INPUT_REQUIRED', '文本输入更新失败。', error );
+			return;
+		}
+		const validation = this._drawing.session?.draft.validation;
+		this._dispatch( {
+			type: 'DRAFT_VALIDATED',
+			sessionId: interaction.sessionId,
+			draftRevision: interaction.draftRevision,
+			valid: validation?.valid === true,
+			errors: validation?.message === undefined
+				? Object.freeze( [] )
+				: Object.freeze( [ validation.message ] ),
+		} );
 	}
 
 	private _focusTextInput( entityId: PlotFeatureId ): void {

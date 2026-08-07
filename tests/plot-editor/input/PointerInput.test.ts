@@ -313,6 +313,16 @@ describe( 'PointerInput 取消与生命周期', () => {
 		expect( env.controls.enabled ).toBe( true );
 	} );
 
+	it( 'canvas 向原生输入转移焦点时不误判为 window blur', () => {
+		const env = createPointerInput();
+		env.input.attach();
+		env.canvas.dispatch( 'pointerdown', pointerEvent( env.canvas, 'pointerdown' ) );
+		env.window.dispatch( 'blur', { target: env.canvas } );
+		expect( env.onCancelOperation ).not.toHaveBeenCalled();
+		expect( env.input.activePointerId ).toBe( 1 );
+		expect( env.controls.enabled ).toBe( false );
+	} );
+
 	it( '第二个 touch pointer 回滚当前 editor session', () => {
 		const env = createPointerInput();
 		env.input.attach();

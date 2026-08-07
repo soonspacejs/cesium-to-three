@@ -30,6 +30,15 @@ function drawing( state = ready() ): EditorTransition {
 	} );
 }
 
+function drawingText( state = ready() ): EditorTransition {
+	return step( state, {
+		type: 'SET_TOOL',
+		tool: {
+			kind: 'draw', graphicsType: 'text', heightReference: HeightReference.NONE,
+		},
+	} );
+}
+
 function requestId( state: EditorState, index = 0 ): string {
 	if ( state.interaction.kind !== 'drawing' ) throw new Error( '不是 drawing。' );
 	return state.interaction.pendingRequests[ index ].requestId;
@@ -81,6 +90,22 @@ describe( 'PlotEditorMachine lifecycle', () => {
 } );
 
 describe( 'PlotEditorMachine drawing', () => {
+	it( 'text 首个 anchor resolve 后请求原生 draft 输入，并阻止追加第二个 anchor', () => {
+		let state = drawingText().state;
+		state = step( state, { type: 'beginDrawingAt', screen: { x: 1, y: 1 } } ).state;
+		const first = requestId( state );
+		const resolved = resolve( state, first, [ 116, 39, 0 ] );
+		expect( resolved.effects.map( ( effect ) => effect.type ) ).toEqual( [
+			'VALIDATE_DRAFT', 'RENDER_DRAFT', 'FOCUS_DRAFT_TEXT_INPUT',
+		] );
+		state = resolved.state;
+		const second = step( state, { type: 'appendDraftPoint', screen: { x: 2, y: 2 } } );
+		expect( second.effects ).toEqual( [] );
+		expect( second.state.interaction ).toMatchObject( {
+			draft: { coordinates: [ [ 116, 39, 0 ] ] },
+		} );
+	} );
+
 	it( '点请求按发出顺序落入草稿，乱序结果不改变作者顺序', () => {
 		let state = drawing().state;
 		let transition = step( state, { type: 'beginDrawingAt', screen: { x: 1, y: 1 } } );

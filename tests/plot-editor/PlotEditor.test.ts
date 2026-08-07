@@ -320,6 +320,38 @@ describe( 'PlotEditor facade', () => {
 		editor.dispose();
 	} );
 
+	it( 'text 首次命中自动进入 native draft，中文提交只产生一次 add history', () => {
+		const authorPosition = Object.freeze( [ 116, 39, 0 ] as const );
+		const { editor, canvas, window, textareas } = createEditor( {
+			autoAttachInputs: true,
+			pick: () => Object.freeze( {
+				authorPosition,
+				surfacePosition: authorPosition,
+				surface: 'ellipsoid' as const,
+				heightReference: HeightReference.NONE,
+			} ),
+		} );
+		editor.activateTool( 'text' );
+		canvas.dispatch( 'pointerdown', pointerEvent( canvas, window, 0, 'pointerdown' ) );
+		canvas.dispatch( 'pointerup', pointerEvent( canvas, window, 0, 'pointerup' ) );
+
+		expect( textareas ).toHaveLength( 1 );
+		expect( editor.document.getAll() ).toHaveLength( 0 );
+		const textarea = textareas[ 0 ];
+		textarea.value = '现场中文';
+		textarea.dispatch( 'input', { type: 'input', target: textarea } as Event );
+		textarea.dispatch( 'keydown', keyboardEvent( textarea, 'Enter', 'Enter', true ) );
+
+		expect( editor.document.getAll() ).toHaveLength( 1 );
+		expect( editor.document.getAll()[ 0 ] ).toMatchObject( {
+			type: 'text', style: { content: '现场中文' },
+		} );
+		expect( editor.mode ).toBe( 'select' );
+		expect( editor.canUndo ).toBe( true );
+		expect( textarea.removed ).toBe( true );
+		editor.dispose();
+	} );
+
 	it( 'F2 与 native textarea 经状态机提交中文文本且只形成一次 history', () => {
 		const { editor, root, textareas } = createEditor( { autoAttachInputs: true } );
 		editor.execute( { type: 'feature.add', feature: text( 'label-a' ) } );

@@ -105,6 +105,22 @@ test( '绘制、历史、原生文本和键盘变换形成完整浏览器闭环'
 	await expect.poll( () => snapshot( page ) ).toMatchObject( { revision: 3, count: 9 } );
 
 	await page.evaluate( () => {
+		window.__plotDemo!.editor.activateTool( 'text' );
+		window.__plotDemo!.editor.focus();
+	} );
+	// 相机中心射线稳定命中 WGS84 椭球，避免用任意屏幕百分比误点天空。
+	await page.mouse.click( canvas.x + canvas.width * 0.5, canvas.y + canvas.height * 0.5 );
+	const draftTextarea = page.locator( 'textarea[data-plot-editor-native-input]' );
+	await expect( draftTextarea ).toHaveCount( 1 );
+	await draftTextarea.fill( '浏览器新建文本' );
+	await draftTextarea.press( 'Control+Enter' );
+	await expect( draftTextarea ).toHaveCount( 0 );
+	await expect.poll( () => snapshot( page ) ).toMatchObject( { revision: 4, count: 10, mode: 'select' } );
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.editor.document.getAll()
+		.some( ( feature ) => feature.type === 'text' && feature.style.content === '浏览器新建文本' ) ) )
+		.toBe( true );
+
+	await page.evaluate( () => {
 		window.__plotDemo!.editor.select( [ 'demo-text' ] );
 		window.__plotDemo!.editor.focus();
 	} );

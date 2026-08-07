@@ -176,6 +176,7 @@ export type EditorEffect =
 	}
 	| { readonly type: 'RENDER_DRAFT'; readonly sessionId: string; readonly draft: DraftState }
 	| { readonly type: 'COMMIT_DRAFT'; readonly sessionId: string; readonly draft: DraftState }
+	| { readonly type: 'FOCUS_DRAFT_TEXT_INPUT'; readonly sessionId: string; readonly position: Position3D }
 	| { readonly type: 'ROLLBACK_PREVIEW'; readonly transactionId: string }
 	| {
 		readonly type: 'APPLY_SELECTION';
@@ -338,6 +339,10 @@ function requestDraftSurface(
 	if ( interaction.kind !== 'drawing' || state.tool.kind !== 'draw' || interaction.committing ) {
 		return transition( state );
 	}
+	if ( purpose === 'point' && interaction.draft.graphicsType === 'text'
+		&& interaction.draft.coordinates.length > 0 ) {
+		return transition( state );
+	}
 	const screen = freezeScreen( screenInput );
 	const request: PendingSurfaceRequest = Object.freeze( {
 		requestId: `${ interaction.sessionId }:surface-${ state.nextSequence }`,
@@ -416,13 +421,22 @@ function resolveSurface(
 		redoCoordinates: Object.freeze( [] ),
 		pendingRequests: Object.freeze( marked.filter( ( item ) => ! applied.has( item.requestId ) ) ),
 	} );
-	return transition( next,
+	const effects: EditorEffect[] = [
 		{
 			type: 'VALIDATE_DRAFT', sessionId: interaction.sessionId,
 			draftRevision: interaction.draftRevision + 1, draft,
 		},
 		{ type: 'RENDER_DRAFT', sessionId: interaction.sessionId, draft },
-	);
+	];
+	if ( state.tool.kind === 'draw' && state.tool.graphicsType === 'text'
+		&& interaction.draft.coordinates.length === 0 && coordinates.length === 1 ) {
+		effects.push( {
+			type: 'FOCUS_DRAFT_TEXT_INPUT',
+			sessionId: interaction.sessionId,
+			position: coordinates[ 0 ],
+		} );
+	}
+	return transition( next, ...effects );
 }
 
 function failSurface(
