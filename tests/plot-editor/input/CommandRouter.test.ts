@@ -92,6 +92,22 @@ describe( 'CommandRouter pointer', () => {
 		} ), hit )[ 0 ] ).toMatchObject( { operation: 'toggle' } );
 	} );
 
+	it( '相机拥有的空白 click 清选，但 drag 与 Space override 不进入选择', () => {
+		const router = new CommandRouter( context( { selectionCount: 1 } ) );
+		expect( router.routePointer( pointer( 'up', {}, {
+			owner: 'navigation', gesture: 'click',
+		} ) )[ 0 ] ).toMatchObject( {
+			type: 'selectAt', hit: null, operation: 'replace',
+		} );
+		expect( router.routePointer( pointer( 'up', {}, {
+			owner: 'navigation', gesture: 'dragging',
+		} ) ) ).toHaveLength( 0 );
+		const spaceModifiers = Object.freeze( { ...modifiers, space: true } );
+		expect( router.routePointer( pointer( 'up', { modifiers: spaceModifiers }, {
+			owner: 'navigation', gesture: 'click', startModifiers: spaceModifiers,
+		} ) ) ).toHaveLength( 0 );
+	} );
+
 	it( 'entity pointer-pending 只在越过阈值后升级为拖动', () => {
 		const pendingHit = { kind: 'entity' as const, entityId: 'a', distanceCssPixels: 1 };
 		const router = new CommandRouter( context( {

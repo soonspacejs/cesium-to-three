@@ -300,6 +300,61 @@ test( '绘制中右键拖拽只导航，右键单击才完成草稿', async ( { 
 	expect( browserErrors ).toEqual( [] );
 } );
 
+test( '鼠标修饰键点选与框选遵守选择、相机和 revision 契约', async ( { page } ) => {
+	const browserErrors = collectBrowserErrors( page );
+	await openDemo( page );
+	const point = await featureAnchorProjection( page, 'demo-point' );
+	const text = await featureAnchorProjection( page, 'demo-text' );
+
+	await page.mouse.click( point.x, point.y );
+	await expect.poll( () => selectedIds( page ) ).toEqual( [ 'demo-point' ] );
+	await page.keyboard.down( 'Shift' );
+	await page.mouse.click( text.x, text.y );
+	await page.keyboard.up( 'Shift' );
+	await expect.poll( () => selectedIds( page ) ).toEqual( [ 'demo-point', 'demo-text' ] );
+
+	await page.keyboard.down( 'Control' );
+	await page.mouse.click( point.x, point.y );
+	await page.keyboard.up( 'Control' );
+	await expect.poll( () => selectedIds( page ) ).toEqual( [ 'demo-text' ] );
+	await page.keyboard.down( 'Control' );
+	await page.mouse.click( point.x, point.y );
+	await page.keyboard.up( 'Control' );
+	await expect.poll( () => selectedIds( page ) ).toEqual( [ 'demo-point', 'demo-text' ] );
+
+	const pointBox = boxAround( point, 14 );
+	await page.evaluate( () => { window.__plotDemo!.controls.enabled = true; } );
+	await page.keyboard.down( 'Control' );
+	await page.mouse.move( pointBox.start.x, pointBox.start.y );
+	await page.mouse.down();
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( false );
+	await page.mouse.move( pointBox.end.x, pointBox.end.y, { steps: 4 } );
+	await page.mouse.up();
+	await page.keyboard.up( 'Control' );
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( true );
+	await expect.poll( () => selectedIds( page ) ).toEqual( [ 'demo-point' ] );
+	expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) ).toBe( 0 );
+
+	const textBox = boxAround( text, 14 );
+	await page.keyboard.down( 'Control' );
+	await page.keyboard.down( 'Shift' );
+	await page.mouse.move( textBox.start.x, textBox.start.y );
+	await page.mouse.down();
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( false );
+	await page.mouse.move( textBox.end.x, textBox.end.y, { steps: 4 } );
+	await page.mouse.up();
+	await page.keyboard.up( 'Shift' );
+	await page.keyboard.up( 'Control' );
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( true );
+	await expect.poll( () => selectedIds( page ) ).toEqual( [ 'demo-point', 'demo-text' ] );
+	expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) ).toBe( 0 );
+
+	await page.mouse.click( pointBox.start.x, pointBox.start.y );
+	await expect.poll( () => selectedIds( page ) ).toEqual( [] );
+	expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) ).toBe( 0 );
+	expect( browserErrors ).toEqual( [] );
+} );
+
 test( '贴地多选的 G/R/S、轴约束和一次撤销保持三元作者高度', async ( { page } ) => {
 	const browserErrors = collectBrowserErrors( page );
 	await openDemo( page );
@@ -564,6 +619,39 @@ async function snapshot( page: Page ): Promise<{
 		count: window.__plotDemo!.editor.document.getAll().length,
 		mode: window.__plotDemo!.editor.mode,
 	} ) );
+}
+
+async function selectedIds( page: Page ): Promise<string[]> {
+	return page.evaluate( () => [ ...window.__plotDemo!.editor.selection ] );
+}
+
+async function featureAnchorProjection(
+	page: Page,
+	id: string,
+): Promise<{ x: number; y: number }> {
+	return page.evaluate( ( featureId ) => {
+		const editor = window.__plotDemo!.editor;
+		const feature = editor.document.get( featureId );
+		if ( feature === undefined ) throw new Error( `${ featureId } 不存在。` );
+		const position = feature.type === 'point' || feature.type === 'text'
+			? feature.geometry.position
+			: feature.type === 'circle' || feature.type === 'sector'
+				? feature.geometry.center
+				: feature.geometry.positions[ 0 ];
+		const projected = editor._createProjectionSnapshot().project( position );
+		if ( projected === null || ! projected.visible ) throw new Error( `${ featureId } 不可见。` );
+		return { x: projected.x, y: projected.y };
+	}, id );
+}
+
+function boxAround(
+	point: { x: number; y: number },
+	radius: number,
+): { start: { x: number; y: number }; end: { x: number; y: number } } {
+	return {
+		start: { x: point.x - radius, y: point.y - radius },
+		end: { x: point.x + radius, y: point.y + radius },
+	};
 }
 
 async function prepareLineVertexEdit( page: Page ): Promise<{ x: number; y: number }> {

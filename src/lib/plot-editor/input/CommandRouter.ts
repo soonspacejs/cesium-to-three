@@ -213,7 +213,11 @@ export class CommandRouter {
 			}
 			return Object.freeze( [] );
 		}
-		if ( input.button !== 'primary' || dispatch.owner !== 'editor' ) {
+		const navigationEmptyClick = dispatch.owner === 'navigation'
+			&& ! dispatch.startModifiers.space
+			&& hit === null;
+		if ( input.button !== 'primary'
+			|| ( dispatch.owner !== 'editor' && ! navigationEmptyClick ) ) {
 			return Object.freeze( [] );
 		}
 		return one( {
