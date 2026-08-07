@@ -265,19 +265,21 @@ describe( 'PointerInput navigation、click 与 move 合并', () => {
 		expect( events.at( -1 ).gesture ).toBe( 'dragging' );
 	} );
 
-	it( '无 active capture 的 hover 每帧只发布最后一条 move', () => {
+	it( '1000 次无 capture hover 每帧只发布最后一条 move', () => {
 		const env = createPointerInput();
 		const listener = vi.fn();
 		env.input.subscribe( listener );
 		env.input.attach();
-		env.canvas.dispatch( 'pointermove', pointerEvent( env.canvas, 'pointermove', { clientX: 111 } ) );
-		env.canvas.dispatch( 'pointermove', pointerEvent( env.canvas, 'pointermove', { clientX: 112 } ) );
-		env.canvas.dispatch( 'pointermove', pointerEvent( env.canvas, 'pointermove', { clientX: 113 } ) );
+		for ( let index = 0; index < 1000; index++ ) {
+			env.canvas.dispatch( 'pointermove', pointerEvent( env.canvas, 'pointermove', {
+				clientX: 111 + index,
+			} ) );
+		}
 		expect( listener ).not.toHaveBeenCalled();
 		env.flushFrames();
 		expect( listener ).toHaveBeenCalledOnce();
 		expect( listener ).toHaveBeenCalledWith( expect.objectContaining( {
-			owner: 'navigation', input: expect.objectContaining( { canvasX: 13 } ),
+			owner: 'navigation', input: expect.objectContaining( { canvasX: 1010 } ),
 		} ) );
 	} );
 } );

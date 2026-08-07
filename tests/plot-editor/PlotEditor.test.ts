@@ -105,7 +105,7 @@ function createDom() {
 		releasePointerCapture: () => undefined,
 		hasPointerCapture: () => false,
 	} );
-	return { root, canvas, window: windowHub, textareas };
+	return { root, canvas, window: windowHub, document: documentHub, textareas };
 }
 
 function point( id: string ) {
@@ -131,7 +131,7 @@ function createEditor( options: {
 	keymap?: EditorKeymapOverrides;
 	idGenerator?: () => string;
 } = {} ) {
-	const { root, canvas, window, textareas } = createDom();
+	const { root, canvas, window, document, textareas } = createDom();
 	const scene = new Group();
 	const camera = new PerspectiveCamera( 60, 4 / 3, 1, 1e8 );
 	camera.position.set( 6_379_137, 0, 0 );
@@ -159,7 +159,9 @@ function createEditor( options: {
 		idGenerator: options.idGenerator,
 		autoAttachInputs: options.autoAttachInputs ?? false,
 	} );
-	return { editor, scene, requestRender, navigation, canvas, window, root, textareas };
+	return {
+		editor, scene, requestRender, navigation, canvas, window, document, root, textareas,
+	};
 }
 
 function pointerEvent(
@@ -427,5 +429,24 @@ describe( 'PlotEditor facade', () => {
 
 		expect( scene.children ).toHaveLength( 0 );
 		expect( navigation.disposed ).toBe( true );
+	} );
+
+	it( '连续 mount/dispose 100 次后 DOM listener、overlay root 与导航资源回到基线', () => {
+		for ( let iteration = 0; iteration < 100; iteration++ ) {
+			const { editor, scene, navigation, root, canvas, window, document } = createEditor( {
+				autoAttachInputs: true,
+			} );
+			editor.dispose();
+
+			expect( scene.children, `第 ${ iteration + 1 } 轮残留 overlay root` ).toHaveLength( 0 );
+			expect( navigation.disposed, `第 ${ iteration + 1 } 轮未释放导航 adapter` ).toBe( true );
+			for ( const hub of [ root, canvas, window, document ] ) {
+				const listenerCount = [ ...hub.listeners.values() ].reduce(
+					( total, listeners ) => total + listeners.size,
+					0,
+				);
+				expect( listenerCount, `第 ${ iteration + 1 } 轮残留 DOM listener` ).toBe( 0 );
+			}
+		}
 	} );
 } );
