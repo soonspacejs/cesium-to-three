@@ -36,6 +36,12 @@ interface DemoEditorApi {
 		enterVertexEdit( id: string ): void;
 		focus(): void;
 		readonly _pointer: { readonly activePointerId: number | null };
+		readonly _transform: {
+			readonly session: {
+				readonly mode: string;
+				readonly axis?: string;
+			} | null;
+		};
 		_createProjectionSnapshot(): {
 			project( position: readonly [ number, number, number ] ): {
 				x: number;
@@ -293,6 +299,74 @@ test( '绘制中右键拖拽只导航，右键单击才完成草稿', async ( { 
 	expect( browserErrors ).toEqual( [] );
 } );
 
+test( '贴地多选的 G/R/S、轴约束和一次撤销保持三元作者高度', async ( { page } ) => {
+	const browserErrors = collectBrowserErrors( page );
+	await openDemo( page );
+	const ids = [ 'demo-point', 'demo-circle' ];
+	const before = await page.evaluate( ( selectedIds ) => {
+		const editor = window.__plotDemo!.editor;
+		editor.select( selectedIds );
+		editor.focus();
+		return selectedIds.map( ( id ) => editor.document.get( id ) );
+	}, ids );
+
+	await page.keyboard.press( 'g' );
+	await expect.poll( () => transformSession( page ) ).toMatchObject( {
+		mode: 'translate', axis: null,
+	} );
+	expect( await gizmoMarkerNames( page ) ).toEqual( [
+		'EditorMarker:gizmo:translate:east',
+		'EditorMarker:gizmo:translate:north',
+		'EditorMarker:gizmo:translate:east-north',
+	] );
+	await page.keyboard.press( 'z' );
+	expect( await transformSession( page ) ).toMatchObject( { mode: 'translate', axis: null } );
+	await page.keyboard.press( 'x' );
+	expect( await transformSession( page ) ).toMatchObject( { mode: 'translate', axis: 'east' } );
+	await page.keyboard.press( 'ArrowRight' );
+	await expect.poll( () => snapshot( page ) ).toMatchObject( { revision: 1, mode: 'select' } );
+	const translated = await page.evaluate( ( selectedIds ) => selectedIds.map(
+		( id ) => window.__plotDemo!.editor.document.get( id ),
+	), ids );
+	expect( translated ).not.toEqual( before );
+	expect( authorHeights( translated ) ).toEqual( [ 0, 0 ] );
+
+	await page.keyboard.press( 'Control+z' );
+	await expect.poll( () => snapshot( page ) ).toMatchObject( { revision: 2, mode: 'select' } );
+	expect( await page.evaluate( ( selectedIds ) => selectedIds.map(
+		( id ) => window.__plotDemo!.editor.document.get( id ),
+	), ids ) ).toEqual( before );
+
+	await page.keyboard.press( 'r' );
+	expect( await transformSession( page ) ).toMatchObject( { mode: 'rotate', axis: null } );
+	expect( await gizmoMarkerNames( page ) ).toEqual( [
+		'EditorMarker:gizmo:rotate:heading',
+	] );
+	await page.keyboard.press( 'x' );
+	expect( await transformSession( page ) ).toMatchObject( { mode: 'rotate', axis: null } );
+	await page.keyboard.press( 'z' );
+	expect( await transformSession( page ) ).toMatchObject( { mode: 'rotate', axis: 'up' } );
+	await page.keyboard.press( 'Escape' );
+
+	await page.keyboard.press( 's' );
+	expect( await transformSession( page ) ).toMatchObject( { mode: 'scale', axis: null } );
+	expect( await gizmoMarkerNames( page ) ).toEqual( [
+		'EditorMarker:gizmo:scale:east',
+		'EditorMarker:gizmo:scale:north',
+		'EditorMarker:gizmo:scale:uniform',
+	] );
+	await page.keyboard.press( 'z' );
+	expect( await transformSession( page ) ).toMatchObject( { mode: 'scale', axis: null } );
+	await page.keyboard.press( 'y' );
+	expect( await transformSession( page ) ).toMatchObject( { mode: 'scale', axis: 'north' } );
+	await page.keyboard.press( 'Escape' );
+	const finalFeatures = await page.evaluate( ( selectedIds ) => selectedIds.map(
+		( id ) => window.__plotDemo!.editor.document.get( id ),
+	), ids );
+	expect( authorHeights( finalFeatures ) ).toEqual( [ 0, 0 ] );
+	expect( browserErrors ).toEqual( [] );
+} );
+
 test( '控制点拖拽只更新图形，且相机姿态保持不变', async ( { page } ) => {
 	const browserErrors = collectBrowserErrors( page );
 	const handle = await prepareLineVertexEdit( page );
@@ -494,4 +568,26 @@ function expectPoseEqual(
 	for ( let index = 0; index < actual.quaternion.length; index++ ) {
 		expect( actual.quaternion[ index ] ).toBeCloseTo( expected.quaternion[ index ], 12 );
 	}
+}
+
+async function transformSession( page: Page ): Promise<{ mode: string | null; axis: string | null }> {
+	return page.evaluate( () => {
+		const session = window.__plotDemo!.editor._transform.session;
+		return { mode: session?.mode ?? null, axis: session?.axis ?? null };
+	} );
+}
+
+async function gizmoMarkerNames( page: Page ): Promise<string[]> {
+	return page.evaluate( () => window.__plotDemo!.scene
+		.getObjectByName( 'plotGizmoRoot' )?.children
+		.map( ( child ) => ( child as { name?: string } ).name ?? '' ) ?? [] );
+}
+
+function authorHeights( features: readonly ( Readonly<PlotFeature> | undefined )[] ): number[] {
+	return features.map( ( feature ) => {
+		if ( feature === undefined ) throw new Error( '多选 feature 不存在。' );
+		if ( feature.type === 'point' || feature.type === 'text' ) return feature.geometry.position[ 2 ];
+		if ( feature.type === 'circle' || feature.type === 'sector' ) return feature.geometry.center[ 2 ];
+		return feature.geometry.positions[ 0 ][ 2 ];
+	} );
 }
