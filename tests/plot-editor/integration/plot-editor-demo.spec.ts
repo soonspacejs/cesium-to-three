@@ -4,6 +4,11 @@ import type { PlotFeature, Position3D } from '../../../src/lib/plot-editor';
 
 interface DemoEditorApi {
 	dispose(): void;
+	readonly camera: {
+		updateMatrixWorld(): void;
+		readonly position: { toArray(): number[] };
+		readonly quaternion: { toArray(): number[] };
+	};
 	readonly controls: {
 		enabled: boolean;
 	};
@@ -18,7 +23,10 @@ interface DemoEditorApi {
 		activateTool( tool: string ): void;
 		clearSelection(): void;
 		select( ids: Iterable<string> ): void;
+		enterVertexEdit( id: string ): void;
 		focus(): void;
+		readonly _vertexEditId?: string;
+		readonly _pointer: { readonly activePointerId: number | null };
 		_createProjectionSnapshot(): {
 			project( position: readonly [ number, number, number ] ): {
 				x: number;
@@ -154,6 +162,83 @@ test( '绘制、历史、原生文本和键盘变换形成完整浏览器闭环'
 	expect( browserErrors ).toEqual( [] );
 } );
 
+test( '控制点拖拽只更新图形，且相机姿态保持不变', async ( { page } ) => {
+	const browserErrors = collectBrowserErrors( page );
+	const handle = await prepareLineVertexEdit( page );
+	const initialVertex = await firstVertexPosition( page, 'demo-line' );
+	const initialRevision = await page.evaluate( () => window.__plotDemo!.editor.document.revision );
+	const cameraBeforeHandleDrag = await cameraPose( page );
+	await page.mouse.move( handle.x, handle.y );
+	await page.mouse.down();
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( false );
+	await page.mouse.move( handle.x + 24, handle.y + 8, { steps: 4 } );
+	await page.mouse.up();
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( true );
+	await expect.poll( () => firstVertexPosition( page, 'demo-line' ) ).not.toEqual( initialVertex );
+	expectPoseEqual( await cameraPose( page ), cameraBeforeHandleDrag );
+	expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
+		.toBe( initialRevision + 1 );
+	expect( browserErrors ).toEqual( [] );
+} );
+
+test( 'Space 从控制点起步时只导航相机，不修改图形', async ( { page } ) => {
+	const browserErrors = collectBrowserErrors( page );
+	const handle = await prepareLineVertexEdit( page );
+	// Space 必须在 pointerdown 前固定 owner；即使从 handle 起步也只允许相机响应。
+	const vertexBeforeNavigation = await firstVertexPosition( page, 'demo-line' );
+	const revisionBeforeNavigation = await page.evaluate( () => window.__plotDemo!.editor.document.revision );
+	const cameraBeforeNavigation = await cameraPose( page );
+	await page.keyboard.down( 'Space' );
+	await page.mouse.move( handle.x, handle.y );
+	await page.mouse.down();
+	expect( await page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( true );
+	await page.mouse.move( handle.x + 36, handle.y + 18, { steps: 5 } );
+	await page.mouse.up();
+	await page.keyboard.up( 'Space' );
+	await expect.poll( () => cameraPose( page ) ).not.toEqual( cameraBeforeNavigation );
+	expect( await firstVertexPosition( page, 'demo-line' ) ).toEqual( vertexBeforeNavigation );
+	expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
+		.toBe( revisionBeforeNavigation );
+	expect( browserErrors ).toEqual( [] );
+} );
+
+for ( const [ label, reason ] of [
+	[ 'window blur', 'blur' ],
+	[ 'lostpointercapture', 'lost-capture' ],
+] as const ) {
+	test( `${ label } 回滚控制点 working copy 并恢复相机`, async ( { page } ) => {
+		const browserErrors = collectBrowserErrors( page );
+		const handle = await prepareLineVertexEdit( page );
+		const vertexBefore = await firstVertexPosition( page, 'demo-line' );
+		const revisionBefore = await page.evaluate( () => window.__plotDemo!.editor.document.revision );
+		await page.mouse.move( handle.x, handle.y );
+		await page.mouse.down();
+		await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( false );
+		await page.mouse.move( handle.x + 28, handle.y - 10, { steps: 4 } );
+		if ( reason === 'blur' ) {
+			await page.evaluate( () => window.dispatchEvent( new Event( 'blur' ) ) );
+		} else {
+			await page.evaluate( () => {
+				const editor = window.__plotDemo!.editor;
+				const pointerId = editor._pointer.activePointerId;
+				if ( pointerId === null ) throw new Error( 'lost capture 前缺少 active pointer。' );
+				const canvas = document.querySelector( 'canvas' );
+				if ( canvas === null ) throw new Error( 'Plot demo canvas 不存在。' );
+				canvas.dispatchEvent( new PointerEvent( 'lostpointercapture', {
+					pointerId,
+					pointerType: 'mouse',
+				} ) );
+			} );
+		}
+		await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( true );
+		expect( await firstVertexPosition( page, 'demo-line' ) ).toEqual( vertexBefore );
+		expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
+			.toBe( revisionBefore );
+		await page.mouse.up();
+		expect( browserErrors ).toEqual( [] );
+	} );
+}
+
 function collectBrowserErrors( page: Page ): string[] {
 	const errors: string[] = [];
 	page.on( 'console', ( message ) => {
@@ -181,4 +266,57 @@ async function snapshot( page: Page ): Promise<{
 		count: window.__plotDemo!.editor.document.getAll().length,
 		mode: window.__plotDemo!.editor.mode,
 	} ) );
+}
+
+async function prepareLineVertexEdit( page: Page ): Promise<{ x: number; y: number }> {
+	await openDemo( page );
+	await page.evaluate( () => {
+		window.__plotDemo!.controls.enabled = true;
+		window.__plotDemo!.editor.enterVertexEdit( 'demo-line' );
+	} );
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.editor._vertexEditId ) )
+		.toBe( 'demo-line' );
+	return firstVertexProjection( page, 'demo-line' );
+}
+
+async function firstVertexPosition( page: Page, id: string ): Promise<number[]> {
+	return page.evaluate( ( featureId ) => {
+		const feature = window.__plotDemo!.editor.document.get( featureId );
+		if ( feature?.type !== 'line' ) throw new Error( `${ featureId } 不是 line。` );
+		return [ ...feature.geometry.positions[ 0 ] ];
+	}, id );
+}
+
+async function firstVertexProjection( page: Page, id: string ): Promise<{ x: number; y: number }> {
+	return page.evaluate( ( featureId ) => {
+		const editor = window.__plotDemo!.editor;
+		const feature = editor.document.get( featureId );
+		if ( feature?.type !== 'line' ) throw new Error( `${ featureId } 不是 line。` );
+		const projected = editor._createProjectionSnapshot().project( feature.geometry.positions[ 0 ] );
+		if ( projected === null || ! projected.visible ) throw new Error( `${ featureId } 不可见。` );
+		return { x: projected.x, y: projected.y };
+	}, id );
+}
+
+async function cameraPose( page: Page ): Promise<{ position: number[]; quaternion: number[] }> {
+	return page.evaluate( () => {
+		const camera = window.__plotDemo!.camera;
+		camera.updateMatrixWorld();
+		return {
+			position: camera.position.toArray(),
+			quaternion: camera.quaternion.toArray(),
+		};
+	} );
+}
+
+function expectPoseEqual(
+	actual: { position: number[]; quaternion: number[] },
+	expected: { position: number[]; quaternion: number[] },
+): void {
+	for ( let index = 0; index < actual.position.length; index++ ) {
+		expect( actual.position[ index ] ).toBeCloseTo( expected.position[ index ], 9 );
+	}
+	for ( let index = 0; index < actual.quaternion.length; index++ ) {
+		expect( actual.quaternion[ index ] ).toBeCloseTo( expected.quaternion[ index ], 12 );
+	}
 }
