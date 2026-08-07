@@ -4,6 +4,14 @@ import type { PlotFeature, Position3D } from '../../../src/lib/plot-editor';
 
 interface DemoEditorApi {
 	dispose(): void;
+	readonly renderer: {
+		getContext(): WebGL2RenderingContext;
+		render( scene: object, camera: object ): void;
+	};
+	readonly scene: {
+		readonly children: readonly { readonly name: string }[];
+		getObjectByName( name: string ): { readonly children: readonly unknown[] } | undefined;
+	};
 	readonly camera: {
 		updateMatrixWorld(): void;
 		readonly position: { toArray(): number[] };
@@ -81,6 +89,46 @@ test( '八类图形的可见内部点均经 DOM pointer 命中 canonical selecti
 		await expect.poll( () => page.evaluate( () => [ ...window.__plotDemo!.editor.selection ] ) )
 			.toEqual( [ target.id ] );
 	}
+
+	const renderEvidence = await page.evaluate( () => {
+		const demo = window.__plotDemo!;
+		demo.renderer.render( demo.scene, demo.camera );
+		const gl = demo.renderer.getContext();
+		const pixels = new Uint8Array( gl.drawingBufferWidth * gl.drawingBufferHeight * 4 );
+		gl.finish();
+		gl.readPixels(
+			0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight,
+			gl.RGBA, gl.UNSIGNED_BYTE, pixels,
+		);
+		let opaquePixels = 0;
+		let nonDarkPixels = 0;
+		for ( let offset = 0; offset < pixels.length; offset += 4 ) {
+			if ( pixels[ offset + 3 ] > 0 ) opaquePixels++;
+			if ( pixels[ offset ] + pixels[ offset + 1 ] + pixels[ offset + 2 ] > 90 ) {
+				nonDarkPixels++;
+			}
+		}
+		return {
+			pixelCount: pixels.length / 4,
+			opaquePixels,
+			nonDarkPixels,
+			rootNames: demo.scene.children.map( ( child ) => child.name ).filter(
+				( name ) => name.startsWith( 'plot' ),
+			),
+		};
+	} );
+	expect( renderEvidence.opaquePixels ).toBeGreaterThan( renderEvidence.pixelCount * 0.95 );
+	expect( renderEvidence.nonDarkPixels ).toBeGreaterThan( 1000 );
+	expect( renderEvidence.rootNames ).toEqual( [
+		'plotCommittedRoot',
+		'plotDraftRoot',
+		'plotSelectionRoot',
+		'plotHandleRoot',
+		'plotGizmoRoot',
+	] );
+	await page.evaluate( () => window.__plotDemo!.editor.enterVertexEdit( 'demo-line' ) );
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.scene
+		.getObjectByName( 'plotHandleRoot' )?.children.length ?? 0 ) ).toBeGreaterThanOrEqual( 5 );
 
 	expect( browserErrors ).toEqual( [] );
 } );
