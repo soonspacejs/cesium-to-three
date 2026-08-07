@@ -259,11 +259,17 @@ describe( 'PlotEditorMachine selection and transactions', () => {
 			type: 'APPLY_SELECTION', operation: 'replace', ids: [ 'a' ],
 		} );
 
-		state = step( state, {
+		const begun = step( state, {
 			type: 'beginEntityDrag', pointerId: 7, entityId: 'a', screen: { x: 9, y: 9 },
-		} ).state;
-		expect( state.interaction.kind ).toBe( 'dragging-entity' );
+		} );
+		state = begun.state;
+		expect( state.interaction ).toMatchObject( {
+			kind: 'dragging-entity', start: { x: 1, y: 2 }, current: { x: 9, y: 9 },
+		} );
 		expect( state.activeTransaction?.kind ).toBe( 'pointer-drag' );
+		expect( begun.effects.map( ( effect ) => effect.type ) ).toEqual( [
+			'APPLY_SELECTION', 'BEGIN_TRANSACTION', 'UPDATE_POINTER_TRANSACTION',
+		] );
 		expect( step( state, {
 			type: 'updatePointerTransaction', pointerId: 99, screen: { x: 10, y: 10 },
 		} ).effects ).toEqual( [] );
@@ -273,18 +279,22 @@ describe( 'PlotEditorMachine selection and transactions', () => {
 		expect( transition.effects[ 0 ]?.type ).toBe( 'UPDATE_POINTER_TRANSACTION' );
 		state = transition.state;
 		transition = step( state, {
-			type: 'finishPointerTransaction', pointerId: 7, screen: { x: 10, y: 10 },
+			type: 'finishPointerTransaction', pointerId: 7, screen: { x: 12, y: 11 },
 		} );
-		expect( transition.effects[ 0 ]?.type ).toBe( 'COMMIT_TRANSACTION' );
+		expect( transition.effects ).toEqual( [
+			{
+				type: 'UPDATE_POINTER_TRANSACTION',
+				transactionId: state.activeTransaction?.id,
+				screen: { x: 12, y: 11 },
+			},
+			{ type: 'COMMIT_TRANSACTION', transactionId: state.activeTransaction?.id },
+		] );
 	} );
 
 	it( '框选只更新选择，反向拖动的矩形由 effect runner 统一计算', () => {
 		let state = ready();
 		state = step( state, {
 			type: 'beginBoxSelection', pointerId: 1, screen: { x: 100, y: 90 }, additive: true,
-		} ).state;
-		state = step( state, {
-			type: 'updatePointerTransaction', pointerId: 1, screen: { x: 10, y: 20 },
 		} ).state;
 		const finished = step( state, {
 			type: 'finishPointerTransaction', pointerId: 1, screen: { x: 10, y: 20 },

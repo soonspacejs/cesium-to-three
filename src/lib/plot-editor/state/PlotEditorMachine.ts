@@ -299,7 +299,9 @@ export function reduceEditor( state: EditorState, event: EditorEvent ): EditorTr
 		case 'beginEntityDrag': return beginEntityDrag( state, event );
 		case 'beginBoxSelection': return beginBoxSelection( state, event );
 		case 'updatePointerTransaction': return updatePointerTransaction( state, event.pointerId, event.screen );
-		case 'finishPointerTransaction': return finishPointerTransaction( state, event.pointerId );
+		case 'finishPointerTransaction': return finishPointerTransaction(
+			state, event.pointerId, event.screen,
+		);
 		case 'cancelCurrentOperation': return cancelOperation( state, event.reason );
 		case 'deleteSelection': return state.selection.ids.length === 0
 			? transition( state, { type: 'REPORT_ERROR', code: 'EMPTY_SELECTION' } )
@@ -705,10 +707,20 @@ function beginEntityDrag(
 		type: 'BEGIN_TRANSACTION', transaction: begun.transaction,
 		selectedIds: Object.freeze( [ ...selectedIds ] ), entityId: event.entityId,
 	} );
+	const start = state.interaction.kind === 'pointer-pending'
+		? state.interaction.start
+		: event.screen;
+	if ( start.x !== event.screen.x || start.y !== event.screen.y ) {
+		effects.push( {
+			type: 'UPDATE_POINTER_TRANSACTION',
+			transactionId: begun.transaction.id,
+			screen: freezeScreen( event.screen ),
+		} );
+	}
 	return transition( withState( state, {
 		interaction: Object.freeze( {
 			kind: 'dragging-entity', pointerId: event.pointerId, entityId: event.entityId,
-			start: freezeScreen( event.screen ), current: freezeScreen( event.screen ),
+			start: freezeScreen( start ), current: freezeScreen( event.screen ),
 			transactionId: begun.transaction.id,
 		} ),
 		activeTransaction: begun.transaction,
@@ -753,12 +765,17 @@ function updatePointerTransaction(
 	} );
 }
 
-function finishPointerTransaction( state: EditorState, pointerId: number ): EditorTransition {
+function finishPointerTransaction(
+	state: EditorState,
+	pointerId: number,
+	screenInput: ScreenPoint,
+): EditorTransition {
 	const interaction = state.interaction;
+	const screen = freezeScreen( screenInput );
 	if ( interaction.kind === 'box-selecting' ) {
 		if ( interaction.pointerId !== pointerId ) return transition( state );
 		return transition( withState( state, { interaction: Object.freeze( { kind: 'idle' } ) } ), {
-			type: 'APPLY_BOX_SELECTION', start: interaction.start, end: interaction.current,
+			type: 'APPLY_BOX_SELECTION', start: interaction.start, end: screen,
 			additive: interaction.additive,
 		} );
 	}
@@ -766,9 +783,18 @@ function finishPointerTransaction( state: EditorState, pointerId: number ): Edit
 		return transition( state );
 	}
 	if ( interaction.pointerId !== pointerId ) return transition( state );
-	return transition( state, {
-		type: 'COMMIT_TRANSACTION', transactionId: interaction.transactionId,
-	} );
+	const effects: EditorEffect[] = [];
+	if ( interaction.current.x !== screen.x || interaction.current.y !== screen.y ) {
+		effects.push( {
+			type: 'UPDATE_POINTER_TRANSACTION',
+			transactionId: interaction.transactionId,
+			screen,
+		} );
+	}
+	effects.push( { type: 'COMMIT_TRANSACTION', transactionId: interaction.transactionId } );
+	return transition( withState( state, {
+		interaction: Object.freeze( { ...interaction, current: screen } ),
+	} ), ...effects );
 }
 
 function beginTransform( state: EditorState, mode: TransformMode ): EditorTransition {
