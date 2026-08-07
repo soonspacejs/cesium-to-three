@@ -258,6 +258,40 @@ test( '八类图形经 DOM pointer 采点后均由键盘完成提交', async ( {
 	expect( browserErrors ).toEqual( [] );
 } );
 
+test( '绘制中右键拖拽只导航，右键单击才完成草稿', async ( { page } ) => {
+	const browserErrors = collectBrowserErrors( page );
+	await openDemo( page );
+	const canvas = await page.locator( 'canvas' ).boundingBox();
+	if ( canvas === null ) throw new Error( 'Plot demo canvas 不可见。' );
+	const center = {
+		x: canvas.x + canvas.width * 0.5,
+		y: canvas.y + canvas.height * 0.5,
+	};
+	await page.evaluate( () => {
+		window.__plotDemo!.editor.activateTool( 'line' );
+		window.__plotDemo!.editor.focus();
+	} );
+	await page.mouse.click( center.x - 45, center.y );
+	await page.mouse.click( center.x + 45, center.y );
+	expect( await snapshot( page ) ).toEqual( { revision: 0, count: 8, mode: 'draw:line' } );
+
+	await page.evaluate( () => { window.__plotDemo!.controls.enabled = true; } );
+	const cameraBeforeDrag = await cameraPose( page );
+	await page.mouse.move( center.x, center.y );
+	await page.mouse.down( { button: 'right' } );
+	await page.mouse.move( center.x + 48, center.y + 24, { steps: 5 } );
+	await page.mouse.up( { button: 'right' } );
+	await expect.poll( () => cameraPose( page ) ).not.toEqual( cameraBeforeDrag );
+	await page.evaluate( () => { window.__plotDemo!.controls.enabled = false; } );
+	expect( await snapshot( page ) ).toEqual( { revision: 0, count: 8, mode: 'draw:line' } );
+
+	await page.mouse.click( center.x, center.y, { button: 'right' } );
+	await expect.poll( () => snapshot( page ) ).toEqual( {
+		revision: 1, count: 9, mode: 'select',
+	} );
+	expect( browserErrors ).toEqual( [] );
+} );
+
 test( '控制点拖拽只更新图形，且相机姿态保持不变', async ( { page } ) => {
 	const browserErrors = collectBrowserErrors( page );
 	const handle = await prepareLineVertexEdit( page );
