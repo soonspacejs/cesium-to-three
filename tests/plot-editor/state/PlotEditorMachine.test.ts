@@ -222,6 +222,18 @@ describe( 'PlotEditorMachine drawing', () => {
 		expect( committed.effects ).toHaveLength( 1 );
 		expect( committed.effects[ 0 ]?.type ).toBe( 'COMMIT_DRAFT' );
 		expect( step( committed.state, { type: 'commitDrawing' } ).effects ).toEqual( [] );
+		const failed = step( committed.state, {
+			type: 'DRAFT_COMMIT_FAILED', sessionId: sessionId( committed.state ),
+			code: 'FEATURE_ID_CONFLICT', detail: { message: 'id 已存在。' },
+		} );
+		expect( failed.state.interaction ).toMatchObject( {
+			kind: 'drawing', committing: false,
+		} );
+		expect( failed.effects ).toEqual( [ {
+			type: 'REPORT_ERROR', code: 'FEATURE_ID_CONFLICT', detail: { message: 'id 已存在。' },
+		} ] );
+		const retried = step( failed.state, { type: 'commitDrawing' } );
+		expect( retried.effects[ 0 ]?.type ).toBe( 'COMMIT_DRAFT' );
 		const done = step( committed.state, {
 			type: 'DRAFT_COMMITTED', sessionId: sessionId( committed.state ), documentRevision: 4,
 		} );

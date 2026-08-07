@@ -129,6 +129,7 @@ function createEditor( options: {
 	autoAttachInputs?: boolean;
 	pick?: () => any;
 	keymap?: EditorKeymapOverrides;
+	idGenerator?: () => string;
 } = {} ) {
 	const { root, canvas, window, textareas } = createDom();
 	const scene = new Group();
@@ -155,6 +156,7 @@ function createEditor( options: {
 		surfacePicker: { pick: options.pick ?? ( () => null ) },
 		cameraController: navigation,
 		keymap: options.keymap,
+		idGenerator: options.idGenerator,
 		autoAttachInputs: options.autoAttachInputs ?? false,
 	} );
 	return { editor, scene, requestRender, navigation, canvas, window, root, textareas };
@@ -305,6 +307,48 @@ describe( 'PlotEditor facade', () => {
 			id: 'plot-1', type: 'point', geometry: { position: authorPosition },
 		} );
 		expect( editor.canUndo ).toBe( true );
+		expect( editor.mode ).toBe( 'select' );
+		editor.dispose();
+	} );
+
+	it( '绘制 add 失败保留 draft，并允许原 session 再次提交', () => {
+		const authorPosition = Object.freeze( [ 0, 0, 0 ] as const );
+		const idGenerator = vi.fn()
+			.mockReturnValueOnce( 'existing' )
+			.mockReturnValueOnce( 'retried' );
+		const { editor, canvas, window } = createEditor( {
+			autoAttachInputs: true,
+			idGenerator,
+			pick: () => Object.freeze( {
+				authorPosition,
+				surfacePosition: authorPosition,
+				surface: 'ellipsoid' as const,
+				heightReference: HeightReference.NONE,
+			} ),
+		} );
+		const validationErrors = vi.fn();
+		editor.addEventListener( 'validationerror', validationErrors );
+		editor.execute( { type: 'feature.add', feature: point( 'existing' ) } );
+		editor.activateTool( 'point' );
+
+		canvas.dispatch( 'pointerdown', pointerEvent( canvas, window, 0, 'pointerdown' ) );
+		canvas.dispatch( 'pointerup', pointerEvent( canvas, window, 0, 'pointerup' ) );
+		canvas.dispatch( 'pointerdown', pointerEvent( canvas, window, 2, 'pointerdown' ) );
+		canvas.dispatch( 'pointerup', pointerEvent( canvas, window, 2, 'pointerup' ) );
+
+		expect( editor.mode ).toBe( 'draw:point' );
+		expect( editor.document.getAll() ).toHaveLength( 1 );
+		expect( validationErrors ).toHaveBeenLastCalledWith( expect.objectContaining( {
+			diagnostic: expect.objectContaining( { code: 'DRAW_INVALID_PARAMETER' } ),
+		} ) );
+
+		canvas.dispatch( 'pointerdown', pointerEvent( canvas, window, 2, 'pointerdown' ) );
+		canvas.dispatch( 'pointerup', pointerEvent( canvas, window, 2, 'pointerup' ) );
+
+		expect( idGenerator ).toHaveBeenCalledTimes( 2 );
+		expect( editor.document.getAll().map( ( feature ) => feature.id ) ).toEqual( [
+			'existing', 'retried',
+		] );
 		expect( editor.mode ).toBe( 'select' );
 		editor.dispose();
 	} );

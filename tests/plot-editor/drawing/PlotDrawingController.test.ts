@@ -106,6 +106,26 @@ describe( 'PlotDrawingController', () => {
 		expect( document.getAll() ).toEqual( [] );
 	} );
 
+	it( 'id factory 异常转为结构化失败并保留 session', () => {
+		const createId = vi.fn()
+			.mockImplementationOnce( () => { throw new Error( 'id 服务不可用' ); } )
+			.mockReturnValueOnce( 'point-a' );
+		const { controller, document } = setup( createId );
+		controller.arm( {
+			type: 'point', heightReference: HeightReference.NONE,
+			options: { pointStyle: 'circle', size: 10 },
+		} );
+		controller.addPick( pick( [ 0, 0, 3 ], HeightReference.NONE ) );
+
+		expect( controller.finish() ).toMatchObject( {
+			ok: false,
+			validation: { code: 'DRAW_INVALID_PARAMETER', message: 'id 服务不可用' },
+		} );
+		expect( controller.session ).not.toBeNull();
+		expect( document.getAll() ).toEqual( [] );
+		expect( controller.finish() ).toMatchObject( { ok: true, id: 'point-a' } );
+	} );
+
 	it( 'text 内容通过 adapter 的 native/IME 更新入口后提交', () => {
 		const { controller, document } = setup( () => 'text-a' );
 		controller.arm( {

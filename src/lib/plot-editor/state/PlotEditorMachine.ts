@@ -140,6 +140,12 @@ export type EditorSystemEvent =
 		readonly sessionId: string;
 		readonly documentRevision: number;
 	}
+	| {
+		readonly type: 'DRAFT_COMMIT_FAILED';
+		readonly sessionId: string;
+		readonly code: string;
+		readonly detail?: unknown;
+	}
 	| { readonly type: 'TRANSACTION_UPDATED'; readonly transactionId: string }
 	| {
 		readonly type: 'TRANSACTION_COMMITTED';
@@ -260,6 +266,7 @@ export function reduceEditor( state: EditorState, event: EditorEvent ): EditorTr
 		case 'SURFACE_FAILED': return failSurface( state, event );
 		case 'DRAFT_VALIDATED': return updateDraftValidation( state, event );
 		case 'DRAFT_COMMITTED': return finishDraftCommit( state, event );
+		case 'DRAFT_COMMIT_FAILED': return failDraftCommit( state, event );
 		case 'TRANSACTION_UPDATED': return markTransactionDirty( state, event.transactionId );
 		case 'TRANSACTION_COMMITTED': return finishTransaction( state, event );
 		case 'TRANSACTION_FAILED': return failTransaction( state, event );
@@ -604,6 +611,19 @@ function finishDraftCommit(
 		interaction: Object.freeze( { kind: 'idle' } ),
 		documentRevision: event.documentRevision,
 	} ) );
+}
+
+function failDraftCommit(
+	state: EditorState,
+	event: Extract<EditorSystemEvent, { type: 'DRAFT_COMMIT_FAILED' }>,
+): EditorTransition {
+	const interaction = state.interaction;
+	if ( interaction.kind !== 'drawing' || interaction.sessionId !== event.sessionId
+		|| ! interaction.committing ) return transition( state );
+	return transition(
+		updateDrawing( state, { ...interaction, committing: false } ),
+		{ type: 'REPORT_ERROR', code: event.code, detail: event.detail },
+	);
 }
 
 function selectAt(

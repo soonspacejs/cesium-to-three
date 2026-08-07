@@ -146,9 +146,21 @@ export class PlotDrawingController {
 		if ( ! validation.valid || ! session.adapter.canFinish( session.draft ) ) {
 			return Object.freeze( { ok: false, validation } );
 		}
-		const id = this._createFeatureId();
-		if ( typeof id !== 'string' || id.trim().length === 0 ) {
-			throw new Error( 'feature id factory 必须返回非空字符串。' );
+		let id: PlotFeatureId;
+		try {
+			id = this._createFeatureId();
+			if ( typeof id !== 'string' || id.trim().length === 0 ) {
+				throw new Error( 'feature id factory 必须返回非空字符串。' );
+			}
+		} catch ( error ) {
+			return Object.freeze( {
+				ok: false,
+				validation: Object.freeze( {
+					valid: false,
+					code: 'DRAW_INVALID_PARAMETER',
+					message: error instanceof Error ? error.message : 'feature id 生成失败。',
+				} ),
+			} );
 		}
 		if ( this._options.document.has( id ) ) {
 			return Object.freeze( {

@@ -23,7 +23,11 @@ import type {
 } from './document/types';
 import { HeightReference as HeightReferenceValue } from './document/types';
 import { createEnuFrame, ecefToEnu, geodeticToEcef } from './document/geodesy';
-import { PlotDrawingController, type DrawingSession } from './drawing/PlotDrawingController';
+import {
+	PlotDrawingController,
+	type DrawingControllerResult,
+	type DrawingSession,
+} from './drawing/PlotDrawingController';
 import {
 	ShapeEditController,
 	type ShapeEditPreview,
@@ -712,14 +716,25 @@ export class PlotEditor {
 		if ( textDraft !== undefined ) {
 			const update = this._drawing.updateText( textDraft );
 			if ( ! update.ok ) {
-				this._reportError(
+				this._dispatchDraftCommitFailed(
+					sessionId,
 					update.validation?.code ?? 'DRAW_TEXT_INPUT_REQUIRED',
 					update.validation?.message ?? '文本内容不能提交。',
 				);
 				return;
 			}
 		}
-		const result = this._runInternalCommand( () => this._drawing.finish() );
+		let result: DrawingControllerResult;
+		try {
+			result = this._runInternalCommand( () => this._drawing.finish() );
+		} catch ( error ) {
+			this._dispatchDraftCommitFailed(
+				sessionId,
+				'DRAW_COMMIT_FAILED',
+				detailMessage( error, '绘制提交发生未预期错误。' ),
+			);
+			return;
+		}
 		if ( result.ok ) {
 			this._textEditor.closeDraft();
 			this._dispatch( {
@@ -730,11 +745,20 @@ export class PlotEditor {
 			this._flushPendingDocumentRevision();
 			return;
 		}
-		this._reportError(
+		this._dispatchDraftCommitFailed(
+			sessionId,
 			result.validation?.code ?? result.command?.error?.code ?? 'DRAW_INVALID_PARAMETER',
 			result.validation?.message ?? result.command?.error?.message ?? '绘制草稿不能提交。',
 		);
-		this._dispatch( { type: 'cancelCurrentOperation', reason: 'escape' } );
+	}
+
+	private _dispatchDraftCommitFailed( sessionId: string, code: string, message: string ): void {
+		this._dispatch( {
+			type: 'DRAFT_COMMIT_FAILED',
+			sessionId,
+			code,
+			detail: Object.freeze( { message } ),
+		} );
 	}
 
 	private _beginEditorTransaction(
