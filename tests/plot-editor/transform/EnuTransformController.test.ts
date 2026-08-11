@@ -4,6 +4,7 @@ import { CommandExecutor } from '../../../src/lib/plot-editor/commands/CommandEx
 import { HistoryManager } from '../../../src/lib/plot-editor/commands/HistoryManager';
 import { createPlotDocumentStore } from '../../../src/lib/plot-editor/document/PlotDocument';
 import { geodesicDistanceMeters } from '../../../src/lib/plot-editor/document/geodesy';
+import { isHeightReferenceClamp } from '../../../src/lib/plot-editor/document/height-reference';
 import { HeightReference, type PlotFeature } from '../../../src/lib/plot-editor/document/types';
 import { normalizeFeature } from '../../../src/lib/plot-editor/document/validate';
 import { EnuTransformController } from '../../../src/lib/plot-editor/transform/EnuTransformController';
@@ -18,9 +19,10 @@ function circle(
 	id: string,
 	longitude: number,
 	heightReference = HeightReference.NONE,
+	height = 0,
 ): PlotFeature {
 	return normalizeFeature( {
-		id, type: 'circle', geometry: { center: [ longitude, 0, 0 ], radius: 100 },
+		id, type: 'circle', geometry: { center: [ longitude, 0, height ], radius: 100 },
 		style: STYLE, heightReference, visible: true, properties: {}, revision: 0,
 	} );
 }
@@ -54,6 +56,29 @@ function setup( features: readonly PlotFeature[] ) {
 }
 
 describe( 'EnuTransformController', () => {
+	it.each( Object.values( HeightReference ) )(
+		'heightReference=%s 的多选变换原子提交且保持作者高度策略',
+		( heightReference ) => {
+			const height = isHeightReferenceClamp( heightReference ) ? 0 : 25;
+			const { document, history, controller } = setup( [
+				circle( 'a', 0, heightReference, height ),
+				circle( 'b', 0.02, heightReference, height + ( height === 0 ? 0 : 5 ) ),
+			] );
+			const before = document.getAll();
+			expect( controller.begin( [ 'a', 'b' ], 'a', 'translate' ).ok ).toBe( true );
+			expect( controller.update( { translationMeters: [ 100, 50, 0 ] } ).ok ).toBe( true );
+			expect( controller.commit().ok ).toBe( true );
+			expect( history.state.undoCount ).toBe( 1 );
+			expect( document.getAll().map( ( feature ) => feature.heightReference ) )
+				.toEqual( [ heightReference, heightReference ] );
+			expect( document.getAll().map( ( feature ) =>
+				feature.type === 'circle' ? feature.geometry.center[ 2 ] : Number.NaN ) )
+				.toEqual( [ height, height + ( height === 0 ? 0 : 5 ) ] );
+			expect( history.undo().ok ).toBe( true );
+			expect( document.getAll() ).toEqual( before );
+		},
+	);
+
 	it( '100 次 Gizmo move 只写 working copy，commit 产生一条 feature.transform history', () => {
 		const { document, history, controller } = setup( [ circle( 'a', 0 ), circle( 'b', 0.02 ) ] );
 		const listener = vi.fn();
