@@ -91,6 +91,11 @@ import type { HitTarget, ScreenPoint, TransformMode } from './state/types';
 import { EnuTransformController } from './transform/EnuTransformController';
 import { createEnuFeatureTransform } from './transform/feature-transform';
 import { getSelectionGizmoCapabilities } from './transform/gizmo';
+import {
+	constrainPointerTranslation,
+	pointerRotationDegrees,
+	pointerScaleFactor,
+} from './transform/pointer-constraints';
 import type { GizmoCapabilities, TransformPreview } from './transform/types';
 
 export interface EditorRenderHost {
@@ -878,19 +883,21 @@ export class PlotEditor {
 			const origin = ecefToEnu( geodeticToEcef( start.surface ), frame );
 			const target = ecefToEnu( geodeticToEcef( current.authorPosition ), frame );
 			result = this._transform.update( {
-				translationMeters: [
+				translationMeters: constrainPointerTranslation( [
 					target[ 0 ] - origin[ 0 ],
 					target[ 1 ] - origin[ 1 ],
 					target[ 2 ] - origin[ 2 ],
-				],
+				], modifiers ),
 			} );
 		} else if ( session.mode === 'rotate' ) {
 			const dx = screen.x - ( start?.screen.x ?? screen.x );
 			const dy = screen.y - ( start?.screen.y ?? screen.y );
-			result = this._transform.update( { rotationDegrees: [ dx, -dy, dx ] } );
+			result = this._transform.update( {
+				rotationDegrees: pointerRotationDegrees( dx, dy, modifiers ),
+			} );
 		} else {
 			const dx = screen.x - ( start?.screen.x ?? screen.x );
-			const factor = Math.max( 0.01, Math.exp( dx * 0.01 ) );
+			const factor = pointerScaleFactor( dx, modifiers );
 			result = this._transform.update( { scale: [ factor, factor, factor ] } );
 		}
 		if ( result.changed ) this._dispatch( { type: 'TRANSACTION_UPDATED', transactionId } );
