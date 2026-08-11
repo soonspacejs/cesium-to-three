@@ -145,7 +145,7 @@ describe( 'resolveFeatureHeights', () => {
 		expect( unavailable ).toMatchObject( { status: 'unavailable', effectivePositions: [] } );
 		const previous = {
 			plotId: 'line', sourceRevision: 0, status: 'ready' as const,
-			effectivePositions: [ [ 1, 2, 3 ], [ 4, 5, 6 ] ] as const,
+			effectivePositions: [ [ 179.9, 30, 105 ], [ -179.9, 31, 198 ] ] as const,
 		};
 		const pending = await resolveFeatureHeights(
 			feature,
@@ -155,6 +155,26 @@ describe( 'resolveFeatureHeights', () => {
 		);
 		expect( pending.status ).toBe( 'pending' );
 		expect( pending.effectivePositions ).toEqual( previous.effectivePositions );
+	} );
+
+	it( '文档 revision 或作者坐标改变后不复用旧 surface 结果', async () => {
+		const source = provider( async ( request ) => samples( request, [ null, null ] ) );
+		const changed = line( 'line', HeightReference.RELATIVE_TO_TERRAIN, 1 );
+		changed.geometry.positions = [ [ 120, 35, 7 ], [ 121, 36, 8 ] ];
+		const previous = {
+			plotId: 'line', sourceRevision: 0, status: 'ready' as const,
+			effectivePositions: [ [ 179.9, 30, 105 ], [ -179.9, 31, 198 ] ] as const,
+		};
+		const result = await resolveFeatureHeights(
+			changed as never,
+			source.api,
+			new AbortController().signal,
+			previous,
+		);
+		expect( result ).toMatchObject( {
+			plotId: 'line', sourceRevision: 1, status: 'pending',
+			effectivePositions: [ [ 120, 35, 7 ], [ 121, 36, 8 ] ],
+		} );
 	} );
 
 	it.each( [

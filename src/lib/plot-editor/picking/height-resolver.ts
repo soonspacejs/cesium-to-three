@@ -193,7 +193,7 @@ export async function resolveFeatureHeights(
 
 	const hasMissing = samples.some( ( sample ) => sample.surfaceHeight === null );
 	const hasFallback = samples.some( ( sample ) => sample.source === 'ellipsoid' );
-	if ( hasMissing && previous !== undefined && previous.status === 'ready' ) {
+	if ( hasMissing && canReusePreviousResolution( feature, positions, previous ) ) {
 		return freezeResolved( {
 			plotId: feature.id,
 			sourceRevision: feature.revision,
@@ -228,6 +228,25 @@ export async function resolveFeatureHeights(
 		effectivePositions,
 		status: hasMissing || hasFallback ? 'pending' : 'ready',
 	} );
+}
+
+/** 只允许同一作者快照复用旧 surface，防止编辑后的 feature 借用旧顶点高度。 */
+function canReusePreviousResolution(
+	feature: Readonly<PlotFeature>,
+	positions: readonly Position3D[],
+	previous: ResolvedPlotGeometry | undefined,
+): previous is ResolvedPlotGeometry {
+	return previous !== undefined
+		&& previous.status === 'ready'
+		&& previous.plotId === feature.id
+		&& previous.sourceRevision === feature.revision
+		&& previous.effectivePositions.length === positions.length
+		&& previous.effectivePositions.every( ( effective, index ) =>
+			wrappedLongitudeDistanceDegrees( effective[ 0 ], positions[ index ][ 0 ] )
+				<= POSITION_MATCH_EPSILON_DEGREES
+			&& Math.abs( effective[ 1 ] - positions[ index ][ 1 ] )
+				<= POSITION_MATCH_EPSILON_DEGREES,
+		);
 }
 
 export function getFeaturePositions(
