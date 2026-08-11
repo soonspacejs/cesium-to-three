@@ -116,6 +116,9 @@ export function decodePlotDocument(
 		}
 	}
 	assertSafeTree( parsed, limits );
+	if ( typeof input !== 'string' && estimateJsonBytes( parsed ) > limits.maxBytes ) {
+		throw codecError( 'INVALID_SCHEMA', '/', '输入对象超过 maxBytes。', parsed );
+	}
 	const diagnostics: EditorDiagnostic[] = [];
 	if ( isCanonicalEnvelope( parsed ) ) {
 		return decodeCanonicalDocument( parsed, limits, diagnostics );
@@ -332,6 +335,9 @@ function assertSafeTree( input: unknown, limits: ResolvedCodecLimits ): void {
 			value.forEach( ( child, index ) => visit( child, `${ path }/${ index }`, depth + 1 ) );
 		} else {
 			for ( const [ key, child ] of Object.entries( value ) ) {
+				if ( key.length > limits.maxStringLength ) {
+					throw codecError( 'INVALID_SCHEMA', path, '字段名超过 maxStringLength。', key.length );
+				}
 				if ( FORBIDDEN_KEYS.has( key ) ) {
 					throw codecError( 'INVALID_PROPERTIES', `${ path }/${ key }`, '拒绝原型污染键。', key );
 				}
@@ -341,6 +347,37 @@ function assertSafeTree( input: unknown, limits: ResolvedCodecLimits ): void {
 		ancestors.delete( value );
 	};
 	visit( input, '', 0 );
+}
+
+/** 对已经通过安全树检查的对象估算其紧凑 JSON UTF-8 字节数，不触发 toJSON。 */
+function estimateJsonBytes( value: unknown ): number {
+	if ( value === null ) return 4;
+	switch ( typeof value ) {
+		case 'string': return utf8ByteLength( JSON.stringify( value ) );
+		case 'number': return Number.isFinite( value )
+			? utf8ByteLength( JSON.stringify( value ) )
+			: 4;
+		case 'boolean': return value ? 4 : 5;
+		case 'bigint': return utf8ByteLength( value.toString() );
+		case 'undefined':
+		case 'function':
+		case 'symbol': return 4;
+		case 'object': {
+			if ( Array.isArray( value ) ) {
+				return 2 + Math.max( 0, value.length - 1 )
+					+ value.reduce( ( total, child ) => total + estimateJsonBytes( child ), 0 );
+			}
+			const entries = Object.entries( value );
+			return 2 + Math.max( 0, entries.length - 1 ) + entries.reduce(
+				( total, [ key, child ] ) => total
+					+ utf8ByteLength( JSON.stringify( key ) )
+					+ 1
+					+ estimateJsonBytes( child ),
+				0,
+			);
+		}
+	}
+	return 0;
 }
 
 function canonicalJsonObject<T extends object>( value: T ): Readonly<T> {

@@ -96,6 +96,10 @@ describe( 'plot document codec', () => {
 			.toMatchObject( { ok: false, diagnostics: [ { code: 'INVALID_PROPERTIES' } ] } );
 		expect( tryDecodePlotDocument( [], { limits: { maxFeatures: 1, maxNodes: 1 } } ).ok )
 			.toBe( true );
+		expect( tryDecodePlotDocument( [], { limits: { maxBytes: 1 } } ) ).toMatchObject( {
+			ok: false, diagnostics: [ { code: 'INVALID_SCHEMA', path: '/' } ],
+		} );
+		expect( tryDecodePlotDocument( [], { limits: { maxBytes: 2 } } ).ok ).toBe( true );
 		expect( tryDecodePlotDocument( [ {}, {} ], { limits: { maxFeatures: 1 } } ).ok )
 			.toBe( false );
 	} );
