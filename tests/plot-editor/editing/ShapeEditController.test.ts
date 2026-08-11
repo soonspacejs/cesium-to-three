@@ -3,6 +3,7 @@ import { createBuiltinGeometryAdapterRegistry } from '../../../src/lib/plot-edit
 import { CommandExecutor } from '../../../src/lib/plot-editor/commands/CommandExecutor';
 import { HistoryManager } from '../../../src/lib/plot-editor/commands/HistoryManager';
 import { createPlotDocumentStore } from '../../../src/lib/plot-editor/document/PlotDocument';
+import { isHeightReferenceClamp } from '../../../src/lib/plot-editor/document/height-reference';
 import { HeightReference, type PlotFeature } from '../../../src/lib/plot-editor/document/types';
 import { normalizeFeature } from '../../../src/lib/plot-editor/document/validate';
 import { ShapeEditController } from '../../../src/lib/plot-editor/editing/ShapeEditController';
@@ -12,14 +13,18 @@ const STYLE = Object.freeze( {
 	fillColor: '#08f', fillOpacity: 40,
 } );
 
-function line( id: string, points: readonly ( readonly [ number, number, number ] )[] ): PlotFeature {
+function line(
+	id: string,
+	points: readonly ( readonly [ number, number, number ] )[],
+	heightReference = HeightReference.NONE,
+): PlotFeature {
 	return normalizeFeature( {
 		id, type: 'line', geometry: { positions: points },
 		style: {
 			...STYLE, strokeStyle: 'solid', showArrow: false,
 			startArrowStyle: null, endArrowStyle: null,
 		},
-		heightReference: HeightReference.NONE, visible: true, properties: {}, revision: 0,
+		heightReference, visible: true, properties: {}, revision: 0,
 	} );
 }
 
@@ -55,6 +60,28 @@ function setup( features: readonly PlotFeature[] ) {
 }
 
 describe( 'ShapeEditController drag transaction', () => {
+	it.each( Object.values( HeightReference ) )(
+		'heightReference=%s 的 vertex 编辑保持对应作者高度策略并可撤销',
+		( heightReference ) => {
+			const initialHeight = isHeightReferenceClamp( heightReference ) ? 0 : 10;
+			const { document, controller, history } = setup( [
+				line( 'line', [ [ 0, 0, initialHeight ], [ 1, 0, initialHeight ] ], heightReference ),
+			] );
+			const before = document.get( 'line' );
+			expect( controller.begin( 'line', 'vertex:1' ).ok ).toBe( true );
+			expect( controller.update( { authorPosition: [ 1, 0.5, 999 ] } ).ok ).toBe( true );
+			expect( controller.commit().ok ).toBe( true );
+			const edited = document.get( 'line' );
+			if ( edited?.type !== 'line' ) expect.fail( '应保留 line 类型' );
+			expect( edited.heightReference ).toBe( heightReference );
+			expect( edited.geometry.positions[ 1 ] ).toEqual( [
+				1, 0.5, isHeightReferenceClamp( heightReference ) ? 0 : 999,
+			] );
+			expect( history.undo().ok ).toBe( true );
+			expect( document.get( 'line' ) ).toEqual( before );
+		},
+	);
+
 	it( '100 次 pointermove 不写文档，commit 只增加一个 revision/history', () => {
 		const { document, history, controller } = setup( [ circle( 'circle' ) ] );
 		const before = document.snapshot();
