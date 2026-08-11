@@ -3,6 +3,10 @@ import { createBuiltinGeometryAdapterRegistry } from '../../../src/lib/plot-edit
 import { CommandExecutor } from '../../../src/lib/plot-editor/commands/CommandExecutor';
 import { HistoryManager } from '../../../src/lib/plot-editor/commands/HistoryManager';
 import { createPlotDocumentStore } from '../../../src/lib/plot-editor/document/PlotDocument';
+import {
+	isHeightReferenceClamp,
+	isHeightReferenceRelative,
+} from '../../../src/lib/plot-editor/document/height-reference';
 import { HeightReference, type Position3D } from '../../../src/lib/plot-editor/document/types';
 import { PlotDrawingController } from '../../../src/lib/plot-editor/drawing/PlotDrawingController';
 import type { PlotPickResult } from '../../../src/lib/plot-editor/picking/types';
@@ -41,6 +45,25 @@ describe( '内置 GeometryAdapter registry', () => {
 } );
 
 describe( 'PlotDrawingController', () => {
+	it.each( Object.values( HeightReference ) )(
+		'heightReference=%s 的绘制 preview 分离作者高度与运行时表面高度',
+		( heightReference ) => {
+			const { controller } = setup();
+			controller.arm( {
+				type: 'point', heightReference,
+				options: { pointStyle: 'circle', size: 10 },
+			} );
+			controller.addPick( pick( [ 10, 20, 42 ], heightReference ) );
+			const expectedAuthorHeight = isHeightReferenceClamp( heightReference ) ? 0 : 42;
+			const expectedWorldHeight = isHeightReferenceRelative( heightReference )
+				? 999 + expectedAuthorHeight
+				: heightReference === HeightReference.NONE ? expectedAuthorHeight : 999;
+			expect( controller.session?.draft.points ).toEqual( [ [ 10, 20, expectedAuthorHeight ] ] );
+			expect( controller.session?.resolvedPositions ).toEqual( [ [ 10, 20, expectedWorldHeight ] ] );
+			controller.cancel();
+		},
+	);
+
 	it( 'arm/cancel 只创建 transient session，不分配 id、不写文档/history', () => {
 		const createId = vi.fn( () => 'never' );
 		const { controller, document, history, onDraftChange } = setup( createId );

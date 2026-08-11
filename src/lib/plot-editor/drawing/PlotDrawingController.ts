@@ -2,6 +2,7 @@ import type { CommandExecutor } from '../commands/CommandExecutor';
 import type { HistoryManager } from '../commands/HistoryManager';
 import type { CommandResult } from '../commands/types';
 import { getHeightMode } from '../document/height-reference';
+import { normalizePosition } from '../document/normalize';
 import type { PlotDocument } from '../document/PlotDocument';
 import type {
 	PlotFeature,
@@ -290,8 +291,12 @@ function remapResolvedPoints(
 	hit?: PlotPickResult,
 ): readonly Position3D[] {
 	const hitResolved = hit === undefined ? undefined : resolvedPositionFromHit( hit );
+	// adapter 会先规范经度并把 clamp 作者高度归零；映射表面点时必须比较同一 canonical 值。
+	const canonicalHitPosition = hit === undefined
+		? undefined
+		: normalizePosition( hit.authorPosition, hit.heightReference );
 	return Object.freeze( nextPoints.map( ( point ) => {
-		if ( hit !== undefined && samePosition( point, hit.authorPosition ) ) {
+		if ( canonicalHitPosition !== undefined && samePosition( point, canonicalHitPosition ) ) {
 			return hitResolved as Position3D;
 		}
 		const previousIndex = previousPoints.findIndex( ( value ) => samePosition( value, point ) );
