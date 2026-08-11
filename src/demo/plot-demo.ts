@@ -66,6 +66,8 @@ export function runPlotDemo(): void {
 	app.replaceChildren();
 	app.style.position = 'relative';
 	app.tabIndex = 0;
+	app.setAttribute( 'aria-label', 'GIS 图形编辑器画布' );
+	app.setAttribute( 'aria-describedby', 'plot-editor-shortcuts' );
 
 	const scene = new Scene();
 	scene.background = new Color( 0x05070a );
@@ -252,25 +254,27 @@ function installEditorEvents(
 	panel: HTMLElement,
 ): void {
 	const message = panel.querySelector( '[data-editor-message]' ) as HTMLElement;
-	const refresh = () => { message.textContent = status.message; };
+	const refresh = () => { message.textContent = editorStatusText( status ); };
 	editor.addEventListener( 'modechange', ( event ) => {
 		status.mode = event.mode;
 		for ( const button of panel.querySelectorAll<HTMLButtonElement>( '[data-tool]' ) ) {
-			button.classList.toggle(
-				'active',
-				button.dataset.tool === ( event.mode.startsWith( 'draw:' )
-					? event.mode.slice( 5 )
-					: event.mode ),
-			);
+			const active = button.dataset.tool === ( event.mode.startsWith( 'draw:' )
+				? event.mode.slice( 5 )
+				: event.mode );
+			button.classList.toggle( 'active', active );
+			button.setAttribute( 'aria-pressed', String( active ) );
 		}
+		refresh();
 	} );
 	editor.addEventListener( 'selectionchange', ( event ) => {
 		status.selection = event.selection.ids.length === 0
 			? '无'
 			: event.selection.ids.join( ', ' );
+		refresh();
 	} );
 	editor.addEventListener( 'historystatechange', ( event ) => {
 		status.history = `undo ${ event.undoCount } / redo ${ event.redoCount }`;
+		refresh();
 	} );
 	editor.addEventListener( 'validationerror', ( event ) => {
 		status.message = `${ event.diagnostic.code }：${ event.diagnostic.message }`;
@@ -294,11 +298,15 @@ function installEditorPanel(
 	root.querySelector( '#plot-editor-panel' )?.remove();
 	const panel = document.createElement( 'section' );
 	panel.id = 'plot-editor-panel';
+	panel.setAttribute( 'aria-labelledby', 'plot-editor-panel-title' );
 	const title = document.createElement( 'h1' );
+	title.id = 'plot-editor-panel-title';
 	title.textContent = 'GIS Plot Editor v1';
 	panel.appendChild( title );
 	const tools = document.createElement( 'div' );
 	tools.className = 'editor-tools';
+	tools.setAttribute( 'role', 'toolbar' );
+	tools.setAttribute( 'aria-label', '绘图工具' );
 	for ( const type of [
 		'select', 'point', 'line', 'polygon', 'rectangle',
 		'circle', 'sector', 'arrow', 'text',
@@ -306,7 +314,11 @@ function installEditorPanel(
 		const button = document.createElement( 'button' );
 		button.type = 'button';
 		button.dataset.tool = type;
-		button.textContent = toolLabel( type );
+		const label = toolLabel( type );
+		button.textContent = label;
+		button.title = `${ label }工具`;
+		button.setAttribute( 'aria-label', `切换到${ label }工具` );
+		button.setAttribute( 'aria-pressed', String( type === 'select' ) );
 		button.classList.toggle( 'active', type === 'select' );
 		button.addEventListener( 'click', () => {
 			const tool: DrawTool | 'select' = type === 'select'
@@ -320,14 +332,23 @@ function installEditorPanel(
 	panel.appendChild( tools );
 	const message = document.createElement( 'p' );
 	message.dataset.editorMessage = 'true';
-	message.textContent = status.message;
+	message.setAttribute( 'role', 'status' );
+	message.setAttribute( 'aria-live', 'polite' );
+	message.setAttribute( 'aria-atomic', 'true' );
+	message.textContent = editorStatusText( status );
 	panel.appendChild( message );
 	const shortcuts = document.createElement( 'p' );
+	shortcuts.id = 'plot-editor-shortcuts';
 	shortcuts.className = 'editor-shortcuts';
 	shortcuts.textContent = '左键绘制/选择 · 右键或 Enter 完成 · Esc 取消 · Ctrl 拖框 · Ctrl+Z/Y · Delete · G/R/S · X/Y/Z · 方向键 · F2';
 	panel.appendChild( shortcuts );
 	document.body.appendChild( panel );
 	return panel;
+}
+
+/** 把关键编辑状态集中到 live region，屏幕阅读器无需解析 WebGL 画布。 */
+function editorStatusText( status: DemoStatus ): string {
+	return `模式：${ status.mode }；选择：${ status.selection }；${ status.history }。${ status.message }`;
 }
 
 function drawTool( type: Exclude<PlotFeatureType, never> ): DrawTool {
@@ -545,6 +566,7 @@ function installEditorPanelStyle(): void {
 			border-radius:5px; background:rgba(255,255,255,.07); color:inherit; cursor:pointer; }
 		#plot-editor-panel button:hover { background:rgba(255,255,255,.14); }
 		#plot-editor-panel button.active { color:#00131a; background:#00e5ff; border-color:#00e5ff; }
+		#app:focus-visible { outline:3px solid #00e5ff; outline-offset:-3px; }
 		#plot-editor-panel p { margin:10px 0 0; }
 		#plot-editor-panel .editor-shortcuts { color:#8fb6c8; font-size:11px; }
 		.plot-editor-text-input { box-sizing:border-box; }
