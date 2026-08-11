@@ -430,6 +430,46 @@ describe( 'PlotEditor facade', () => {
 		editor.dispose();
 	} );
 
+	it( 'East 指针变换把相机射线投影到 pivot 切平面，不依赖 surface picker', () => {
+		const pick = vi.fn( () => null );
+		const { editor, root, camera } = createEditor( { autoAttachInputs: true, pick } );
+		const feature = point( 'ray-plane-east' );
+		editor.execute( { type: 'feature.add', feature } );
+		editor.select( [ feature.id ] );
+		editor.focus();
+		camera.position.set( 6_379_137, 1_000, 1_000 );
+		camera.lookAt( 6_378_137, 0, 0 );
+		camera.updateMatrixWorld();
+
+		root.dispatch( 'keydown', keyboardEvent( root, 'g', 'KeyG' ) );
+		root.dispatch( 'keydown', keyboardEvent( root, 'x', 'KeyX' ) );
+		const internals = editor as unknown as {
+			_state: { activeTransaction?: { id: string } };
+			_pointerTransactionStart: { screen: { x: number; y: number } } | null;
+			_transformPreview: { features: readonly ReturnType<typeof point>[] } | null;
+			_updatePointerTransaction(
+				transactionId: string,
+				screen: { x: number; y: number },
+				modifiers: { shift: boolean; alt: boolean },
+			): void;
+		};
+		const transactionId = internals._state.activeTransaction?.id;
+		expect( transactionId ).toBeDefined();
+		internals._pointerTransactionStart = { screen: { x: 400, y: 300 } };
+		internals._updatePointerTransaction(
+			transactionId!, { x: 460, y: 300 }, { shift: false, alt: false },
+		);
+
+		const preview = internals._transformPreview?.features[ 0 ];
+		expect( preview?.type ).toBe( 'point' );
+		if ( preview?.type !== 'point' ) expect.fail( '应生成 point East 变换预览。' );
+		expect( Math.abs( preview.geometry.position[ 0 ] ) ).toBeGreaterThan( 1e-6 );
+		expect( preview.geometry.position[ 1 ] ).toBeCloseTo( 0, 8 );
+		expect( preview.geometry.position[ 2 ] ).toBeCloseTo( 0, 8 );
+		expect( pick ).not.toHaveBeenCalled();
+		editor.dispose();
+	} );
+
 	it( 'heading ring 使用射线旋转平面与连续角度更新整组 working preview', () => {
 		const pick = vi.fn( () => null );
 		const { editor, root, camera } = createEditor( { autoAttachInputs: true, pick } );
@@ -471,8 +511,9 @@ describe( 'PlotEditor facade', () => {
 			.toBeGreaterThan( 1 );
 		const preview = internals._transformPreview?.features;
 		expect( preview ).toHaveLength( 2 );
-		expect( preview?.map( ( feature ) => feature.geometry ) )
-			.not.toEqual( [ west.geometry, east.geometry ] );
+		expect( preview?.[ 0 ].geometry.position[ 1 ] ).toBeGreaterThan( 0 );
+		expect( preview?.[ 1 ].geometry.position[ 1 ] ).toBeLessThan( 0 );
+		expect( preview?.map( ( feature ) => feature.geometry.position[ 2 ] ) ).toEqual( [ 0, 0 ] );
 		expect( pick ).not.toHaveBeenCalled();
 		editor.dispose();
 	} );

@@ -35,6 +35,7 @@ export function applyEnuTransformToFeature(
 	const normalized = normalizeTransform( transform );
 	assertTransformSupported( feature, normalized, adapters );
 	const frame = createEnuFrame( normalized.pivot );
+	const preservesAuthorHeight = isHorizontalTransform( normalized );
 	const transformPosition = ( position: Position3D ): Position3D => {
 		let local = ecefToEnu( geodeticToEcef( position ), frame );
 		local = applyScale( local, normalized.scale );
@@ -51,7 +52,10 @@ export function applyEnuTransformToFeature(
 		return Object.freeze( [
 			geographic[ 0 ],
 			geographic[ 1 ],
-			isHeightReferenceClamp( feature.heightReference ) ? 0 : geographic[ 2 ],
+			isHeightReferenceClamp( feature.heightReference )
+				? 0
+				// 纯水平 ENU 变换只改变经纬度；切平面弦线造成的离面误差不能污染作者高度。
+				: preservesAuthorHeight ? position[ 2 ] : geographic[ 2 ],
 		] ) as Position3D;
 	};
 
@@ -124,6 +128,13 @@ export function applyEnuTransformToFeature(
 		};
 	}
 	return normalizeFeature( candidate, { path: `/transform/${ feature.id }` } );
+}
+
+function isHorizontalTransform( transform: Required<EnuTransform> ): boolean {
+	return ! different( transform.translationMeters[ 2 ], 0 )
+		&& ! different( transform.rotationDegrees[ 1 ], 0 )
+		&& ! different( transform.rotationDegrees[ 2 ], 0 )
+		&& ! different( transform.scale[ 2 ], 1 );
 }
 
 function normalizeTransform( transform: EnuTransform ): Required<EnuTransform> {

@@ -21,12 +21,7 @@ import type {
 	Position3D,
 	ResolvedPlotGeometry,
 } from './document/types';
-import {
-	createEnuFrame,
-	ecefToEnu,
-	geodeticToEcef,
-	type Vector3Tuple,
-} from './document/geodesy';
+import type { Vector3Tuple } from './document/geodesy';
 import {
 	PlotDrawingController,
 	type DrawingControllerResult,
@@ -104,6 +99,7 @@ import {
 import {
 	screenRayAxisParameterMeters,
 	screenRayPlaneDirection,
+	screenRayPlaneOffsetMeters,
 	signedPlaneAngleDegrees,
 	unwrapAngleDegrees,
 } from './transform/pointer-axis';
@@ -837,14 +833,8 @@ export class PlotEditor {
 			);
 		}
 		if ( ok && start !== undefined ) {
-			const feature = effect.entityId === undefined
-				? this._store.get( this._selectionModel.state.primaryId ?? '' )
-				: this._store.get( effect.entityId );
 			this._pointerTransactionStart = Object.freeze( {
 				screen: start,
-				surface: feature === undefined
-					? undefined
-					: this._pickSurface( start, feature.heightReference )?.authorPosition,
 			} );
 			return;
 		}
@@ -914,20 +904,29 @@ export class PlotEditor {
 					], modifiers ),
 				} );
 			} else {
-				const primary = this._store.get( this._selectionModel.state.primaryId ?? '' );
-				const current = primary === undefined
-					? null
-					: this._pickSurface( screen, primary.heightReference );
-				if ( current === null || start?.surface === undefined ) return;
-				const frame = createEnuFrame( session.pivot.position );
-				const origin = ecefToEnu( geodeticToEcef( start.surface ), frame );
-				const target = ecefToEnu( geodeticToEcef( current.authorPosition ), frame );
+				if ( start === null ) return;
+				const planeOptions = {
+					raycaster: this._gizmoRaycaster,
+					camera: this._renderHost.camera,
+					canvas: this._canvas,
+					planeOrigin: session.pivot.ecef,
+					planeNormal: session.pivot.frame.up,
+				} as const;
+				const origin = screenRayPlaneOffsetMeters( {
+					...planeOptions, screen: start.screen,
+				} );
+				const target = screenRayPlaneOffsetMeters( {
+					...planeOptions, screen,
+				} );
+				if ( origin === null || target === null ) return;
+				const worldDelta = subtractVector( target, origin );
+				const delta: Vector3Tuple = [
+					dotVector( worldDelta, session.pivot.frame.east ),
+					dotVector( worldDelta, session.pivot.frame.north ),
+					0,
+				];
 				result = this._transform.update( {
-					translationMeters: constrainPointerTranslation( [
-						target[ 0 ] - origin[ 0 ],
-						target[ 1 ] - origin[ 1 ],
-						target[ 2 ] - origin[ 2 ],
-					], modifiers ),
+					translationMeters: constrainPointerTranslation( delta, modifiers ),
 				} );
 			}
 		} else if ( session.mode === 'rotate' ) {
@@ -960,8 +959,8 @@ export class PlotEditor {
 			this._pointerRotationAccumulator = { wrapped, unwrapped };
 			const angle = constrainPointerRotationAngleDegrees( unwrapped, modifiers );
 			const rotationDegrees: Vector3Tuple = session.axis === 'east'
-				? [ angle, 0, 0 ]
-				: session.axis === 'north' ? [ 0, angle, 0 ] : [ 0, 0, angle ];
+				? [ 0, angle, 0 ]
+				: session.axis === 'north' ? [ 0, 0, angle ] : [ angle, 0, 0 ];
 			result = this._transform.update( {
 				rotationDegrees,
 			} );
@@ -1455,12 +1454,19 @@ function assertOptions( options: PlotEditorOptions ): void {
 
 interface PointerTransactionStart {
 	readonly screen: ScreenPoint;
-	readonly surface?: Position3D;
 }
 
 interface PointerRotationAccumulator {
 	readonly wrapped: number;
 	readonly unwrapped: number;
+}
+
+function subtractVector( left: Vector3Tuple, right: Vector3Tuple ): Vector3Tuple {
+	return [ left[ 0 ] - right[ 0 ], left[ 1 ] - right[ 1 ], left[ 2 ] - right[ 2 ] ];
+}
+
+function dotVector( left: Vector3Tuple, right: Vector3Tuple ): number {
+	return left[ 0 ] * right[ 0 ] + left[ 1 ] * right[ 1 ] + left[ 2 ] * right[ 2 ];
 }
 
 function draftPick( position: Position3D, heightReference: HeightReference ) {

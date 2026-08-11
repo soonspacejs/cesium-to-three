@@ -21,8 +21,8 @@ function base( patch: Record<string, unknown> ): PlotFeature {
 }
 
 describe( 'applyEnuTransformToFeature', () => {
-	it( '日期变更线附近 East 平移经 ECEF/ENU 计算并规范回 [-180,180)', () => {
-		const source = base( { geometry: { center: [ 179.99, 0, 0 ], radius: 100 } } );
+	it( '日期变更线附近 East 平移经 ECEF/ENU 计算并保持作者高度', () => {
+		const source = base( { geometry: { center: [ 179.99, 0, 123 ], radius: 100 } } );
 		const moved = applyEnuTransformToFeature( source, {
 			pivot: [ 179.99, 0, 0 ], translationMeters: [ 5_000, 0, 0 ],
 		}, adapters );
@@ -30,6 +30,7 @@ describe( 'applyEnuTransformToFeature', () => {
 		expect( moved.geometry.center[ 0 ] ).toBeLessThan( -179.9 );
 		expect( geodesicDistanceMeters( source.geometry.center, moved.geometry.center ) )
 			.toBeCloseTo( 5_000, -1 );
+		expect( moved.geometry.center[ 2 ] ).toBe( 123 );
 		expect( moved.revision ).toBe( 4 );
 	} );
 

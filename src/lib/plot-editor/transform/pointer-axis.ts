@@ -48,9 +48,17 @@ export function screenRayAxisParameterMeters( options: ScreenRayAxisOptions ): n
 
 /** 返回相机射线与旋转平面交点相对 pivot 的单位方向。 */
 export function screenRayPlaneDirection( options: ScreenRayPlaneOptions ): Vector3Tuple | null {
+	const offset = screenRayPlaneOffsetMeters( options );
+	if ( offset === null ) return null;
+	const length = Math.hypot( ...offset );
+	return length <= 0 ? null : scale( offset, 1 / length );
+}
+
+/** 返回相机射线与目标平面的交点相对 planeOrigin 的 ECEF 米制 offset。 */
+export function screenRayPlaneOffsetMeters( options: ScreenRayPlaneOptions ): Vector3Tuple | null {
 	const ray = screenCameraRay( options );
 	if ( ray === null ) return null;
-	return rayPlaneDirection(
+	return rayPlaneOffsetMeters(
 		ray.origin, ray.direction, options.planeOrigin, options.planeNormal,
 	);
 }
@@ -123,6 +131,19 @@ export function rayPlaneDirection(
 	planeOrigin: Vector3Tuple,
 	planeNormal: Vector3Tuple,
 ): Vector3Tuple | null {
+	const radial = rayPlaneOffsetMeters( rayOrigin, rayDirection, planeOrigin, planeNormal );
+	if ( radial === null ) return null;
+	const radialLength = Math.hypot( ...radial );
+	return radialLength <= 0 ? null : scale( radial, 1 / radialLength );
+}
+
+/** 求射线与平面交点相对 planeOrigin 的 ECEF 米制 offset。 */
+export function rayPlaneOffsetMeters(
+	rayOrigin: Vector3Tuple,
+	rayDirection: Vector3Tuple,
+	planeOrigin: Vector3Tuple,
+	planeNormal: Vector3Tuple,
+): Vector3Tuple | null {
 	if ( ! [ ...rayOrigin, ...rayDirection, ...planeOrigin, ...planeNormal ].every( Number.isFinite ) ) {
 		return null;
 	}
@@ -140,13 +161,11 @@ export function rayPlaneDirection(
 	];
 	const rayParameter = dot( normal, toPlane ) / denominator;
 	if ( ! Number.isFinite( rayParameter ) || rayParameter < 0 ) return null;
-	const radial: Vector3Tuple = [
+	return [
 		rayOrigin[ 0 ] + ray[ 0 ] * rayParameter - planeOrigin[ 0 ],
 		rayOrigin[ 1 ] + ray[ 1 ] * rayParameter - planeOrigin[ 1 ],
 		rayOrigin[ 2 ] + ray[ 2 ] * rayParameter - planeOrigin[ 2 ],
 	];
-	const radialLength = Math.hypot( ...radial );
-	return radialLength <= 0 ? null : scale( radial, 1 / radialLength );
 }
 
 /** 计算绕 normal 从 start 到 current 的最短有符号角，范围为 [-180, 180]。 */

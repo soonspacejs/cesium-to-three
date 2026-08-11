@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	closestRayAxisParameterMeters,
 	rayPlaneDirection,
+	rayPlaneOffsetMeters,
 	screenRayAxisParameterMeters,
 	signedPlaneAngleDegrees,
 	unwrapAngleDegrees,
@@ -64,6 +65,10 @@ describe( 'pointer axis projection', () => {
 	} );
 
 	it( '射线与旋转平面相交后返回 pivot 径向单位向量', () => {
+		const offset = rayPlaneOffsetMeters(
+			[ 10, 2, 3 ], [ -1, 0, 0 ], [ 0, 0, 0 ], [ 1, 0, 0 ],
+		);
+		expect( offset ).toEqual( [ 0, 2, 3 ] );
 		const direction = rayPlaneDirection(
 			[ 10, 2, 3 ], [ -1, 0, 0 ], [ 0, 0, 0 ], [ 1, 0, 0 ],
 		);
@@ -73,6 +78,9 @@ describe( 'pointer axis projection', () => {
 		expect( direction?.[ 2 ] ).toBeCloseTo( 3 / Math.sqrt( 13 ), 12 );
 		expect( rayPlaneDirection(
 			[ 10, 2, 3 ], [ 0, 1, 0 ], [ 0, 0, 0 ], [ 1, 0, 0 ],
+		) ).toBeNull();
+		expect( rayPlaneOffsetMeters(
+			[ 10, 2, 3 ], [ 1, 0, 0 ], [ 0, 0, 0 ], [ 1, 0, 0 ],
 		) ).toBeNull();
 	} );
 
