@@ -38,6 +38,39 @@ function resolved(
 }
 
 describe( 'PlotRenderProjection', () => {
+	it( '七值高度参考逐项选择稳定渲染路径并分离作者高度与世界高度', () => {
+		const cases = [
+			[ HeightReference.NONE, 'plain-rte', undefined, 30, 30 ],
+			[ HeightReference.CLAMP_TO_GROUND, 'ground-classification', ClassificationType.BOTH, 0, 100 ],
+			[ HeightReference.RELATIVE_TO_GROUND, 'plain-rte', undefined, 7, 100 ],
+			[ HeightReference.CLAMP_TO_TERRAIN, 'ground-classification', ClassificationType.TERRAIN, 0, 100 ],
+			[ HeightReference.RELATIVE_TO_TERRAIN, 'plain-rte', undefined, 7, 100 ],
+			[ HeightReference.CLAMP_TO_3D_TILE, 'ground-classification', ClassificationType.CESIUM_3D_TILE, 0, 100 ],
+			[ HeightReference.RELATIVE_TO_3D_TILE, 'plain-rte', undefined, 7, 100 ],
+		] as const;
+
+		for ( const [ heightReference, path, classificationType, authorHeight, worldHeight ] of cases ) {
+			const feature = heightReference === HeightReference.NONE
+				? circle( heightReference )
+				: normalizeFeature( {
+					...circle( heightReference ),
+					geometry: { center: [ 10, 20, authorHeight ], radius: 1_000 },
+				} );
+			const render = projection.projectFeature( feature, heightReference === HeightReference.NONE
+				? undefined
+				: { resolved: new Map( [ [ 'circle', resolved( 0, worldHeight ) ] ] ) } );
+			expect( render ).toMatchObject( {
+				path,
+				surfaceStatus: 'ready',
+				visible: true,
+			} );
+			expect( render.classificationType ).toBe( classificationType );
+			expect( render.vertices.every( ( vertex ) =>
+				vertex.authorHeight === authorHeight
+				&& vertex.resolvedWorldHeight === worldHeight ) ).toBe( true );
+		}
+	} );
+
 	it( 'NONE 明确走 Plain/RTE，author/world 高度分栏且相等', () => {
 		const render = projection.projectFeature( circle() );
 		expect( render ).toMatchObject( {
