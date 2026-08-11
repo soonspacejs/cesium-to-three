@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createPlotDocumentStore } from '../../../src/lib/plot-editor/document/PlotDocument';
+import { isHeightReferenceClamp } from '../../../src/lib/plot-editor/document/height-reference';
 import { HeightReference } from '../../../src/lib/plot-editor/document/types';
 import {
 	decodePlotDocument,
@@ -44,6 +45,36 @@ describe( 'plot document codec', () => {
 		const result = decodePlotDocument( stringifyPlotDocument( source ) );
 		expect( result.migrated ).toBe( false );
 		expect( result.snapshot ).toEqual( source );
+	} );
+
+	it( '七值 HeightReference 序列化名称稳定且反序列化逐值恢复', () => {
+		const cases = [
+			[ HeightReference.NONE, 'NONE' ],
+			[ HeightReference.CLAMP_TO_GROUND, 'CLAMP_TO_GROUND' ],
+			[ HeightReference.RELATIVE_TO_GROUND, 'RELATIVE_TO_GROUND' ],
+			[ HeightReference.CLAMP_TO_TERRAIN, 'CLAMP_TO_TERRAIN' ],
+			[ HeightReference.RELATIVE_TO_TERRAIN, 'RELATIVE_TO_TERRAIN' ],
+			[ HeightReference.CLAMP_TO_3D_TILE, 'CLAMP_TO_3D_TILE' ],
+			[ HeightReference.RELATIVE_TO_3D_TILE, 'RELATIVE_TO_3D_TILE' ],
+		] as const;
+		const source = createPlotDocumentStore( {
+			id: 'height-reference-roundtrip',
+			features: cases.map( ( [ heightReference ], index ) => ( {
+				...circle( `height-${ index }`, heightReference ),
+				geometry: {
+					center: [ 116 + index * 0.01, 39, isHeightReferenceClamp( heightReference ) ? 0 : index + 1 ],
+					radius: 100,
+				},
+			} ) ),
+		} ).snapshot();
+
+		const encoded = encodePlotDocument( source );
+		expect( encoded.features.map( ( feature ) => feature.heightReference ) )
+			.toEqual( cases.map( ( [ , name ] ) => name ) );
+		const decoded = decodePlotDocument( JSON.stringify( encoded ) ).snapshot;
+		expect( decoded.features.map( ( feature ) => feature.heightReference ) )
+			.toEqual( cases.map( ( [ value ] ) => value ) );
+		expect( decoded ).toEqual( source );
 	} );
 
 	it( '严格 v1 拒绝二维坐标与 CLAMP 非零 author height', () => {
