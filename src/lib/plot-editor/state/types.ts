@@ -5,6 +5,12 @@ export interface ScreenPoint {
 	readonly y: number;
 }
 
+/** 活动编辑拖拽需要实时消费的语义修饰键；owner 仍只由 pointerdown 决定。 */
+export interface InteractionModifiers {
+	readonly shift: boolean;
+	readonly alt: boolean;
+}
+
 export type HitTargetKind =
 	| 'entity'
 	| 'vertex'
@@ -71,12 +77,14 @@ export type EditorIntent =
 		readonly entityId: PlotFeatureId;
 		readonly handleId: string;
 		readonly screen: ScreenPoint;
+		readonly modifiers?: InteractionModifiers;
 	}
 	| {
 		readonly type: 'beginEntityDrag';
 		readonly pointerId: number;
 		readonly entityId: PlotFeatureId;
 		readonly screen: ScreenPoint;
+		readonly modifiers?: InteractionModifiers;
 	}
 	| {
 		readonly type: 'beginBoxSelection';
@@ -88,11 +96,13 @@ export type EditorIntent =
 		readonly type: 'updatePointerTransaction';
 		readonly pointerId: number;
 		readonly screen: ScreenPoint;
+		readonly modifiers?: InteractionModifiers;
 	}
 	| {
 		readonly type: 'finishPointerTransaction';
 		readonly pointerId: number;
 		readonly screen: ScreenPoint;
+		readonly modifiers?: InteractionModifiers;
 	}
 	| { readonly type: 'cancelCurrentOperation'; readonly reason: CancelReason }
 	| { readonly type: 'deleteSelection' }

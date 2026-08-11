@@ -642,6 +642,7 @@ export class PlotEditor {
 			case 'UPDATE_POINTER_TRANSACTION': this._updatePointerTransaction(
 				effect.transactionId,
 				effect.screen,
+				effect.modifiers,
 			); break;
 			case 'UPDATE_KEYBOARD_TRANSACTION': {
 				const result = this._transform.nudge( effect.axis, effect.amountMeters );
@@ -846,7 +847,11 @@ export class PlotEditor {
 		return result.ok;
 	}
 
-	private _updatePointerTransaction( transactionId: string, screen: ScreenPoint ): void {
+	private _updatePointerTransaction(
+		transactionId: string,
+		screen: ScreenPoint,
+		modifiers: { readonly shift: boolean; readonly alt: boolean },
+	): void {
 		if ( this._shapeEditor.session !== null ) {
 			const feature = this._store.get( this._shapeEditor.session.entityId );
 			const hit = feature === undefined ? null : this._pickSurface( screen, feature.heightReference );
@@ -854,6 +859,8 @@ export class PlotEditor {
 			const result = this._shapeEditor.update( hit === null ? null : {
 				authorPosition: hit.authorPosition,
 				screenDeltaCssPixels: [ screen.x - start.x, screen.y - start.y ],
+				shift: modifiers.shift,
+				alt: modifiers.alt,
 			} );
 			if ( result.changed ) this._dispatch( { type: 'TRANSACTION_UPDATED', transactionId } );
 			else if ( ! result.ok ) this._reportControllerError( result.error );

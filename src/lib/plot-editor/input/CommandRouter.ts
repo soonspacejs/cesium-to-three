@@ -8,6 +8,7 @@ import type {
 	EditorIntent,
 	EnuAxis,
 	HitTarget,
+	InteractionModifiers,
 	ScreenPoint,
 	SelectionOperation,
 	TransformMode,
@@ -94,7 +95,10 @@ export class CommandRouter {
 				return one( { type: 'updateDraftPointer', screen } );
 			}
 			if ( POINTER_TRANSACTION_STATES.has( context.interaction ) ) {
-				return one( { type: 'updatePointerTransaction', pointerId: input.pointerId, screen } );
+				return one( {
+					type: 'updatePointerTransaction', pointerId: input.pointerId, screen,
+					modifiers: interactionModifiers( input.modifiers.shift, input.modifiers.alt ),
+				} );
 			}
 			if ( context.interaction === 'pointer-pending' ) {
 				const pending = context.pendingHit;
@@ -105,6 +109,7 @@ export class CommandRouter {
 						pointerId: input.pointerId,
 						entityId: pending.entityId,
 						screen,
+						modifiers: interactionModifiers( input.modifiers.shift, input.modifiers.alt ),
 					} )
 					: Object.freeze( [] );
 			}
@@ -161,6 +166,7 @@ export class CommandRouter {
 					entityId: hit.entityId,
 					handleId: hit.handleId,
 					screen,
+					modifiers: interactionModifiers( input.modifiers.shift, input.modifiers.alt ),
 				} )
 				: Object.freeze( [] );
 		}
@@ -192,7 +198,10 @@ export class CommandRouter {
 		const { input } = dispatch;
 		if ( POINTER_TRANSACTION_STATES.has( this._context.interaction ) ) {
 			return dispatch.owner === 'editor'
-				? one( { type: 'finishPointerTransaction', pointerId: input.pointerId, screen } )
+				? one( {
+					type: 'finishPointerTransaction', pointerId: input.pointerId, screen,
+					modifiers: interactionModifiers( input.modifiers.shift, input.modifiers.alt ),
+				} )
 				: Object.freeze( [] );
 		}
 		if ( dispatch.gesture !== 'click' ) return Object.freeze( [] );
@@ -364,6 +373,10 @@ function freezeContext( context: RouterContext ): RouterContext {
 
 function freezeScreen( x: number, y: number ): ScreenPoint {
 	return Object.freeze( { x, y } );
+}
+
+function interactionModifiers( shift: boolean, alt: boolean ): InteractionModifiers {
+	return Object.freeze( { shift, alt } );
 }
 
 function one( intent: EditorIntent ): readonly EditorIntent[] {

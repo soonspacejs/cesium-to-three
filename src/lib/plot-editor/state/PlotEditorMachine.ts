@@ -6,6 +6,7 @@ import type {
 	EditorIntent,
 	EnuAxis,
 	HitTarget,
+	InteractionModifiers,
 	ScreenPoint,
 	SelectionOperation,
 	TransformMode,
@@ -65,6 +66,7 @@ export type EditorInteraction =
 		readonly handleId: string;
 		readonly start: ScreenPoint;
 		readonly current: ScreenPoint;
+		readonly modifiers: InteractionModifiers;
 		readonly transactionId: string;
 	}
 	| {
@@ -73,6 +75,7 @@ export type EditorInteraction =
 		readonly entityId: PlotFeatureId;
 		readonly start: ScreenPoint;
 		readonly current: ScreenPoint;
+		readonly modifiers: InteractionModifiers;
 		readonly transactionId: string;
 	}
 	| {
@@ -214,6 +217,7 @@ export type EditorEffect =
 		readonly type: 'UPDATE_POINTER_TRANSACTION';
 		readonly transactionId: string;
 		readonly screen: ScreenPoint;
+		readonly modifiers: InteractionModifiers;
 	}
 	| {
 		readonly type: 'UPDATE_KEYBOARD_TRANSACTION';
@@ -299,9 +303,11 @@ export function reduceEditor( state: EditorState, event: EditorEvent ): EditorTr
 		case 'beginHandleDrag': return beginHandleDrag( state, event );
 		case 'beginEntityDrag': return beginEntityDrag( state, event );
 		case 'beginBoxSelection': return beginBoxSelection( state, event );
-		case 'updatePointerTransaction': return updatePointerTransaction( state, event.pointerId, event.screen );
+		case 'updatePointerTransaction': return updatePointerTransaction(
+			state, event.pointerId, event.screen, event.modifiers,
+		);
 		case 'finishPointerTransaction': return finishPointerTransaction(
-			state, event.pointerId, event.screen,
+			state, event.pointerId, event.screen, event.modifiers,
 		);
 		case 'cancelCurrentOperation': return cancelOperation( state, event.reason );
 		case 'deleteSelection': return state.selection.ids.length === 0
@@ -673,6 +679,7 @@ function beginHandleDrag(
 		handleId: event.handleId,
 		start: freezeScreen( event.screen ),
 		current: freezeScreen( event.screen ),
+		modifiers: freezeInteractionModifiers( event.modifiers ),
 		transactionId: begun.transaction.id,
 	} );
 	return transition( withState( state, {
@@ -712,16 +719,18 @@ function beginEntityDrag(
 		? state.interaction.start
 		: event.screen;
 	if ( start.x !== event.screen.x || start.y !== event.screen.y ) {
-		effects.push( {
-			type: 'UPDATE_POINTER_TRANSACTION',
-			transactionId: begun.transaction.id,
-			screen: freezeScreen( event.screen ),
-		} );
+			effects.push( {
+				type: 'UPDATE_POINTER_TRANSACTION',
+				transactionId: begun.transaction.id,
+				screen: freezeScreen( event.screen ),
+				modifiers: freezeInteractionModifiers( event.modifiers ),
+			} );
 	}
 	return transition( withState( state, {
 		interaction: Object.freeze( {
 			kind: 'dragging-entity', pointerId: event.pointerId, entityId: event.entityId,
 			start: freezeScreen( start ), current: freezeScreen( event.screen ),
+			modifiers: freezeInteractionModifiers( event.modifiers ),
 			transactionId: begun.transaction.id,
 		} ),
 		activeTransaction: begun.transaction,
@@ -747,9 +756,11 @@ function updatePointerTransaction(
 	state: EditorState,
 	pointerId: number,
 	screenInput: ScreenPoint,
+	modifiersInput?: InteractionModifiers,
 ): EditorTransition {
 	const interaction = state.interaction;
 	const screen = freezeScreen( screenInput );
+	const modifiers = freezeInteractionModifiers( modifiersInput );
 	if ( interaction.kind === 'box-selecting' ) {
 		return interaction.pointerId !== pointerId ? transition( state ) : transition(
 			withState( state, { interaction: Object.freeze( { ...interaction, current: screen } ) } ),
@@ -760,9 +771,9 @@ function updatePointerTransaction(
 	}
 	if ( interaction.pointerId !== pointerId ) return transition( state );
 	return transition( withState( state, {
-		interaction: Object.freeze( { ...interaction, current: screen } ),
+		interaction: Object.freeze( { ...interaction, current: screen, modifiers } ),
 	} ), {
-		type: 'UPDATE_POINTER_TRANSACTION', transactionId: interaction.transactionId, screen,
+		type: 'UPDATE_POINTER_TRANSACTION', transactionId: interaction.transactionId, screen, modifiers,
 	} );
 }
 
@@ -770,9 +781,11 @@ function finishPointerTransaction(
 	state: EditorState,
 	pointerId: number,
 	screenInput: ScreenPoint,
+	modifiersInput?: InteractionModifiers,
 ): EditorTransition {
 	const interaction = state.interaction;
 	const screen = freezeScreen( screenInput );
+	const modifiers = freezeInteractionModifiers( modifiersInput );
 	if ( interaction.kind === 'box-selecting' ) {
 		if ( interaction.pointerId !== pointerId ) return transition( state );
 		return transition( withState( state, { interaction: Object.freeze( { kind: 'idle' } ) } ), {
@@ -785,16 +798,18 @@ function finishPointerTransaction(
 	}
 	if ( interaction.pointerId !== pointerId ) return transition( state );
 	const effects: EditorEffect[] = [];
-	if ( interaction.current.x !== screen.x || interaction.current.y !== screen.y ) {
+	if ( interaction.current.x !== screen.x || interaction.current.y !== screen.y
+		|| !interactionModifiersEqual( interaction.modifiers, modifiers ) ) {
 		effects.push( {
 			type: 'UPDATE_POINTER_TRANSACTION',
 			transactionId: interaction.transactionId,
 			screen,
+			modifiers,
 		} );
 	}
 	effects.push( { type: 'COMMIT_TRANSACTION', transactionId: interaction.transactionId } );
 	return transition( withState( state, {
-		interaction: Object.freeze( { ...interaction, current: screen } ),
+		interaction: Object.freeze( { ...interaction, current: screen, modifiers } ),
 	} ), ...effects );
 }
 
@@ -1088,6 +1103,22 @@ function freezeHit( hit: HitTarget | null ): HitTarget | null {
 
 function freezeScreen( screen: ScreenPoint ): ScreenPoint {
 	return Object.freeze( { x: screen.x, y: screen.y } );
+}
+
+function freezeInteractionModifiers(
+	modifiers: InteractionModifiers | undefined,
+): InteractionModifiers {
+	return Object.freeze( {
+		shift: modifiers?.shift === true,
+		alt: modifiers?.alt === true,
+	} );
+}
+
+function interactionModifiersEqual(
+	left: InteractionModifiers,
+	right: InteractionModifiers,
+): boolean {
+	return left.shift === right.shift && left.alt === right.alt;
 }
 
 function freezePosition( position: Position3D ): Position3D {

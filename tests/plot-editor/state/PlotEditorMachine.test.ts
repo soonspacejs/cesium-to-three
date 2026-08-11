@@ -275,17 +275,46 @@ describe( 'PlotEditorMachine selection and transactions', () => {
 		} ).effects ).toEqual( [] );
 		let transition = step( state, {
 			type: 'updatePointerTransaction', pointerId: 7, screen: { x: 10, y: 10 },
+			modifiers: { shift: true, alt: false },
 		} );
-		expect( transition.effects[ 0 ]?.type ).toBe( 'UPDATE_POINTER_TRANSACTION' );
+		expect( transition.effects[ 0 ] ).toMatchObject( {
+			type: 'UPDATE_POINTER_TRANSACTION', modifiers: { shift: true, alt: false },
+		} );
 		state = transition.state;
 		transition = step( state, {
 			type: 'finishPointerTransaction', pointerId: 7, screen: { x: 12, y: 11 },
+			modifiers: { shift: false, alt: true },
 		} );
 		expect( transition.effects ).toEqual( [
 			{
 				type: 'UPDATE_POINTER_TRANSACTION',
 				transactionId: state.activeTransaction?.id,
 				screen: { x: 12, y: 11 },
+				modifiers: { shift: false, alt: true },
+			},
+			{ type: 'COMMIT_TRANSACTION', transactionId: state.activeTransaction?.id },
+		] );
+	} );
+
+	it( 'pointerup 坐标未变但 modifier 变化时仍刷新最后一帧再提交', () => {
+		let state = step( ready( [ 'a' ] ), {
+			type: 'beginHandleDrag', pointerId: 3, entityId: 'a', handleId: 'vertex:0',
+			screen: { x: 20, y: 30 }, modifiers: { shift: false, alt: false },
+		} ).state;
+		state = step( state, {
+			type: 'updatePointerTransaction', pointerId: 3, screen: { x: 25, y: 35 },
+			modifiers: { shift: false, alt: false },
+		} ).state;
+		const finished = step( state, {
+			type: 'finishPointerTransaction', pointerId: 3, screen: { x: 25, y: 35 },
+			modifiers: { shift: true, alt: false },
+		} );
+		expect( finished.effects ).toEqual( [
+			{
+				type: 'UPDATE_POINTER_TRANSACTION',
+				transactionId: state.activeTransaction?.id,
+				screen: { x: 25, y: 35 },
+				modifiers: { shift: true, alt: false },
 			},
 			{ type: 'COMMIT_TRANSACTION', transactionId: state.activeTransaction?.id },
 		] );

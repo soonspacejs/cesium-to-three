@@ -120,6 +120,23 @@ describe( 'CommandRouter pointer', () => {
 			.toMatchObject( { type: 'selectAt', hit: pendingHit } );
 	} );
 
+	it( '活动拖拽的 move/up 携带当帧 Shift/Alt，不沿用 pointerdown 快照', () => {
+		const router = new CommandRouter( context( { interaction: 'dragging-handle' } ) );
+		const current = { ...modifiers, shift: true, alt: true };
+		expect( router.routePointer( pointer( 'move', { modifiers: current }, {
+			gesture: 'dragging', startModifiers: modifiers,
+		} ) )[ 0 ] ).toEqual( {
+			type: 'updatePointerTransaction', pointerId: 1, screen: { x: 12, y: 34 },
+			modifiers: { shift: true, alt: true },
+		} );
+		expect( router.routePointer( pointer( 'up', { modifiers: current }, {
+			gesture: 'dragging', startModifiers: modifiers,
+		} ) )[ 0 ] ).toEqual( {
+			type: 'finishPointerTransaction', pointerId: 1, screen: { x: 12, y: 34 },
+			modifiers: { shift: true, alt: true },
+		} );
+	} );
+
 	it( 'cancel/lost capture 统一生成回滚意图，disposed 永远忽略', () => {
 		const router = new CommandRouter( context() );
 		expect( router.routePointer( pointer( 'cancel' ) )[ 0 ] ).toEqual( {
