@@ -227,6 +227,8 @@ export class KeyboardInput {
 		if ( hadHeld ) {
 			this._options.onCancelHeld?.( reason );
 		}
+		// 活动事务可能在启动键已经释放后仍存在，因此生命周期取消不能依赖 held 集合。
+		this._options.onFocusLost?.( reason );
 	}
 }
 

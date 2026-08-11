@@ -370,6 +370,28 @@ describe( 'PlotEditor facade', () => {
 		editor.dispose();
 	} );
 
+	it( 'G 键释放后窗口失焦仍回滚无 held key 的活动变换事务', () => {
+		const { editor, root, window } = createEditor( { autoAttachInputs: true } );
+		const feature = point( 'blur-transform' );
+		editor.execute( { type: 'feature.add', feature } );
+		editor.select( [ feature.id ] );
+		editor.focus();
+		const transformSession = () => ( editor as unknown as {
+			_transform: { session: { mode: string } | null };
+		} )._transform.session;
+
+		root.dispatch( 'keydown', keyboardEvent( root, 'g', 'KeyG' ) );
+		root.dispatch( 'keyup', {
+			...keyboardEvent( root, 'g', 'KeyG' ), type: 'keyup',
+		} as KeyboardEvent );
+		expect( transformSession()?.mode ).toBe( 'translate' );
+
+		window.dispatch( 'blur', { target: window } as unknown as Event );
+
+		expect( transformSession() ).toBeNull();
+		editor.dispose();
+	} );
+
 	it( '连续切换绘制工具不会让旧 session 的回滚取消新工具', () => {
 		const { editor } = createEditor();
 		const modes: string[] = [];

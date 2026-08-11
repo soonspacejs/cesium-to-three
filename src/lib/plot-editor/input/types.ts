@@ -200,5 +200,11 @@ export interface KeyboardInputOptions {
 		focus: FocusDomain,
 	) => CommandContext;
 	readonly onCommandError?: ( error: unknown, commandId: string ) => void;
+	/**
+	 * 窗口失焦、页面隐藏或输入解绑时始终触发，供总控回滚活动事务。
+	 * 它不依赖当前是否仍有按键处于 held 状态。
+	 */
+	readonly onFocusLost?: ( reason: 'blur' | 'hidden' | 'pagehide' | 'detach' ) => void;
+	/** 仅当 held 集合非空并被清理时触发。 */
 	readonly onCancelHeld?: ( reason: 'blur' | 'hidden' | 'pagehide' | 'detach' ) => void;
 }

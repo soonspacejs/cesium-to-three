@@ -89,16 +89,18 @@ function createInput(
 	} );
 	const keymap = createDefaultEditorKeymap( execute );
 	const onCancelHeld = vi.fn();
+	const onFocusLost = vi.fn();
 	const onCommandError = vi.fn();
 	const input = new KeyboardInput( {
 		root: dom.root,
 		keymap,
 		platform,
 		getCommandContext: context,
+		onFocusLost,
 		onCancelHeld,
 		onCommandError,
 	} );
-	return { ...dom, input, execute, onCancelHeld, onCommandError };
+	return { ...dom, input, execute, onCancelHeld, onFocusLost, onCommandError };
 }
 
 describe( 'KeyboardInput held state 与命令消费', () => {
@@ -219,6 +221,17 @@ describe( '异常清理与生命周期', () => {
 		window.dispatch( reason );
 		expect( input.getSnapshot().pressedCodes.size ).toBe( 0 );
 		expect( onCancelHeld ).toHaveBeenCalledWith( reason );
+	} );
+
+	it( '没有 held key 时窗口失焦仍通知上层回滚活动事务', () => {
+		const { window, input, onCancelHeld, onFocusLost } = createInput();
+		input.attach();
+
+		window.dispatch( 'blur' );
+
+		expect( input.getSnapshot().pressedCodes.size ).toBe( 0 );
+		expect( onCancelHeld ).not.toHaveBeenCalled();
+		expect( onFocusLost ).toHaveBeenCalledWith( 'blur' );
 	} );
 
 	it( 'document hidden 清空 held，迟到 keyup 是安全 no-op', () => {

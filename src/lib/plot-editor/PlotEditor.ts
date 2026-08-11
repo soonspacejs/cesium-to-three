@@ -302,7 +302,7 @@ export class PlotEditor {
 			onCommandError: ( error, id ) => this._reportError(
 				'KEYBOARD_COMMAND_FAILED', `键盘命令 ${ id } 执行失败。`, error,
 			),
-			onCancelHeld: ( reason ) => this._dispatch( {
+			onFocusLost: ( reason ) => this._dispatch( {
 				type: 'FOCUS_LOST', reason: reason === 'hidden' ? 'hidden' : 'blur',
 			} ),
 		} );
