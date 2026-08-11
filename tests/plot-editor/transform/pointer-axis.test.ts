@@ -2,7 +2,10 @@ import { PerspectiveCamera, Raycaster } from 'three';
 import { describe, expect, it } from 'vitest';
 import {
 	closestRayAxisParameterMeters,
+	rayPlaneDirection,
 	screenRayAxisParameterMeters,
+	signedPlaneAngleDegrees,
+	unwrapAngleDegrees,
 } from '../../../src/lib/plot-editor/transform/pointer-axis';
 
 describe( 'pointer axis projection', () => {
@@ -58,5 +61,29 @@ describe( 'pointer axis projection', () => {
 		expect( start ).toBeCloseTo( 0, 10 );
 		expect( raised ).not.toBeNull();
 		expect( Math.abs( raised! - start! ) ).toBeGreaterThan( 0.5 );
+	} );
+
+	it( '射线与旋转平面相交后返回 pivot 径向单位向量', () => {
+		const direction = rayPlaneDirection(
+			[ 10, 2, 3 ], [ -1, 0, 0 ], [ 0, 0, 0 ], [ 1, 0, 0 ],
+		);
+		expect( direction ).not.toBeNull();
+		expect( direction?.[ 0 ] ).toBeCloseTo( 0, 12 );
+		expect( direction?.[ 1 ] ).toBeCloseTo( 2 / Math.sqrt( 13 ), 12 );
+		expect( direction?.[ 2 ] ).toBeCloseTo( 3 / Math.sqrt( 13 ), 12 );
+		expect( rayPlaneDirection(
+			[ 10, 2, 3 ], [ 0, 1, 0 ], [ 0, 0, 0 ], [ 1, 0, 0 ],
+		) ).toBeNull();
+	} );
+
+	it( '平面有符号角按 normal 定向，并在跨 ±180° 时连续 unwrap', () => {
+		expect( signedPlaneAngleDegrees(
+			[ 1, 0, 0 ], [ 0, 1, 0 ], [ 0, 0, 1 ],
+		) ).toBeCloseTo( 90, 12 );
+		expect( signedPlaneAngleDegrees(
+			[ 1, 0, 0 ], [ 0, 1, 0 ], [ 0, 0, -1 ],
+		) ).toBeCloseTo( -90, 12 );
+		expect( unwrapAngleDegrees( 179, 179, -179 ) ).toBe( 181 );
+		expect( unwrapAngleDegrees( -179, -179, 179 ) ).toBe( -181 );
 	} );
 } );

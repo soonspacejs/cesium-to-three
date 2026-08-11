@@ -430,6 +430,53 @@ describe( 'PlotEditor facade', () => {
 		editor.dispose();
 	} );
 
+	it( 'heading ring 使用射线旋转平面与连续角度更新整组 working preview', () => {
+		const pick = vi.fn( () => null );
+		const { editor, root, camera } = createEditor( { autoAttachInputs: true, pick } );
+		const west = normalizeFeature( {
+			...point( 'rotate-west' ), geometry: { position: [ -0.01, 0, 0 ] },
+		} );
+		const east = normalizeFeature( {
+			...point( 'rotate-east' ), geometry: { position: [ 0.01, 0, 0 ] },
+		} );
+		editor.execute( { type: 'feature.add', feature: west } );
+		editor.execute( { type: 'feature.add', feature: east } );
+		editor.select( [ west.id, east.id ] );
+		editor.focus();
+		camera.position.set( 6_379_137, 1_000, 1_000 );
+		camera.lookAt( 6_378_137, 0, 0 );
+		camera.updateMatrixWorld();
+
+		root.dispatch( 'keydown', keyboardEvent( root, 'r', 'KeyR' ) );
+		root.dispatch( 'keydown', keyboardEvent( root, 'z', 'KeyZ' ) );
+		const internals = editor as unknown as {
+			_state: { activeTransaction?: { id: string } };
+			_pointerTransactionStart: { screen: { x: number; y: number } } | null;
+			_pointerRotationAccumulator: { unwrapped: number } | null;
+			_transformPreview: { features: readonly ReturnType<typeof point>[] } | null;
+			_updatePointerTransaction(
+				transactionId: string,
+				screen: { x: number; y: number },
+				modifiers: { shift: boolean; alt: boolean },
+			): void;
+		};
+		const transactionId = internals._state.activeTransaction?.id;
+		expect( transactionId ).toBeDefined();
+		internals._pointerTransactionStart = { screen: { x: 460, y: 300 } };
+		internals._updatePointerTransaction(
+			transactionId!, { x: 400, y: 240 }, { shift: false, alt: true },
+		);
+
+		expect( Math.abs( internals._pointerRotationAccumulator?.unwrapped ?? 0 ) )
+			.toBeGreaterThan( 1 );
+		const preview = internals._transformPreview?.features;
+		expect( preview ).toHaveLength( 2 );
+		expect( preview?.map( ( feature ) => feature.geometry ) )
+			.not.toEqual( [ west.geometry, east.geometry ] );
+		expect( pick ).not.toHaveBeenCalled();
+		editor.dispose();
+	} );
+
 	it( '连续切换绘制工具不会让旧 session 的回滚取消新工具', () => {
 		const { editor } = createEditor();
 		const modes: string[] = [];

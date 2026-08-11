@@ -21,7 +21,12 @@ import type {
 	Position3D,
 	ResolvedPlotGeometry,
 } from './document/types';
-import { createEnuFrame, ecefToEnu, geodeticToEcef } from './document/geodesy';
+import {
+	createEnuFrame,
+	ecefToEnu,
+	geodeticToEcef,
+	type Vector3Tuple,
+} from './document/geodesy';
 import {
 	PlotDrawingController,
 	type DrawingControllerResult,
@@ -93,10 +98,15 @@ import { createEnuFeatureTransform } from './transform/feature-transform';
 import { getSelectionGizmoCapabilities } from './transform/gizmo';
 import {
 	constrainPointerTranslation,
-	pointerRotationDegrees,
+	constrainPointerRotationAngleDegrees,
 	pointerScaleFactor,
 } from './transform/pointer-constraints';
-import { screenRayAxisParameterMeters } from './transform/pointer-axis';
+import {
+	screenRayAxisParameterMeters,
+	screenRayPlaneDirection,
+	signedPlaneAngleDegrees,
+	unwrapAngleDegrees,
+} from './transform/pointer-axis';
 import type { GizmoCapabilities, TransformPreview } from './transform/types';
 
 export interface EditorRenderHost {
@@ -170,6 +180,7 @@ export class PlotEditor {
 	private _state: EditorState;
 	private _vertexEditId: PlotFeatureId | undefined;
 	private _pointerTransactionStart: PointerTransactionStart | null = null;
+	private _pointerRotationAccumulator: PointerRotationAccumulator | null = null;
 	private _internalCommandDepth = 0;
 	private _pendingDocumentRevision: number | undefined;
 	private _sessionRevision = 0;
@@ -597,6 +608,7 @@ export class PlotEditor {
 				this._transform.cancel();
 				this._textEditor.cancel();
 				this._pointerTransactionStart = null;
+				this._pointerRotationAccumulator = null;
 				break;
 			case 'APPLY_SELECTION':
 				this._selectionController.applyHit(
@@ -665,6 +677,7 @@ export class PlotEditor {
 				this._transform.cancel();
 				this._textEditor.cancel();
 				this._pointerTransactionStart = null;
+				this._pointerRotationAccumulator = null;
 				break;
 			case 'FOCUS_TEXT_INPUT': this._focusTextInput( effect.entityId ); break;
 			case 'REPORT_ERROR': this._reportError(
@@ -847,6 +860,7 @@ export class PlotEditor {
 		mode: TransformMode,
 		ids = this._selectionModel.state.ids,
 	): boolean {
+		this._pointerRotationAccumulator = null;
 		const primary = this._selectionModel.state.primaryId ?? ids[ 0 ];
 		if ( primary === undefined ) return false;
 		const result = this._transform.begin( ids, primary, mode );
@@ -917,10 +931,39 @@ export class PlotEditor {
 				} );
 			}
 		} else if ( session.mode === 'rotate' ) {
-			const dx = screen.x - ( start?.screen.x ?? screen.x );
-			const dy = screen.y - ( start?.screen.y ?? screen.y );
+			if ( start === null || session.axis === undefined || session.axis === 'uniform' ) return;
+			const rotationAxis: Vector3Tuple = session.axis === 'east'
+				? session.pivot.frame.east
+				: session.axis === 'north' ? session.pivot.frame.north : session.pivot.frame.up;
+			const planeOptions = {
+				raycaster: this._gizmoRaycaster,
+				camera: this._renderHost.camera,
+				canvas: this._canvas,
+				planeOrigin: session.pivot.ecef,
+				planeNormal: rotationAxis,
+			} as const;
+			const startDirection = screenRayPlaneDirection( {
+				...planeOptions, screen: start.screen,
+			} );
+			const currentDirection = screenRayPlaneDirection( {
+				...planeOptions, screen,
+			} );
+			if ( startDirection === null || currentDirection === null ) return;
+			const wrapped = signedPlaneAngleDegrees(
+				startDirection, currentDirection, rotationAxis,
+			);
+			if ( wrapped === null ) return;
+			const previous = this._pointerRotationAccumulator;
+			const unwrapped = previous === null
+				? wrapped
+				: unwrapAngleDegrees( previous.wrapped, previous.unwrapped, wrapped );
+			this._pointerRotationAccumulator = { wrapped, unwrapped };
+			const angle = constrainPointerRotationAngleDegrees( unwrapped, modifiers );
+			const rotationDegrees: Vector3Tuple = session.axis === 'east'
+				? [ angle, 0, 0 ]
+				: session.axis === 'north' ? [ 0, angle, 0 ] : [ 0, 0, angle ];
 			result = this._transform.update( {
-				rotationDegrees: pointerRotationDegrees( dx, dy, modifiers ),
+				rotationDegrees,
 			} );
 		} else {
 			const dx = screen.x - ( start?.screen.x ?? screen.x );
@@ -938,6 +981,7 @@ export class PlotEditor {
 				? this._shapeEditor.commit()
 				: this._transform.commit() );
 		this._pointerTransactionStart = null;
+		this._pointerRotationAccumulator = null;
 		if ( result.ok || result.error?.code === 'EDIT_NO_VALID_PREVIEW'
 			|| result.error?.code === 'TRANSFORM_EMPTY' ) {
 			this._dispatch( {
@@ -1412,6 +1456,11 @@ function assertOptions( options: PlotEditorOptions ): void {
 interface PointerTransactionStart {
 	readonly screen: ScreenPoint;
 	readonly surface?: Position3D;
+}
+
+interface PointerRotationAccumulator {
+	readonly wrapped: number;
+	readonly unwrapped: number;
 }
 
 function draftPick( position: Position3D, heightReference: HeightReference ) {

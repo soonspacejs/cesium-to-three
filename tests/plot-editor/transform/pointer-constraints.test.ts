@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	constrainPointerRotationAngleDegrees,
 	constrainPointerTranslation,
 	pointerModifierMultiplier,
 	pointerRotationDegrees,
@@ -28,6 +29,9 @@ describe( 'pointer transform modifiers', () => {
 		expect( precise[ 1 ] ).toBeCloseTo( -0.7 );
 		expect( precise[ 2 ] ).toBeCloseTo( 0.8 );
 		expect( pointerRotationDegrees( 2, -1, SHIFT ) ).toEqual( [ 15, 15, 15 ] );
+		expect( constrainPointerRotationAngleDegrees( 22, NONE ) ).toBe( 15 );
+		expect( constrainPointerRotationAngleDegrees( 22, ALT ) ).toBeCloseTo( 2.2 );
+		expect( constrainPointerRotationAngleDegrees( 22, SHIFT ) ).toBe( 225 );
 	} );
 
 	it( '缩放使用正指数曲线，Shift/Alt 实时改变灵敏度', () => {

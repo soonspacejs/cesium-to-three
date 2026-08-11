@@ -28,14 +28,20 @@ export function pointerRotationDegrees(
 	deltaYCssPixels: number,
 	modifiers: InteractionModifiers,
 ): Vector3Tuple {
-	const multiplier = pointerModifierMultiplier( modifiers );
-	const raw: Vector3Tuple = [
-		deltaXCssPixels * multiplier,
-		-deltaYCssPixels * multiplier,
-		deltaXCssPixels * multiplier,
+	return [
+		constrainPointerRotationAngleDegrees( deltaXCssPixels, modifiers ),
+		constrainPointerRotationAngleDegrees( -deltaYCssPixels, modifiers ),
+		constrainPointerRotationAngleDegrees( deltaXCssPixels, modifiers ),
 	];
-	if ( modifiers.alt ) return raw;
-	return [ snapRotation( raw[ 0 ] ), snapRotation( raw[ 1 ] ), snapRotation( raw[ 2 ] ) ];
+}
+
+/** 对已经由射线/旋转平面算出的几何角应用实时倍率和 snap。 */
+export function constrainPointerRotationAngleDegrees(
+	angleDegrees: number,
+	modifiers: InteractionModifiers,
+): number {
+	const value = angleDegrees * pointerModifierMultiplier( modifiers );
+	return modifiers.alt ? value : snapRotation( value );
 }
 
 /** 缩放保持严格正数，并用指数曲线避免跨过零点。 */
