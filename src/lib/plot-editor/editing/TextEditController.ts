@@ -247,9 +247,12 @@ export class TextEditController {
 		textarea.addEventListener( 'compositionend', this._onCompositionEnd );
 		textarea.addEventListener( 'blur', this._onBlur );
 		this._options.root.appendChild( textarea );
+		clampTextareaToRoot( textarea, this._options.root );
 		this._emitPreview();
 		textarea.focus( { preventScroll: true } );
-		textarea.setSelectionRange( textarea.value.length, textarea.value.length );
+		// 新建文本中的默认提示只是占位内容；首次输入应直接替换它。
+		if ( session.kind === 'draft' ) textarea.select();
+		else textarea.setSelectionRange( textarea.value.length, textarea.value.length );
 	}
 
 	private _assertOpen(): void {
@@ -266,17 +269,39 @@ function applyTextareaStyle(
 	style.left = `${ placement?.x ?? 12 }px`;
 	style.top = `${ placement?.y ?? 12 }px`;
 	style.zIndex = '28';
+	style.boxSizing = 'border-box';
+	style.width = '20rem';
+	style.height = '5.5rem';
+	style.maxWidth = 'calc(100% - 24px)';
+	style.maxHeight = 'calc(100% - 24px)';
 	style.minWidth = '12rem';
 	style.minHeight = '4.5rem';
 	style.padding = '8px 10px';
 	style.border = '1px solid #00e5ff';
 	style.borderRadius = '4px';
-	style.background = 'rgba(0, 19, 26, 0.92)';
+	style.background = '#00131a';
 	style.color = '#ffffff';
+	style.caretColor = '#ffffff';
 	style.font = '14px/1.5 sans-serif';
 	style.resize = 'both';
 	style.outline = 'none';
 	style.whiteSpace = 'pre-wrap';
+	style.pointerEvents = 'auto';
+}
+
+function clampTextareaToRoot( textarea: HTMLTextAreaElement, root: HTMLElement ): void {
+	const rootWidth = root.clientWidth;
+	const rootHeight = root.clientHeight;
+	const inputWidth = textarea.offsetWidth;
+	const inputHeight = textarea.offsetHeight;
+	if ( rootWidth > 0 && inputWidth > 0 ) {
+		const left = Number.parseFloat( textarea.style.left );
+		textarea.style.left = `${ Math.min( Math.max( left, 12 ), Math.max( 12, rootWidth - inputWidth - 12 ) ) }px`;
+	}
+	if ( rootHeight > 0 && inputHeight > 0 ) {
+		const top = Number.parseFloat( textarea.style.top );
+		textarea.style.top = `${ Math.min( Math.max( top, 12 ), Math.max( 12, rootHeight - inputHeight - 12 ) ) }px`;
+	}
 }
 
 function success(

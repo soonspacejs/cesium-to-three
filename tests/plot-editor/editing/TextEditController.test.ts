@@ -27,6 +27,7 @@ class FakeTextarea {
 		for ( const listener of [ ...this._listeners.get( type ) ?? [] ] ) listener( event as Event );
 	}
 	public focus(): void {}
+	public select(): void {}
 	public setSelectionRange(): void {}
 	public remove(): void { this.removed = true; }
 }

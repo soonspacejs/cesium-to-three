@@ -1286,12 +1286,18 @@ export class PlotEditor {
 
 	private _syncOverlay(): void {
 		if ( this._disposed ) return;
+		const textInput = this._textEditor.session;
+		// 原生 textarea 是文本事务期间唯一可交互、可见的正文。继续绘制
+		// committed/draft 文本会在输入框下方叠出第二份字，放大页面时尤其明显。
+		const renderedFeatures = textInput?.kind === 'feature'
+			? this._store.getAll().filter( ( feature ) => feature.id !== textInput.entityId )
+			: this._store.getAll();
 		const draftFeatures = this._shapePreview !== null
 			? [ this._shapePreview.feature ]
 			: this._transformPreview !== null
 				? this._transformPreview.features
-				: this._textPreview === null ? [] : [ this._textPreview ];
-		const drawingDraft = this._drawingSession === null
+				: [];
+		const drawingDraft = this._drawingSession === null || textInput?.kind === 'draft'
 			? null
 			: Object.freeze( {
 				id: this._drawingSession.id,
@@ -1318,7 +1324,7 @@ export class PlotEditor {
 						? transformModeForHandle( interaction.handleId )
 						: this._transformPreview?.mode;
 		this._overlay.sync( {
-			features: this._store.getAll(),
+			features: renderedFeatures,
 			documentRevision: this._store.revision,
 			sessionRevision: this._sessionRevision,
 			resolved: this._resolved,

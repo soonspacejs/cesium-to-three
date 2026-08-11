@@ -55,6 +55,7 @@ class FakeTextarea extends FakeEventHub {
 	public setAttribute( name: string, value: string ): void { this.attributes.set( name, value ); }
 	public getAttribute( name: string ): string | null { return this.attributes.get( name ) ?? null; }
 	public focus(): void { Object.assign( this._document, { activeElement: this } ); }
+	public select(): void { Object.assign( this, { selectionStart: 0, selectionEnd: this.value.length } ); }
 	public setSelectionRange(): void {}
 	public remove(): void { this.removed = true; }
 }
@@ -711,12 +712,19 @@ describe( 'PlotEditor facade', () => {
 				heightReference: HeightReference.NONE,
 			} ),
 		} );
+		const overlaySync = vi.spyOn( ( editor as unknown as {
+			_overlay: { sync( input: unknown ): unknown };
+		} )._overlay, 'sync' );
 		editor.activateTool( 'text' );
 		canvas.dispatch( 'pointerdown', pointerEvent( canvas, window, 0, 'pointerdown' ) );
 		canvas.dispatch( 'pointerup', pointerEvent( canvas, window, 0, 'pointerup' ) );
 
 		expect( textareas ).toHaveLength( 1 );
 		expect( editor.document.getAll() ).toHaveLength( 0 );
+		const draftRender = overlaySync.mock.calls.at( -1 )?.[ 0 ] as {
+			drawingDraft: unknown;
+		};
+		expect( draftRender.drawingDraft ).toBeNull();
 		const textarea = textareas[ 0 ];
 		textarea.value = '现场中文';
 		textarea.dispatch( 'input', { type: 'input', target: textarea } as Event );
@@ -757,12 +765,22 @@ describe( 'PlotEditor facade', () => {
 	it( '双击 text 直接进入 native textarea，而不是进入文本参数控制点编辑', () => {
 		const { editor, canvas, window, textareas } = createEditor( { autoAttachInputs: true } );
 		editor.execute( { type: 'feature.add', feature: text( 'label-double-click' ) } );
+		const overlaySync = vi.spyOn( ( editor as unknown as {
+			_overlay: { sync( input: unknown ): unknown };
+		} )._overlay, 'sync' );
 
 		canvas.dispatch( 'dblclick', doubleClickEvent( canvas, window ) );
 
 		expect( [ ...editor.selection ] ).toEqual( [ 'label-double-click' ] );
 		expect( editor.mode ).toBe( 'text-edit' );
 		expect( textareas ).toHaveLength( 1 );
+		const textEditRender = overlaySync.mock.calls.at( -1 )?.[ 0 ] as {
+			features: readonly { readonly id: string }[];
+			draftFeatures: readonly unknown[];
+		};
+		expect( textEditRender.features.map( ( feature ) => feature.id ) )
+			.not.toContain( 'label-double-click' );
+		expect( textEditRender.draftFeatures ).toEqual( [] );
 		const textarea = textareas[ 0 ];
 		textarea.value = '双击后可编辑';
 		textarea.dispatch( 'input', { type: 'input', target: textarea } as Event );
