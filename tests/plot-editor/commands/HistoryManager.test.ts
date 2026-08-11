@@ -210,6 +210,21 @@ describe( 'redo 分支、冲突与容量限制', () => {
 		expect( history.canRedo ).toBe( false );
 	} );
 
+	it( 'undo 后执行成功 no-op 不会清空 redo', () => {
+		const document = createPlotDocumentStore( { id: 'document' } );
+		const executor = new CommandExecutor( document );
+		const history = new HistoryManager( document );
+		history.execute( executor, { type: 'feature.add', feature: circle( 'a' ) as never } );
+		history.undo();
+
+		expect( history.execute( executor, {
+			type: 'feature.remove', ids: [],
+		} ) ).toMatchObject( { ok: true, changed: false } );
+		expect( history.state ).toMatchObject( { undoCount: 0, redoCount: 1, canRedo: true } );
+		expect( history.redo() ).toMatchObject( { ok: true, changed: true } );
+		expect( document.getAll().map( ( feature ) => feature.id ) ).toEqual( [ 'a' ] );
+	} );
+
 	it( '外部直接修改目标后拒绝覆盖式 undo', () => {
 		const document = createPlotDocumentStore( { id: 'document', features: [ circle( 'a' ) ] } );
 		const executor = new CommandExecutor( document );
