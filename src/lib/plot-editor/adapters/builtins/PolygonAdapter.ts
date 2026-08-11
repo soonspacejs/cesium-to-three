@@ -15,6 +15,7 @@ import {
 	canonicalFeature,
 	cloneJson,
 	commonFeatureFields,
+	constrainHeadingDeltaDegrees,
 	drawingValidationFromError,
 	freezeDraft,
 	geographicMidpoint,
@@ -204,8 +205,7 @@ export class PolygonGeometryAdapter implements GeometryAdapter<PolygonDrawingDra
 			const center = polygonCentroid( feature.geometry.positions );
 			const current = headingDegreesFrom( center, feature.geometry.positions[ 0 ] );
 			const target = headingDegreesFrom( center, movement.authorPosition );
-			let delta = target - current;
-			if ( movement.shift ) delta = Math.round( delta / 15 ) * 15;
+			const delta = constrainHeadingDeltaDegrees( target - current, movement.alt );
 			positions = rotatePositionsAroundCenter(
 				feature.geometry.positions, delta, feature.heightReference,
 			);

@@ -15,6 +15,7 @@ import {
 	canonicalFeature,
 	cloneJson,
 	commonFeatureFields,
+	constrainHeadingDeltaDegrees,
 	freezeDraft,
 	geographicCenter,
 	geographicMidpoint,
@@ -201,8 +202,9 @@ export class LineGeometryAdapter implements GeometryAdapter<LineDrawingDraft, Li
 			const center = geographicCenter( feature.geometry.positions );
 			const currentHeading = headingDegreesFrom( center, feature.geometry.positions[ 0 ] );
 			const targetHeading = headingDegreesFrom( center, movement.authorPosition );
-			let delta = targetHeading - currentHeading;
-			if ( movement.shift ) delta = Math.round( delta / 15 ) * 15;
+			const delta = constrainHeadingDeltaDegrees(
+				targetHeading - currentHeading, movement.alt,
+			);
 			positions = rotatePositionsAroundCenter(
 				feature.geometry.positions, delta, feature.heightReference,
 			);

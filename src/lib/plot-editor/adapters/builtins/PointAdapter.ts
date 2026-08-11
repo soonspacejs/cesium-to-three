@@ -14,6 +14,7 @@ import {
 	canonicalFeature,
 	cloneJson,
 	commonFeatureFields,
+	constrainHeadingDegrees,
 	drawingValidationFromError,
 	freezeDraft,
 	headingDegreesFrom,
@@ -196,7 +197,9 @@ export class PointGeometryAdapter implements GeometryAdapter<PointDrawingDraft, 
 				...( handleId === 'width' ? { imageWidth: distance * 2 } : {} ),
 				...( handleId === 'height' ? { imageHeight: distance * 2 } : {} ),
 				...( handleId === 'rotation' ? {
-					rotation: headingDegreesFrom( center, movement.authorPosition ),
+					rotation: constrainHeadingDegrees(
+						headingDegreesFrom( center, movement.authorPosition ), movement.alt,
+					),
 				} : {} ),
 			}
 			: handleId === 'size'

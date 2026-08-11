@@ -112,11 +112,19 @@ describe( 'SectorGeometryAdapter', () => {
 		} );
 		expect( feature.geometry.radius ).toBeCloseTo( 8_000, 5 );
 		feature = adapter.applyHandle( feature, 'start-angle', {
-			authorPosition: geodesicDestination( center, 355, 8_000 ),
+			authorPosition: geodesicDestination( center, 352, 8_000 ),
+		} );
+		expect( feature.geometry.startAngle ).toBe( 345 );
+		feature = adapter.applyHandle( feature, 'start-angle', {
+			authorPosition: geodesicDestination( center, 355, 8_000 ), alt: true,
 		} );
 		expect( feature.geometry.startAngle ).toBeCloseTo( 355, 6 );
 		feature = adapter.applyHandle( feature, 'end-angle', {
-			authorPosition: geodesicDestination( center, 5, 8_000 ),
+			authorPosition: geodesicDestination( center, 7, 8_000 ),
+		} );
+		expect( feature.geometry.sectorAngle ).toBeCloseTo( 5, 6 );
+		feature = adapter.applyHandle( feature, 'end-angle', {
+			authorPosition: geodesicDestination( center, 5, 8_000 ), alt: true,
 		} );
 		expect( feature.geometry.sectorAngle ).toBeCloseTo( 10, 6 );
 		expect( feature.geometry.center[ 2 ] ).toBe( 0 );

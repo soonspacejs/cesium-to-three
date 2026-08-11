@@ -19,6 +19,7 @@ import {
 	canonicalFeature,
 	cloneJson,
 	commonFeatureFields,
+	constrainHeadingDegrees,
 	freezeDraft,
 	invalidDrawing,
 	mergeStyle,
@@ -185,9 +186,9 @@ export class SectorGeometryAdapter implements GeometryAdapter<SectorDrawingDraft
 				<= GEOMETRY_EPSILON_METERS ) throw new Error( 'EDIT_INVALID_ANGLE：方向点不能与中心重合。' );
 			geometry = {
 				...geometry,
-				startAngle: normalizeHeading( initialGeodesicBearingDegrees(
+				startAngle: constrainHeadingDegrees( initialGeodesicBearingDegrees(
 					geometry.center, movement.authorPosition,
-				) ),
+				), movement.alt ),
 			};
 		} else if ( handleId === 'end-angle' ) {
 			if ( geodesicDistanceMeters( geometry.center, movement.authorPosition )
@@ -196,7 +197,9 @@ export class SectorGeometryAdapter implements GeometryAdapter<SectorDrawingDraft
 				...geometry,
 				sectorAngle: clockwiseSweep(
 					geometry.startAngle,
-					initialGeodesicBearingDegrees( geometry.center, movement.authorPosition ),
+					constrainHeadingDegrees( initialGeodesicBearingDegrees(
+						geometry.center, movement.authorPosition,
+					), movement.alt ),
 				),
 			};
 		} else {

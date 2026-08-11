@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { geodesicDistanceMeters } from '../../../src/lib/plot-editor/document/geodesy';
+import {
+	geodesicDestination,
+	geodesicDistanceMeters,
+} from '../../../src/lib/plot-editor/document/geodesy';
 import { HeightReference } from '../../../src/lib/plot-editor/document/types';
 import { LineGeometryAdapter } from '../../../src/lib/plot-editor/adapters/builtins/LineAdapter';
 import { PointGeometryAdapter } from '../../../src/lib/plot-editor/adapters/builtins/PointAdapter';
@@ -50,6 +53,15 @@ describe( 'PointGeometryAdapter', () => {
 		feature = adapter.applyHandle( feature, 'width', { authorPosition: [ 0.001, 89.9, 25 ] } );
 		expect( feature.style.pointStyle ).toBe( 'image' );
 		if ( feature.style.pointStyle === 'image' ) expect( feature.style.imageWidth ).toBeGreaterThan( 0 );
+		feature = adapter.applyHandle( feature, 'rotation', {
+			authorPosition: geodesicDestination( feature.geometry.position, 22, 1_000, 25 ),
+		} );
+		if ( feature.style.pointStyle === 'image' ) expect( feature.style.rotation ).toBe( 15 );
+		feature = adapter.applyHandle( feature, 'rotation', {
+			authorPosition: geodesicDestination( feature.geometry.position, 22, 1_000, 25 ),
+			alt: true,
+		} );
+		if ( feature.style.pointStyle === 'image' ) expect( feature.style.rotation ).toBeCloseTo( 22, 3 );
 		expect( () => adapter.applyHandle( feature, 'derived:0', {
 			authorPosition: [ 0, 0, 0 ],
 		} ) ).toThrow( /EDIT_HANDLE_NOT_FOUND/ );

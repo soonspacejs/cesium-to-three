@@ -185,14 +185,19 @@ describe( 'TextGeometryAdapter', () => {
 		} );
 		expect( feature.style.boxHeight ).toBe( 55 );
 		feature = adapter.applyHandle( feature, 'rotation', {
-			authorPosition: geodesicDestination( feature.geometry.position, 135, 1_000 ),
+			authorPosition: geodesicDestination( feature.geometry.position, 137, 1_000 ),
 		} );
 		expect( feature.style.rotation ).toBeCloseTo( 135, 6 );
+		feature = adapter.applyHandle( feature, 'rotation', {
+			authorPosition: geodesicDestination( feature.geometry.position, 137, 1_000 ),
+			alt: true,
+		} );
+		expect( feature.style.rotation ).toBeCloseTo( 137, 6 );
 		feature = adapter.applyHandle( feature, 'center', {
 			authorPosition: [ 11, 81, 8 ],
 		} );
 		expect( feature ).toMatchObject( {
-			geometry: { position: [ 11, 81, 8 ] }, style: { content: 'edit' }, revision: 7,
+			geometry: { position: [ 11, 81, 8 ] }, style: { content: 'edit' }, revision: 8,
 		} );
 	} );
 } );

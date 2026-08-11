@@ -26,6 +26,7 @@ import type {
 } from '../types';
 
 export const GEOMETRY_EPSILON_METERS = 1e-3;
+export const DEFAULT_ROTATION_SNAP_DEGREES = 15;
 export const DEFAULT_PLOT_STYLE: PlotStyle = Object.freeze( {
 	strokeColor: '#3388ff',
 	strokeWidth: 2,
@@ -265,6 +266,32 @@ export function headingDegreesFrom( center: Position3D, target: Position3D ): nu
 		throw new Error( 'EDIT_DEGENERATE_GEOMETRY：方向点不能与中心重合。' );
 	}
 	return ( Math.atan2( local[ 0 ], local[ 1 ] ) * 180 / Math.PI + 360 ) % 360;
+}
+
+/**
+ * 旋转参数默认吸附到 15°；拖拽期间按住 Alt 时保留指针的精确 heading。
+ * 返回值始终位于 [0, 360)，避免持久化出 -0 或等价的 360°。
+ */
+export function constrainHeadingDegrees( heading: number, alt = false ): number {
+	const constrained = alt
+		? heading
+		: Math.round( heading / DEFAULT_ROTATION_SNAP_DEGREES )
+			* DEFAULT_ROTATION_SNAP_DEGREES;
+	const normalized = ( constrained % 360 + 360 ) % 360;
+	return Object.is( normalized, -0 ) ? 0 : normalized;
+}
+
+/**
+ * 整体旋转使用最短有符号角差；默认按 15° 吸附，Alt 临时关闭吸附。
+ * 有符号结果不能归一到 [0, 360)，否则跨北向时会造成一次近整圈旋转。
+ */
+export function constrainHeadingDeltaDegrees( delta: number, alt = false ): number {
+	const shortest = ( ( delta + 180 ) % 360 + 360 ) % 360 - 180;
+	const constrained = alt
+		? shortest
+		: Math.round( shortest / DEFAULT_ROTATION_SNAP_DEGREES )
+			* DEFAULT_ROTATION_SNAP_DEGREES;
+	return Object.is( constrained, -0 ) ? 0 : constrained;
 }
 
 /** 用旧中心 ENU offset 平移整组 source points，绝不使用经纬度差近似。 */

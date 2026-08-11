@@ -23,6 +23,7 @@ import {
 	canonicalFeature,
 	cloneJson,
 	commonFeatureFields,
+	constrainHeadingDegrees,
 	drawingValidationFromError,
 	freezeDraft,
 	invalidDrawing,
@@ -234,9 +235,9 @@ export class TextGeometryAdapter implements GeometryAdapter<TextDrawingDraft, Te
 			}
 			style = {
 				...style,
-				rotation: initialGeodesicBearingDegrees(
+				rotation: constrainHeadingDegrees( initialGeodesicBearingDegrees(
 					feature.geometry.position, movement.authorPosition,
-				),
+				), movement.alt ),
 			};
 		} else {
 			throw new Error( `EDIT_HANDLE_NOT_FOUND：${ handleId }。` );
