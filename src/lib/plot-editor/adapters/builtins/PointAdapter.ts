@@ -1,5 +1,6 @@
 import { geodesicDistanceMeters } from '../../document/geodesy';
 import type { PointFeature, PointStyle } from '../../document/types';
+import { isAllowedImageResourceUrl } from '../../document/validate';
 import type {
 	DrawToolContext,
 	DrawingDraft,
@@ -97,7 +98,7 @@ export class PointGeometryAdapter implements GeometryAdapter<PointDrawingDraft, 
 			return invalidDrawing( 'DRAW_INVALID_PARAMETER', 'pointStyle 必须是 circle、square 或 image。' );
 		}
 		if ( parameters.pointStyle === 'image' ) {
-			if ( typeof parameters.imageUrl !== 'string' || parameters.imageUrl.trim().length === 0
+			if ( ! isAllowedImageResourceUrl( parameters.imageUrl )
 				|| ! positive( parameters.imageWidth ) || ! positive( parameters.imageHeight )
 				|| ! finite( parameters.rotation ?? 0 ) ) {
 				return invalidDrawing( 'DRAW_INVALID_PARAMETER', '图片点需要 URL、正宽高和有限旋转角。' );

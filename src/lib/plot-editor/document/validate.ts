@@ -43,6 +43,18 @@ import type {
 const GEODESIC_EPSILON_METERS = 1e-3;
 const MAX_JSON_DEPTH = 64;
 const MAX_JSON_NODES = 100_000;
+const ALLOWED_IMAGE_URL_SCHEMES = new Set( [ 'http', 'https', 'blob' ] );
+
+/** 默认只接受浏览器图片资源协议；宿主仍可在进入编辑器前施加更严格的域名/CORS policy。 */
+export function isAllowedImageResourceUrl( value: unknown ): value is string {
+	if ( typeof value !== 'string' ) return false;
+	const trimmed = value.trim();
+	if ( trimmed.length === 0 || /[\u0000-\u001f\u007f]/.test( trimmed ) ) return false;
+	const scheme = /^([a-z][a-z0-9+.-]*):/i.exec( trimmed )?.[ 1 ].toLowerCase();
+	if ( scheme === undefined ) return true;
+	if ( scheme === 'data' ) return /^data:image\//i.test( trimmed );
+	return ALLOWED_IMAGE_URL_SCHEMES.has( scheme );
+}
 const FEATURE_TYPES: readonly PlotFeatureType[] = [
 	'point',
 	'line',
@@ -297,10 +309,9 @@ export function normalizeStyle(
 			return deepFreeze( {
 				...common,
 				pointStyle,
-				imageUrl: expectNonEmptyString(
+				imageUrl: expectImageResourceUrl(
 					record.imageUrl,
 					`${ path }/imageUrl`,
-					'INVALID_STYLE',
 				),
 				imageWidth: expectPositiveNumber(
 					record.imageWidth,
@@ -810,6 +821,16 @@ function expectNonEmptyString( value: unknown, path: string, code: string ): str
 		throw validationError( code, path, '必须是非空字符串。', value );
 	}
 	return value;
+}
+
+function expectImageResourceUrl( value: unknown, path: string ): string {
+	if ( ! isAllowedImageResourceUrl( value ) ) {
+		throw validationError(
+			'INVALID_STYLE', path,
+			'imageUrl 必须是相对地址、HTTP(S)、blob 或 image data URL。', value,
+		);
+	}
+	return value.trim();
 }
 
 function expectBoolean( value: unknown, path: string, code: string ): boolean {

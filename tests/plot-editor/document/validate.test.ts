@@ -168,6 +168,26 @@ describe( '图形拓扑与参数失败路径', () => {
 } );
 
 describe( '样式、属性与身份验证', () => {
+	it( '图片点只允许资源 URL，并规范化边界空白', () => {
+		const imagePoint = ( imageUrl: string ) => feature(
+			'point', { position: [ 0, 0, 0 ] }, {
+				...commonStyle, pointStyle: 'image', imageUrl,
+				imageWidth: 20, imageHeight: 30, rotation: 0,
+			},
+		);
+		for ( const url of [ 'javascript:alert(1)', 'VBScript:msgbox(1)', 'data:text/html,x' ] ) {
+			expect( () => normalizeFeature( imagePoint( url ) ) ).toThrowError( /imageUrl/ );
+		}
+		for ( const url of [ '/pin.png', 'https://example.test/pin.png', 'blob:https://example.test/id', 'data:image/png;base64,AA==' ] ) {
+			expect( () => normalizeFeature( imagePoint( url ) ) ).not.toThrow();
+		}
+		const normalized = normalizeFeature( imagePoint( '  ./pin.png  ' ) );
+		if ( normalized.type !== 'point' || normalized.style.pointStyle !== 'image' ) {
+			expect.fail( '应为图片点。' );
+		}
+		expect( normalized.style.imageUrl ).toBe( './pin.png' );
+	} );
+
 	it( '拒绝空文本和负 padding', () => {
 		const input = feature( 'text', { position: [ 0, 0, 0 ] }, {
 			...commonStyle,

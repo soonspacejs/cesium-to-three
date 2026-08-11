@@ -37,6 +37,15 @@ describe( 'PointGeometryAdapter', () => {
 		} );
 		invalid = adapter.addPoint( invalid, [ 0, 0, 25 ] );
 		expect( invalid.validation.code ).toBe( 'DRAW_INVALID_PARAMETER' );
+		let unsafe = adapter.begin( {
+			type: 'point', heightReference: HeightReference.NONE,
+			options: {
+				pointStyle: 'image', imageUrl: 'JavaScript:alert(1)',
+				imageWidth: 20, imageHeight: 30,
+			},
+		} );
+		unsafe = adapter.addPoint( unsafe, [ 0, 0, 25 ] );
+		expect( unsafe.validation.code ).toBe( 'DRAW_INVALID_PARAMETER' );
 
 		let draft = adapter.begin( {
 			type: 'point', heightReference: HeightReference.NONE,
