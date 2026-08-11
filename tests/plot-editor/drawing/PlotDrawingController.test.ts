@@ -70,6 +70,26 @@ describe( 'PlotDrawingController', () => {
 		expect( controller.session?.draft.points ).toEqual( [] );
 	} );
 
+	it( '非派生 preview 保留 picker 的运行时 surface height 但不污染 author 点', () => {
+		const { controller } = setup();
+		controller.arm( {
+			type: 'line', heightReference: HeightReference.RELATIVE_TO_TERRAIN,
+		} );
+		controller.addPick( {
+			...pick( [ 10, 20, 7 ], HeightReference.RELATIVE_TO_TERRAIN ),
+			surfacePosition: [ 10, 20, 100 ],
+		} );
+		controller.movePick( {
+			...pick( [ 11, 21, 9 ], HeightReference.RELATIVE_TO_TERRAIN ),
+			surfacePosition: [ 11, 21, 200 ],
+		} );
+
+		expect( controller.session?.draft.points ).toEqual( [ [ 10, 20, 7 ] ] );
+		expect( controller.session?.resolvedPositions ).toEqual( [
+			[ 10, 20, 107 ], [ 11, 21, 209 ],
+		] );
+	} );
+
 	it( '合法 circle 只用一条 feature.add history 提交，undo 恢复空文档', () => {
 		const { controller, document, history } = setup( () => 'circle-a' );
 		controller.arm( {

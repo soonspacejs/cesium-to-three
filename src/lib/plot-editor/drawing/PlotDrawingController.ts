@@ -1,8 +1,14 @@
 import type { CommandExecutor } from '../commands/CommandExecutor';
 import type { HistoryManager } from '../commands/HistoryManager';
 import type { CommandResult } from '../commands/types';
+import { getHeightMode } from '../document/height-reference';
 import type { PlotDocument } from '../document/PlotDocument';
-import type { PlotFeature, PlotFeatureId, PlotFeatureType } from '../document/types';
+import type {
+	PlotFeature,
+	PlotFeatureId,
+	PlotFeatureType,
+	Position3D,
+} from '../document/types';
 import type { PlotPickResult } from '../picking/types';
 import type { GeometryAdapterRegistry } from '../adapters/GeometryAdapterRegistry';
 import type {
@@ -18,6 +24,8 @@ export interface DrawingSession {
 	readonly type: PlotFeatureType;
 	readonly draft: DrawingDraft;
 	readonly preview: DraftPreviewGeometry;
+	/** 与非派生 preview 顶点等长的运行时世界坐标，不进入 document/history。 */
+	readonly resolvedPositions?: readonly Position3D[];
 }
 
 export interface DrawingControllerResult {
@@ -68,6 +76,7 @@ export class PlotDrawingController {
 			type: context.type,
 			adapter,
 			draft: adapter.begin( context ),
+			resolvedPoints: Object.freeze( [] ),
 		};
 		this._emit();
 		return id;
@@ -96,7 +105,15 @@ export class PlotDrawingController {
 				} ),
 			} );
 		}
-		session.draft = session.adapter.addPoint( session.draft, hit.authorPosition, hit );
+		const previousDraft = session.draft;
+		session.draft = session.adapter.addPoint( previousDraft, hit.authorPosition, hit );
+		session.resolvedPoints = remapResolvedPoints(
+			previousDraft.points,
+			session.resolvedPoints,
+			session.draft.points,
+			hit,
+		);
+		session.resolvedPreviewPoint = undefined;
 		this._emit();
 		return resultFromValidation( session.adapter.validateDraft( session.draft ) );
 	}
@@ -116,6 +133,7 @@ export class PlotDrawingController {
 			} );
 		}
 		session.draft = session.adapter.movePointer( session.draft, hit.authorPosition, hit );
+		session.resolvedPreviewPoint = resolvedPositionFromHit( hit );
 		this._emit();
 		return resultFromValidation( session.adapter.validateDraft( session.draft ) );
 	}
@@ -123,7 +141,14 @@ export class PlotDrawingController {
 	public removeLastPoint(): DrawingControllerResult {
 		this._assertOpen();
 		const session = this._requireSession();
-		session.draft = session.adapter.removeLastPoint( session.draft );
+		const previousDraft = session.draft;
+		session.draft = session.adapter.removeLastPoint( previousDraft );
+		session.resolvedPoints = remapResolvedPoints(
+			previousDraft.points,
+			session.resolvedPoints,
+			session.draft.points,
+		);
+		session.resolvedPreviewPoint = undefined;
 		this._emit();
 		return resultFromValidation( session.adapter.validateDraft( session.draft ) );
 	}
@@ -242,15 +267,72 @@ interface MutableDrawingSession {
 	readonly type: PlotFeatureType;
 	readonly adapter: GeometryAdapter;
 	draft: DrawingDraft;
+	resolvedPoints: readonly Position3D[];
+	resolvedPreviewPoint?: Position3D;
 }
 
 function freezeSession( session: MutableDrawingSession ): DrawingSession {
+	const preview = session.adapter.preview( session.draft );
+	const resolvedPositions = resolvePreviewPositions( session, preview );
 	return Object.freeze( {
 		id: session.id,
 		type: session.type,
 		draft: session.draft,
-		preview: session.adapter.preview( session.draft ),
+		preview,
+		...( resolvedPositions === undefined ? {} : { resolvedPositions } ),
 	} );
+}
+
+function remapResolvedPoints(
+	previousPoints: readonly Position3D[],
+	previousResolved: readonly Position3D[],
+	nextPoints: readonly Position3D[],
+	hit?: PlotPickResult,
+): readonly Position3D[] {
+	const hitResolved = hit === undefined ? undefined : resolvedPositionFromHit( hit );
+	return Object.freeze( nextPoints.map( ( point ) => {
+		if ( hit !== undefined && samePosition( point, hit.authorPosition ) ) {
+			return hitResolved as Position3D;
+		}
+		const previousIndex = previousPoints.findIndex( ( value ) => samePosition( value, point ) );
+		return previousResolved[ previousIndex ] ?? point;
+	} ) );
+}
+
+function resolvePreviewPositions(
+	session: MutableDrawingSession,
+	preview: DraftPreviewGeometry,
+): readonly Position3D[] | undefined {
+	if ( preview.generated ) return undefined;
+	const resolved: Position3D[] = [];
+	for ( const position of preview.positions ) {
+		if ( session.draft.previewPoint !== undefined
+			&& session.resolvedPreviewPoint !== undefined
+			&& samePosition( position, session.draft.previewPoint ) ) {
+			resolved.push( session.resolvedPreviewPoint );
+			continue;
+		}
+		const index = session.draft.points.findIndex( ( point ) => samePosition( point, position ) );
+		if ( index < 0 || session.resolvedPoints[ index ] === undefined ) return undefined;
+		resolved.push( session.resolvedPoints[ index ] );
+	}
+	return Object.freeze( resolved );
+}
+
+function resolvedPositionFromHit( hit: PlotPickResult ): Position3D {
+	const mode = getHeightMode( hit.heightReference );
+	if ( mode === 'absolute' ) return hit.authorPosition;
+	return Object.freeze( [
+		hit.surfacePosition[ 0 ],
+		hit.surfacePosition[ 1 ],
+		hit.surfacePosition[ 2 ] + ( mode === 'relative' ? hit.authorPosition[ 2 ] : 0 ),
+	] as Position3D );
+}
+
+function samePosition( left: Position3D, right: Position3D ): boolean {
+	return Math.abs( left[ 0 ] - right[ 0 ] ) <= 1e-10
+		&& Math.abs( left[ 1 ] - right[ 1 ] ) <= 1e-10
+		&& Math.abs( left[ 2 ] - right[ 2 ] ) <= 1e-8;
 }
 
 function resultFromValidation( validation: DrawingValidation ): DrawingControllerResult {

@@ -1285,6 +1285,9 @@ export class PlotEditor {
 				preview: this._drawingSession.preview,
 				heightReference: this._drawingSession.draft.heightReference,
 				valid: this._drawingSession.draft.validation.valid,
+				...( this._drawingSession.resolvedPositions === undefined ? {} : {
+					resolvedPositions: this._drawingSession.resolvedPositions,
+				} ),
 			} );
 		const interaction = this._state.interaction;
 		const transformMode = interaction.kind === 'transforming'
