@@ -1080,6 +1080,14 @@ export class PlotEditor {
 			&& this._state.interaction.kind !== 'drawing'
 			&& hit?.kind === 'entity'
 			&& hit.entityId !== undefined ) {
+			const feature = this._store.get( hit.entityId );
+			if ( feature?.type === 'text' ) {
+				// 文本双击必须走与 F2 相同的 native textarea/IME 事务，不能误入参数手柄编辑。
+				this._vertexEditId = undefined;
+				this._selectionModel.apply( { kind: 'replace', ids: [ hit.entityId ] } );
+				this._dispatch( { type: 'beginTextEdit' } );
+				return;
+			}
 			this.enterVertexEdit( hit.entityId );
 			return;
 		}

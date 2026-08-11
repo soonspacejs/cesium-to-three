@@ -201,6 +201,17 @@ function pointerEvent(
 	} as unknown as PointerEvent;
 }
 
+function doubleClickEvent( canvas: HTMLCanvasElement, window: Window ): MouseEvent {
+	return {
+		type: 'dblclick', target: canvas, view: window,
+		button: 0, buttons: 0, clientX: 400, clientY: 300,
+		movementX: 0, movementY: 0,
+		shiftKey: false, ctrlKey: false, altKey: false, metaKey: false,
+		timeStamp: 2, getModifierState: () => false,
+		preventDefault: vi.fn(), stopPropagation: vi.fn(),
+	} as unknown as MouseEvent;
+}
+
 function keyboardEvent( target: EventTarget, key: string, code: string, primary = false ): KeyboardEvent {
 	return {
 		type: 'keydown', target, key, code, repeat: false,
@@ -739,6 +750,25 @@ describe( 'PlotEditor facade', () => {
 			content: '中文\n第二行',
 		} );
 		expect( editor.mode ).toBe( 'select' );
+		expect( textarea.removed ).toBe( true );
+		editor.dispose();
+	} );
+
+	it( '双击 text 直接进入 native textarea，而不是进入文本参数控制点编辑', () => {
+		const { editor, canvas, window, textareas } = createEditor( { autoAttachInputs: true } );
+		editor.execute( { type: 'feature.add', feature: text( 'label-double-click' ) } );
+
+		canvas.dispatch( 'dblclick', doubleClickEvent( canvas, window ) );
+
+		expect( [ ...editor.selection ] ).toEqual( [ 'label-double-click' ] );
+		expect( editor.mode ).toBe( 'text-edit' );
+		expect( textareas ).toHaveLength( 1 );
+		const textarea = textareas[ 0 ];
+		textarea.value = '双击后可编辑';
+		textarea.dispatch( 'input', { type: 'input', target: textarea } as Event );
+		textarea.dispatch( 'keydown', keyboardEvent( textarea, 'Enter', 'Enter', true ) );
+		expect( editor.document.get( 'label-double-click' )?.style )
+			.toMatchObject( { content: '双击后可编辑' } );
 		expect( textarea.removed ).toBe( true );
 		editor.dispose();
 	} );

@@ -36,6 +36,51 @@ test( '原生 MouseEvent dblclick 可完成绘制且不会触发 Illegal invocat
 	expect( browserErrors ).toEqual( [] );
 } );
 
+test( '双击已提交文本进入 textarea 并可提交中文内容', async ( { page } ) => {
+	const browserErrors: string[] = [];
+	page.on( 'console', ( message ) => {
+		if ( message.type() === 'error' ) browserErrors.push( message.text() );
+	} );
+	page.on( 'pageerror', ( error ) => browserErrors.push( error.message ) );
+
+	await page.goto( '/?demo=plot&noterrain' );
+	await page.waitForFunction( () => window.__plotDemo?.editor !== undefined );
+	const target = await page.evaluate( () => {
+		window.__plotDemo!.controls.enabled = false;
+		const editor = window.__plotDemo!.editor as unknown as {
+			readonly document: { get( id: string ): {
+				readonly type: string;
+				readonly geometry: { readonly position: readonly [ number, number, number ] };
+			} | undefined };
+			_createProjectionSnapshot(): { project( position: readonly [ number, number, number ] ): {
+				x: number;
+				y: number;
+				visible: boolean;
+			} | null };
+		};
+		const feature = editor.document.get( 'demo-text' );
+		if ( feature?.type !== 'text' ) throw new Error( 'demo-text 不存在。' );
+		const projected = editor._createProjectionSnapshot().project( feature.geometry.position );
+		if ( projected === null || ! projected.visible ) throw new Error( 'demo-text 不可见。' );
+		return { x: projected.x, y: projected.y };
+	} );
+
+	await page.mouse.dblclick( target.x, target.y );
+	const textarea = page.locator( 'textarea[data-plot-editor-native-input]' );
+	await expect( textarea ).toHaveCount( 1 );
+	await expect( textarea ).toBeFocused();
+	await textarea.fill( '双击编辑中文成功' );
+	await textarea.press( 'Control+Enter' );
+	await expect( textarea ).toHaveCount( 0 );
+	await expect.poll( () => page.evaluate( () => {
+		const feature = ( window.__plotDemo!.editor as unknown as {
+			readonly document: { get( id: string ): { readonly style?: { readonly content?: string } } | undefined };
+		} ).document.get( 'demo-text' );
+		return feature?.style?.content;
+	} ) ).toBe( '双击编辑中文成功' );
+	expect( browserErrors ).toEqual( [] );
+} );
+
 declare global {
 	interface Window {
 		__plotDemo?: {
