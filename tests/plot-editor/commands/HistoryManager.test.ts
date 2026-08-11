@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createBuiltinGeometryAdapterRegistry } from '../../../src/lib/plot-editor/adapters/builtins';
 import { CommandExecutor } from '../../../src/lib/plot-editor/commands/CommandExecutor';
 import { HistoryManager } from '../../../src/lib/plot-editor/commands/HistoryManager';
 import { createPlotDocumentStore } from '../../../src/lib/plot-editor/document/PlotDocument';
-import { HeightReference } from '../../../src/lib/plot-editor/document/types';
+import {
+	HeightReference,
+	type PlotFeature,
+	type PlotFeatureType,
+	type Position3D,
+} from '../../../src/lib/plot-editor/document/types';
 
 const style = {
 	strokeColor: '#ffffff',
@@ -26,6 +32,39 @@ function circle( id: string, longitude = 0 ) {
 	};
 }
 
+function allBuiltinFeatures(): readonly PlotFeature[] {
+	const registry = createBuiltinGeometryAdapterRegistry();
+	const cases: readonly {
+		readonly type: PlotFeatureType;
+		readonly heightReference: HeightReference;
+		readonly points: readonly Position3D[];
+		readonly text?: string;
+	}[] = [
+		{ type: 'point', heightReference: HeightReference.NONE, points: [ [ 0, 0, 11 ] ] },
+		{ type: 'line', heightReference: HeightReference.CLAMP_TO_GROUND, points: [ [ 1, 0, 50 ], [ 1.01, 0, 60 ] ] },
+		{ type: 'polygon', heightReference: HeightReference.RELATIVE_TO_GROUND, points: [ [ 2, 0, 12 ], [ 2.01, 0, 13 ], [ 2.01, 0.01, 14 ] ] },
+		{ type: 'rectangle', heightReference: HeightReference.CLAMP_TO_TERRAIN, points: [ [ 3, 0, 70 ], [ 3.01, 0.01, 80 ] ] },
+		{ type: 'sector', heightReference: HeightReference.RELATIVE_TO_TERRAIN, points: [ [ 4, 0, 15 ], [ 4.01, 0, 16 ], [ 4, 0.01, 17 ] ] },
+		{ type: 'arrow', heightReference: HeightReference.CLAMP_TO_3D_TILE, points: [ [ 5, 0, 90 ], [ 5.01, 0.01, 100 ] ] },
+		{ type: 'text', heightReference: HeightReference.RELATIVE_TO_3D_TILE, points: [ [ 6, 0, 18 ] ], text: '七值高度参考' },
+		{ type: 'circle', heightReference: HeightReference.NONE, points: [ [ 7, 0, 19 ], [ 7.01, 0, 19 ] ] },
+	];
+
+	return cases.map( ( item, index ) => {
+		const adapter = registry.require( item.type );
+		let draft = adapter.begin( {
+			type: item.type,
+			heightReference: item.heightReference,
+		} );
+		for ( const point of item.points ) draft = adapter.addPoint( draft, point );
+		if ( item.text !== undefined ) draft = adapter.setText?.( draft, item.text ) ?? draft;
+		return adapter.finish( draft, {
+			id: `shape-${ index }-${ item.type }`,
+			properties: { matrixIndex: index },
+		} );
+	} );
+}
+
 describe( 'HistoryManager 基本撤销与重做', () => {
 	it( 'add/undo/redo 保留原 id、order 和完整 feature', () => {
 		const document = createPlotDocumentStore( { id: 'document' } );
@@ -45,6 +84,31 @@ describe( 'HistoryManager 基本撤销与重做', () => {
 		expect( document.getAll().map( ( item ) => item.id ) ).toEqual( [ 'a' ] );
 		expect( document.get( 'a' ) ).toMatchObject( circle( 'a' ) );
 		expect( states ).toHaveLength( 3 );
+	} );
+
+	it( '八类图形与七值高度参考跨完整 undo/redo 保留逐值数据和顺序', () => {
+		const document = createPlotDocumentStore( { id: 'document' } );
+		const executor = new CommandExecutor( document );
+		const history = new HistoryManager( document );
+		const features = allBuiltinFeatures();
+		for ( const feature of features ) {
+			expect( history.execute( executor, {
+				type: 'feature.add', feature,
+			} ) ).toMatchObject( { ok: true, changed: true } );
+		}
+		const committed = document.getAll();
+		expect( committed.map( ( feature ) => feature.heightReference ) ).toEqual( [ 0, 1, 2, 3, 4, 5, 6, 0 ] );
+
+		for ( let index = 0; index < features.length; index++ ) {
+			expect( history.undo() ).toMatchObject( { ok: true, changed: true } );
+		}
+		expect( document.getAll() ).toEqual( [] );
+		for ( let index = 0; index < features.length; index++ ) {
+			expect( history.redo() ).toMatchObject( { ok: true, changed: true } );
+		}
+		expect( document.getAll() ).toEqual( committed );
+		expect( document.getAll().map( ( feature ) => feature.id ) )
+			.toEqual( features.map( ( feature ) => feature.id ) );
 	} );
 
 	it( '批量删除一次 undo 恢复原顺序', () => {
