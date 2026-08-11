@@ -363,10 +363,16 @@ describe( '双击、菜单与滚轮边界', () => {
 		env.input.subscribe( listener );
 		env.input.attach();
 		const doubleClick = pointerEvent( env.canvas, 'dblclick', { button: 0 } );
+		// dblclick 在浏览器中是 MouseEvent，不携带 PointerEvent 专属字段。
+		delete ( doubleClick as Partial<PointerEvent> ).pointerId;
+		delete ( doubleClick as Partial<PointerEvent> ).pointerType;
+		delete ( doubleClick as Partial<PointerEvent> ).pressure;
+		delete ( doubleClick as Partial<PointerEvent> ).tiltX;
+		delete ( doubleClick as Partial<PointerEvent> ).tiltY;
 		env.canvas.dispatch( 'dblclick', doubleClick );
 		expect( listener ).toHaveBeenCalledWith( expect.objectContaining( {
 			gesture: 'click', input: expect.objectContaining( {
-				phase: 'double-click', pointerId: -1, device: 'mouse',
+				phase: 'double-click', pointerId: -1, device: 'mouse', originalEvent: doubleClick,
 			} ),
 		} ) );
 		expect( doubleClick.preventDefault ).toHaveBeenCalledOnce();

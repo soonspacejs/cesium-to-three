@@ -219,8 +219,7 @@ export class PointerInput {
 	};
 
 	private readonly _onDoubleClick = ( event: MouseEvent ): void => {
-		const pointerLike = mouseEventAsPointerEvent( event );
-		const input = this._normalizePointer( pointerLike, 'double-click' );
+		const input = this._normalizePointer( event, 'double-click' );
 		const claim = this._options.claim( input );
 		this._consumeIfClaimed( event, claim );
 		this._emit( {
@@ -339,18 +338,19 @@ export class PointerInput {
 	}
 
 	private _normalizePointer(
-		event: PointerEvent,
+		event: PointerEvent | MouseEvent,
 		phase: NormalizedPointerInput[ 'phase' ],
 	): NormalizedPointerInput {
 		const rect = this._canvas.getBoundingClientRect();
-		const modifiers = modifiersFromPointerEvent(
+		const modifiers = modifiersFromMouseEvent(
 			event,
 			this._options.getKeyboardModifiers?.().space ?? false,
 		);
+		const pointerEvent = 'pointerId' in event ? event : undefined;
 		return Object.freeze( {
 			phase,
-			pointerId: event.pointerId,
-			device: normalizeDevice( event.pointerType ),
+			pointerId: pointerEvent?.pointerId ?? -1,
+			device: normalizeDevice( pointerEvent?.pointerType ?? 'mouse' ),
 			button: normalizeButton( event.button ),
 			buttons: event.buttons,
 			canvasX: event.clientX - rect.left,
@@ -359,9 +359,9 @@ export class PointerInput {
 			clientY: event.clientY,
 			movementX: finiteOrZero( event.movementX ),
 			movementY: finiteOrZero( event.movementY ),
-			pressure: finiteOrZero( event.pressure ),
-			tiltX: finiteOrZero( event.tiltX ),
-			tiltY: finiteOrZero( event.tiltY ),
+			pressure: finiteOrZero( pointerEvent?.pressure ?? 0 ),
+			tiltX: finiteOrZero( pointerEvent?.tiltX ?? 0 ),
+			tiltY: finiteOrZero( pointerEvent?.tiltY ?? 0 ),
 			modifiers: Object.freeze( modifiers ),
 			timeStamp: event.timeStamp,
 			originalEvent: event,
@@ -376,7 +376,7 @@ export class PointerInput {
 	}
 }
 
-function modifiersFromPointerEvent( event: PointerEvent, space: boolean ): ModifierState {
+function modifiersFromMouseEvent( event: MouseEvent, space: boolean ): ModifierState {
 	const targetDocument = ( event.target as { ownerDocument?: Document } | null )
 		?.ownerDocument;
 	const platform = event.view?.navigator.platform
@@ -417,16 +417,6 @@ function leaseKindForClaim( claim: PointerClaim ): NavigationLeaseKind {
 		case 'box-select': return 'box-select';
 		default: return 'gizmo';
 	}
-}
-
-function mouseEventAsPointerEvent( event: MouseEvent ): PointerEvent {
-	return Object.assign( Object.create( event ), {
-		pointerId: -1,
-		pointerType: 'mouse',
-		pressure: 0,
-		tiltX: 0,
-		tiltY: 0,
-	} ) as PointerEvent;
 }
 
 function finiteOrZero( value: number ): number {

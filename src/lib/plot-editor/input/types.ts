@@ -38,7 +38,8 @@ export interface NormalizedPointerInput {
 	readonly tiltY: number;
 	readonly modifiers: ModifierState;
 	readonly timeStamp: number;
-	readonly originalEvent: PointerEvent;
+	/** pointer 流程保留 PointerEvent；原生 dblclick 保留实际 MouseEvent，禁止伪造 DOM 事件原型。 */
+	readonly originalEvent: PointerEvent | MouseEvent;
 }
 
 export interface PointerClaim {
