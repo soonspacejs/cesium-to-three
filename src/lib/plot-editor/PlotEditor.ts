@@ -61,7 +61,10 @@ import { decodePlotDocument, type DecodePlotDocumentOptions } from './persistenc
 import { SaveCoordinator } from './persistence/SaveCoordinator';
 import {
 	HeightResolutionManager,
+	resolvePositionsHeights,
+	type ResolvedPositions,
 } from './picking/height-resolver';
+import { getSurfaceTarget } from './picking/EditorPicker';
 import type {
 	PlotSurfaceHeightProvider,
 	PlotSurfacePicker,
@@ -146,6 +149,7 @@ export class PlotEditor {
 	private readonly _renderHost: EditorRenderHost;
 	private readonly _cameraController: NavigationAdapter;
 	private readonly _surfacePicker: PlotSurfacePicker;
+	private readonly _surfaceProvider?: PlotSurfaceHeightProvider;
 	private readonly _adapters: GeometryAdapterRegistry;
 	private readonly _store: PlotDocumentStore;
 	private readonly _executor: CommandExecutor;
@@ -169,6 +173,9 @@ export class PlotEditor {
 	private readonly _resolved = new Map<PlotFeatureId, ResolvedPlotGeometry>();
 	private readonly _unsubscribers: Array<() => void> = [];
 	private _drawingSession: DrawingSession | null = null;
+	private _drawingResolution: ResolvedPositions | undefined;
+	private _drawingHeightController: AbortController | undefined;
+	private _drawingHeightGeneration = 0;
 	private _shapePreview: ShapeEditPreview | null = null;
 	private _transformPreview: TransformPreview | null = null;
 	private _textPreview: Readonly<Extract<PlotFeature, { type: 'text' }>> | null = null;
@@ -188,6 +195,7 @@ export class PlotEditor {
 		this._renderHost = options.renderHost;
 		this._cameraController = options.cameraController;
 		this._surfacePicker = options.surfacePicker;
+		this._surfaceProvider = options.surfaceProvider;
 
 		const initial = options.document === undefined
 			? createEmptySnapshot( options.documentId ?? 'plot-document' )
@@ -264,10 +272,7 @@ export class PlotEditor {
 			executor: this._executor,
 			history: this._history,
 			createFeatureId: options.idGenerator,
-			onDraftChange: ( session ) => {
-				this._drawingSession = session;
-				this._invalidateTransient( 'draft' );
-			},
+			onDraftChange: ( session ) => this._onDrawingSessionChange( session ),
 		} );
 		this._overlay = new EditorOverlayRenderer( {
 			scene: options.renderHost.scene,
@@ -364,6 +369,7 @@ export class PlotEditor {
 				onInvalidate: () => {
 					this._resolved.clear();
 					this._resolveAllHeights();
+					this._restartDrawingHeightResolution();
 				},
 				onError: ( error, id ) => this._reportError(
 					'SURFACE_UNAVAILABLE',
@@ -1285,8 +1291,13 @@ export class PlotEditor {
 				preview: this._drawingSession.preview,
 				heightReference: this._drawingSession.draft.heightReference,
 				valid: this._drawingSession.draft.validation.valid,
-				...( this._drawingSession.resolvedPositions === undefined ? {} : {
-					resolvedPositions: this._drawingSession.resolvedPositions,
+				...( this._drawingResolution === undefined
+					|| this._drawingResolution.effectivePositions.length
+						!== this._drawingSession.preview.positions.length ? {} : {
+					resolvedPositions: this._drawingResolution.effectivePositions,
+				} ),
+				...( this._drawingResolution === undefined ? {} : {
+					surfaceStatus: this._drawingResolution.status,
 				} ),
 			} );
 		const interaction = this._state.interaction;
@@ -1334,6 +1345,73 @@ export class PlotEditor {
 	private _resolveAllHeights(): void {
 		if ( this._heightResolver === undefined || this._disposed ) return;
 		for ( const feature of this._store.getAll() ) void this._heightResolver.resolve( feature );
+	}
+
+	private _onDrawingSessionChange( session: DrawingSession | null ): void {
+		this._cancelDrawingHeightResolution();
+		this._drawingSession = session;
+		this._drawingResolution = session?.resolvedPositions === undefined
+			? undefined
+			: Object.freeze( {
+				effectivePositions: session.resolvedPositions,
+				status: 'ready' as const,
+			} );
+		this._invalidateTransient( 'draft' );
+		this._startDrawingHeightResolution();
+	}
+
+	private _restartDrawingHeightResolution(): void {
+		this._cancelDrawingHeightResolution();
+		const session = this._drawingSession;
+		this._drawingResolution = session?.resolvedPositions === undefined
+			? undefined
+			: Object.freeze( {
+				effectivePositions: session.resolvedPositions,
+				status: 'ready' as const,
+			} );
+		this._syncOverlay();
+		this._startDrawingHeightResolution();
+	}
+
+	private _startDrawingHeightResolution(): void {
+		const provider = this._surfaceProvider;
+		const session = this._drawingSession;
+		if ( provider === undefined
+			|| session === null
+			|| session.preview.positions.length === 0
+			|| getSurfaceTarget( session.draft.heightReference ) === undefined ) return;
+		const generation = ++this._drawingHeightGeneration;
+		const controller = new AbortController();
+		this._drawingHeightController = controller;
+		const previous = this._drawingResolution;
+		void resolvePositionsHeights(
+			session.preview.positions,
+			session.draft.heightReference,
+			provider,
+			controller.signal,
+			previous,
+		).then( ( resolution ) => {
+			if ( this._disposed
+				|| controller.signal.aborted
+				|| generation !== this._drawingHeightGeneration
+				|| this._drawingSession !== session ) return;
+			this._drawingHeightController = undefined;
+			this._drawingResolution = resolution;
+			this._syncOverlay();
+			this._renderHost.requestRender( 'surface' );
+		} ).catch( ( error: unknown ) => {
+			if ( controller.signal.aborted
+				|| generation !== this._drawingHeightGeneration
+				|| this._drawingSession !== session ) return;
+			this._drawingHeightController = undefined;
+			this._reportError( 'SURFACE_UNAVAILABLE', '绘制草稿高度解析失败。', error );
+		} );
+	}
+
+	private _cancelDrawingHeightResolution(): void {
+		this._drawingHeightGeneration++;
+		this._drawingHeightController?.abort();
+		this._drawingHeightController = undefined;
 	}
 
 	private _invalidateTransient( reason: 'draft' | 'selection' ): void {

@@ -5,6 +5,7 @@ import type {
 	HeightReference,
 	PlotStyle,
 	Position3D,
+	ResolvedPlotGeometry,
 } from '../document/types';
 import { HeightReference as HeightReferenceValue } from '../document/types';
 import type { RenderFeature, RenderVertex } from './RenderProjection';
@@ -25,6 +26,7 @@ export interface DrawingDraftOverlay {
 	readonly preview: DraftPreviewGeometry;
 	readonly heightReference: HeightReference;
 	readonly valid: boolean;
+	readonly surfaceStatus?: ResolvedPlotGeometry[ 'status' ];
 	/** 已解析的世界高度；缺省时明确使用 author/椭球 fallback，绝不写回 draft。 */
 	readonly resolvedPositions?: readonly Position3D[];
 	readonly style?: Readonly<Partial<PlotStyle>>;
@@ -110,7 +112,9 @@ export class DrawingDraftLayer {
 function draftRenderFeature( description: DrawingDraftOverlay ): RenderFeature {
 	const style = draftStyle( description );
 	const resolved = description.resolvedPositions;
-	const vertices = description.preview.positions.map( ( position, index ) =>
+	const vertices = ( description.surfaceStatus === 'unavailable'
+		? []
+		: description.preview.positions ).map( ( position, index ) =>
 		draftVertex( position, resolved?.[ index ]?.[ 2 ] ?? fallbackHeight(
 			position, description.heightReference,
 		) ) );
@@ -128,10 +132,14 @@ function draftRenderFeature( description: DrawingDraftOverlay ): RenderFeature {
 		revision: description.revision,
 		visible: true,
 		path: 'plain-rte',
-		surfaceStatus: resolved === undefined && description.heightReference !== HeightReferenceValue.NONE
-			? 'pending'
-			: 'ready',
-		surfacePending: resolved === undefined && description.heightReference !== HeightReferenceValue.NONE,
+		surfaceStatus: description.surfaceStatus
+			?? ( resolved === undefined && description.heightReference !== HeightReferenceValue.NONE
+				? 'pending'
+				: 'ready' ),
+		surfacePending: description.surfaceStatus === 'pending'
+			|| ( description.surfaceStatus === undefined
+				&& resolved === undefined
+				&& description.heightReference !== HeightReferenceValue.NONE ),
 	} );
 }
 
@@ -169,6 +177,7 @@ function fallbackHeight( position: Position3D, reference: HeightReference ): num
 function draftMarkers(
 	description: DrawingDraftOverlay,
 ): readonly ScreenSpaceMarkerDescription[] {
+	if ( description.surfaceStatus === 'unavailable' ) return [];
 	const positions = description.preview.positions;
 	const color = description.valid ? '#27c2ff' : '#ff3344';
 	return positions.map( ( position, index ) => Object.freeze( {
@@ -227,6 +236,7 @@ function draftDescriptionsEqual(
 ): boolean {
 	return left.heightReference === right.heightReference
 		&& left.valid === right.valid
+		&& left.surfaceStatus === right.surfaceStatus
 		&& left.preview.primitive === right.preview.primitive
 		&& left.preview.closed === right.preview.closed
 		&& left.preview.sourceType === right.preview.sourceType

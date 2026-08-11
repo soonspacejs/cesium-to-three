@@ -8,6 +8,7 @@ import type {
 	NavigationAdapter,
 	NavigationLease,
 } from '../../src/lib/plot-editor/input/types';
+import type { HeightSampleRequest } from '../../src/lib/plot-editor/picking/types';
 
 class FakeEventHub {
 	public readonly listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
@@ -131,6 +132,7 @@ function createEditor( options: {
 	keymap?: EditorKeymapOverrides;
 	idGenerator?: () => string;
 	requestSave?: PlotEditorOptions[ 'requestSave' ];
+	surfaceProvider?: PlotEditorOptions[ 'surfaceProvider' ];
 } = {} ) {
 	const { root, canvas, window, document, textareas } = createDom();
 	const scene = new Group();
@@ -155,6 +157,7 @@ function createEditor( options: {
 			} ),
 		},
 		surfacePicker: { pick: options.pick ?? ( () => null ) },
+		surfaceProvider: options.surfaceProvider,
 		cameraController: navigation,
 		keymap: options.keymap,
 		idGenerator: options.idGenerator,
@@ -225,6 +228,75 @@ function text( id: string ) {
 }
 
 describe( 'PlotEditor facade', () => {
+	it( '生成型绘制草稿通过 provider 解析全部 preview 高度且不写入文档', async () => {
+		const sampleHeights = vi.fn( async ( request ) => request.positions.map(
+			( position: readonly [ number, number, number ] ) => ( {
+				longitude: position[ 0 ], latitude: position[ 1 ],
+				surfaceHeight: 300, source: 'terrain' as const,
+			} ),
+		) );
+		const { editor } = createEditor( {
+			surfaceProvider: {
+				sampleHeights,
+				subscribe: () => () => undefined,
+			},
+		} );
+		editor.activateTool( {
+			type: 'circle', heightReference: HeightReference.CLAMP_TO_TERRAIN,
+		} );
+		const drawing = ( editor as unknown as {
+			_drawing: { addPick( hit: unknown ): unknown };
+		} )._drawing;
+		const hit = ( authorPosition: readonly [ number, number, number ] ) => ( {
+			authorPosition, surfacePosition: [ authorPosition[ 0 ], authorPosition[ 1 ], 100 ],
+			surface: 'terrain' as const,
+			heightReference: HeightReference.CLAMP_TO_TERRAIN,
+		} );
+		drawing.addPick( hit( [ 116, 39, 0 ] ) );
+		drawing.addPick( hit( [ 116.01, 39, 0 ] ) );
+
+		await vi.waitFor( () => {
+			const description = ( editor as unknown as {
+				_overlay: { _drawingDraft: { _description: {
+					preview: { positions: readonly unknown[] };
+					resolvedPositions?: readonly ( readonly [ number, number, number ] )[];
+				} | null } };
+			} )._overlay._drawingDraft._description;
+			expect( description?.resolvedPositions ).toHaveLength(
+				description?.preview.positions.length ?? 0,
+			);
+			expect( description?.resolvedPositions?.every( ( position ) => position[ 2 ] === 300 ) )
+				.toBe( true );
+		} );
+		expect( editor.document.getAll() ).toEqual( [] );
+		editor.dispose();
+	} );
+
+	it( '切换绘制工具会中止旧草稿的 surface 请求', () => {
+		const requests: HeightSampleRequest[] = [];
+		const { editor } = createEditor( {
+			surfaceProvider: {
+				sampleHeights: ( request ) => new Promise( () => { requests.push( request ); } ),
+				subscribe: () => () => undefined,
+			},
+		} );
+		editor.activateTool( {
+			type: 'circle', heightReference: HeightReference.CLAMP_TO_TERRAIN,
+		} );
+		( editor as unknown as { _drawing: { addPick( hit: unknown ): unknown } } )
+			._drawing.addPick( {
+				authorPosition: [ 116, 39, 0 ], surfacePosition: [ 116, 39, 100 ],
+				surface: 'terrain', heightReference: HeightReference.CLAMP_TO_TERRAIN,
+			} );
+		expect( requests ).toHaveLength( 1 );
+
+		editor.activateTool( {
+			type: 'polygon', heightReference: HeightReference.CLAMP_TO_TERRAIN,
+		} );
+		expect( requests[ 0 ].signal.aborted ).toBe( true );
+		editor.dispose();
+	} );
+
 	it( '命令、selection、history 和事件都经公共入口协调', () => {
 		const { editor } = createEditor();
 		const documentChanges = vi.fn();

@@ -87,4 +87,15 @@ describe( 'DrawingDraftLayer', () => {
 		expect( layer.root.children ).toHaveLength( 0 );
 		expect( () => layer.sync( null ) ).toThrow( /已销毁/ );
 	} );
+
+	it( '3D Tiles 草稿 unavailable 时不回退到椭球高度', () => {
+		const layer = new DrawingDraftLayer();
+		layer.sync( {
+			...lineDraft( 1 ),
+			heightReference: HeightReference.CLAMP_TO_3D_TILE,
+			surfaceStatus: 'unavailable',
+		} );
+		expect( layer.visible ).toBe( false );
+		expect( layer.root.getObjectByName( 'PlotVariableHeight:drawing-1' ) ).toBeUndefined();
+	} );
 } );
