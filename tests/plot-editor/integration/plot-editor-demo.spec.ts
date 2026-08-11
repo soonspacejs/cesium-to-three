@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import type { PlotFeature, Position3D } from '../../../src/lib/plot-editor';
+import type { EditorCommand, PlotFeature, Position3D } from '../../../src/lib/plot-editor';
 
 interface DemoEditorApi {
 	dispose(): void;
@@ -32,6 +32,7 @@ interface DemoEditorApi {
 		activateTool( tool: string ): void;
 		clearSelection(): void;
 		dispose(): void;
+		execute( command: EditorCommand ): { readonly ok: boolean; readonly error?: { readonly message: string } };
 		select( ids: Iterable<string> ): void;
 		enterVertexEdit( id: string ): void;
 		focus(): void;
@@ -423,6 +424,112 @@ test( '贴地多选的 G/R/S、轴约束和一次撤销保持三元作者高度'
 	expect( browserErrors ).toEqual( [] );
 } );
 
+test( '绝对与相对高度选择启用 Up、pitch、roll 和垂直缩放', async ( { page } ) => {
+	const browserErrors = collectBrowserErrors( page );
+	await openDemo( page );
+	const ids = [ 'demo-line', 'demo-polygon' ];
+	const baseline = await page.evaluate( ( selectedIds ) => {
+		const editor = window.__plotDemo!.editor;
+		selectedIds.forEach( ( id, featureIndex ) => {
+			const feature = editor.document.get( id );
+			if ( feature?.type !== 'line' && feature?.type !== 'polygon' ) {
+				throw new Error( `${ id } 不是线或面。` );
+			}
+			const result = editor.execute( {
+				type: 'feature.patch',
+				id,
+				beforeRevision: feature.revision,
+				patch: {
+					heightReference: featureIndex === 0 ? 0 : 2,
+					geometry: {
+						positions: feature.geometry.positions.map( ( position, index ) => [
+							position[ 0 ], position[ 1 ], 6 + featureIndex * 4 + index * 5,
+						] ),
+					},
+				},
+			} );
+			if ( ! result.ok ) throw new Error( result.error?.message ?? `${ id } 高度迁移失败。` );
+		} );
+		editor.select( selectedIds );
+		editor.focus();
+		return selectedIds.map( ( id ) => editor.document.get( id ) );
+	}, ids );
+	expect( await page.evaluate( () => window.__plotDemo!.editor.document.revision ) ).toBe( 2 );
+	expect( baseline.map( ( feature ) => feature?.heightReference ) ).toEqual( [ 0, 2 ] );
+
+	await page.keyboard.press( 'g' );
+	expect( await gizmoMarkerNames( page ) ).toEqual( [
+		'EditorMarker:gizmo:translate:east',
+		'EditorMarker:gizmo:translate:north',
+		'EditorMarker:gizmo:translate:up',
+		'EditorMarker:gizmo:translate:east-north',
+	] );
+	await page.keyboard.press( 'z' );
+	expect( await transformSession( page ) ).toMatchObject( { mode: 'translate', axis: 'up' } );
+	await page.keyboard.press( 'PageUp' );
+	await expect.poll( () => snapshot( page ) ).toMatchObject( { revision: 3, mode: 'select' } );
+	const raised = await selectedFeatures( page, ids );
+	expectHeightsClose(
+		positionHeights( raised ),
+		positionHeights( baseline ).map( ( height ) => height + 1 ),
+	);
+	await page.keyboard.press( 'Control+z' );
+	await expect.poll( () => selectedFeatures( page, ids ) ).toEqual( baseline );
+
+	for ( const handleId of [ 'rotate:pitch', 'rotate:roll' ] ) {
+		const before = await selectedFeatures( page, ids );
+		const revisionBefore = await page.evaluate( () => window.__plotDemo!.editor.document.revision );
+		await page.keyboard.press( 'r' );
+		expect( await gizmoMarkerNames( page ) ).toEqual( [
+			'EditorMarker:gizmo:rotate:heading',
+			'EditorMarker:gizmo:rotate:pitch',
+			'EditorMarker:gizmo:rotate:roll',
+		] );
+		const target = await gizmoHandleTarget( page, handleId );
+		await page.mouse.move( target.x, target.y );
+		await page.evaluate( () => { window.__plotDemo!.controls.enabled = true; } );
+		const cameraBefore = await cameraPose( page );
+		await page.mouse.down();
+		await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( false );
+		await page.mouse.move( target.x + 20, target.y + 10, { steps: 4 } );
+		await page.mouse.up();
+		await expect.poll( () => page.evaluate( () => window.__plotDemo!.controls.enabled ) ).toBe( true );
+		await page.evaluate( () => { window.__plotDemo!.controls.enabled = false; } );
+		await expect.poll( () => page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
+			.toBe( revisionBefore + 1 );
+		const changed = await selectedFeatures( page, ids );
+		expect( changed ).not.toEqual( before );
+		expect( changed.map( ( feature ) => feature?.heightReference ) ).toEqual( [ 0, 2 ] );
+		expect( positionHeights( changed ).every( Number.isFinite ) ).toBe( true );
+		expectPoseEqual( await cameraPose( page ), cameraBefore );
+		await page.keyboard.press( 'Control+z' );
+		await expect.poll( () => selectedFeatures( page, ids ) ).toEqual( before );
+	}
+
+	const beforeScale = await selectedFeatures( page, ids );
+	const revisionBeforeScale = await page.evaluate( () => window.__plotDemo!.editor.document.revision );
+	await page.keyboard.press( 's' );
+	expect( await gizmoMarkerNames( page ) ).toEqual( [
+		'EditorMarker:gizmo:scale:east',
+		'EditorMarker:gizmo:scale:north',
+		'EditorMarker:gizmo:scale:up',
+		'EditorMarker:gizmo:scale:uniform',
+	] );
+	const scaleTarget = await gizmoHandleTarget( page, 'scale:up' );
+	await page.mouse.move( scaleTarget.x, scaleTarget.y );
+	await page.mouse.down();
+	await page.mouse.move( scaleTarget.x + 18, scaleTarget.y, { steps: 4 } );
+	await page.mouse.up();
+	await expect.poll( () => page.evaluate( () => window.__plotDemo!.editor.document.revision ) )
+		.toBe( revisionBeforeScale + 1 );
+	const scaled = await selectedFeatures( page, ids );
+	expect( scaled ).not.toEqual( beforeScale );
+	expect( positionHeights( scaled ) ).not.toEqual( positionHeights( beforeScale ) );
+	await page.keyboard.press( 'Control+z' );
+	await expect.poll( () => selectedFeatures( page, ids ) ).toEqual( beforeScale );
+	expect( browserErrors ).toEqual( [] );
+} );
+
 test( '贴地多选的 translate、heading 与 uniform Gizmo 拖拽均原子提交', async ( { page } ) => {
 	const browserErrors = collectBrowserErrors( page );
 	await openDemo( page );
@@ -625,6 +732,15 @@ async function selectedIds( page: Page ): Promise<string[]> {
 	return page.evaluate( () => [ ...window.__plotDemo!.editor.selection ] );
 }
 
+async function selectedFeatures(
+	page: Page,
+	ids: readonly string[],
+): Promise<( Readonly<PlotFeature> | undefined )[]> {
+	return page.evaluate( ( selectedIds ) => selectedIds.map(
+		( id ) => window.__plotDemo!.editor.document.get( id ),
+	), ids );
+}
+
 async function featureAnchorProjection(
 	page: Page,
 	id: string,
@@ -757,4 +873,22 @@ function authorHeights( features: readonly ( Readonly<PlotFeature> | undefined )
 		if ( feature.type === 'circle' || feature.type === 'sector' ) return feature.geometry.center[ 2 ];
 		return feature.geometry.positions[ 0 ][ 2 ];
 	} );
+}
+
+function positionHeights(
+	features: readonly ( Readonly<PlotFeature> | undefined )[],
+): number[] {
+	return features.flatMap( ( feature ) => {
+		if ( feature === undefined ) throw new Error( '高度验证 feature 不存在。' );
+		if ( feature.type === 'point' || feature.type === 'text' ) return [ feature.geometry.position[ 2 ] ];
+		if ( feature.type === 'circle' || feature.type === 'sector' ) return [ feature.geometry.center[ 2 ] ];
+		return feature.geometry.positions.map( ( position ) => position[ 2 ] );
+	} );
+}
+
+function expectHeightsClose( actual: readonly number[], expected: readonly number[] ): void {
+	expect( actual ).toHaveLength( expected.length );
+	for ( let index = 0; index < actual.length; index++ ) {
+		expect( actual[ index ] ).toBeCloseTo( expected[ index ], 7 );
+	}
 }

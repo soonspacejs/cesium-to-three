@@ -71,7 +71,7 @@ import { configureLoadedTileScene, createCesiumTilesRenderer } from './tiles';
 
 /** 默认倾斜摄影 tileset（用户提供，直连，CORS=*，无需 token）。 */
 const DEFAULT_OBLIQUE_URL =
-	'https://sooncps.xwbuilders.com/api/ugis-dataprocess/v1/model/taz4Wo8Q5/tileset.json';
+	'https://sooncps.xwbuilders.com/api/ugis-dataprocess/v1/model/t7E36xxdd/tileset.json';
 
 const PLOT_RECTANGLE_CENTER_EAST_UNITS = 3.2;
 const PLOT_RECTANGLE_CENTER_NORTH_UNITS = 2.0;
@@ -104,8 +104,9 @@ const IDLE_RENDER_INTERVAL_MS = 250;
  * 让根 tileset 尽快进入加载；真正的中心在运行时由 getBoundingSphere 反算后
  * flyToModel 修正。取默认 URL 的大致位置（陕西），自定义 URL 也会在数帧内自动归位。
  */
-const INITIAL_HINT_LON = 110.39;
-const INITIAL_HINT_LAT = 33.01;
+const INITIAL_HINT_LON = 103.188219891;
+const INITIAL_HINT_LAT = 26.042895870;
+const INITIAL_HINT_HEIGHT = 1279.31;
 
 /** 合成楼房中心（buildings 兜底源专用）。 */
 const BUILDINGS_LON = 120.0;
@@ -570,7 +571,11 @@ export function runModelClampDemo(): void {
 	camera.layers.enable( CESIUM_GROUND_NON_PICKABLE_LAYER );
 
 	// 首帧位置提示：放在初始 hint 上空约 12km，俯视，等包围球就绪后 flyToModel 修正。
-	const hint = wgs84PositionFromDegrees( INITIAL_HINT_LON, INITIAL_HINT_LAT, 0.0 );
+	const hint = wgs84PositionFromDegrees(
+		INITIAL_HINT_LON,
+		INITIAL_HINT_LAT,
+		INITIAL_HINT_HEIGHT,
+	);
 	camera.position.copy( hint ).addScaledVector(
 		wgs84NormalFromDegrees( INITIAL_HINT_LON, INITIAL_HINT_LAT ),
 		12000.0,
