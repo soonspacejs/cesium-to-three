@@ -108,7 +108,7 @@
 
 构造函数中的 `_clickPixelTolerance = 5`、`_holdPixelTolerance = 25` 是 Cesium 的内部基线；静态属性 `mouseEmulationIgnoreMilliseconds = 800` 用来忽略触摸后浏览器合成的鼠标事件，`touchHoldDelayMilliseconds = 1500` 定义长按延迟。`pointercancel` 被映射到与 pointer up 相同的清理函数，避免按钮状态永久卡住。
 
-本项目首期建议采用：点击判定默认 `6 CSS px`（与当前 [draw-tool](../../src/demo/draw-tool.ts) 的 `CLICK_MOVE_THRESHOLD_PX = 6` 保持一致），拖拽启动阈值与点击阈值分开配置。这个数值是项目策略，不声称是 Cesium 公共 API；Cesium 的 5px/25px 只作为参考证据。
+本项目点击判定默认采用 `6 CSS px`；当前 [PointerInput](../../src/lib/plot-editor/input/PointerInput.ts) 的 `clickToleranceCssPixels` 已实现该默认值，并延续旧 `draw-tool.ts` 的 `CLICK_MOVE_THRESHOLD_PX = 6` 策略。拖拽启动阈值与点击阈值分开配置。这个数值是项目策略，不声称是 Cesium 公共 API；Cesium 的 5px/25px 只作为参考证据。
 
 ### 2.4 `setInputAction` 的生命周期启示
 
