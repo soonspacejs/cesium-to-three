@@ -162,7 +162,7 @@ function createEditor( options: {
 		autoAttachInputs: options.autoAttachInputs ?? false,
 	} );
 	return {
-		editor, scene, requestRender, navigation, canvas, window, document, root, textareas,
+		editor, scene, camera, requestRender, navigation, canvas, window, document, root, textareas,
 	};
 }
 
@@ -389,6 +389,44 @@ describe( 'PlotEditor facade', () => {
 		window.dispatch( 'blur', { target: window } as unknown as Event );
 
 		expect( transformSession() ).toBeNull();
+		editor.dispose();
+	} );
+
+	it( 'Up 指针变换使用相机射线轴参数，不依赖 surface picker 高度', () => {
+		const pick = vi.fn( () => null );
+		const { editor, root, camera } = createEditor( { autoAttachInputs: true, pick } );
+		const feature = point( 'ray-axis-up' );
+		editor.execute( { type: 'feature.add', feature } );
+		editor.select( [ feature.id ] );
+		editor.focus();
+		camera.position.set( 6_379_137, 1_000, 1_000 );
+		camera.lookAt( 6_378_137, 0, 0 );
+		camera.updateMatrixWorld();
+
+		root.dispatch( 'keydown', keyboardEvent( root, 'g', 'KeyG' ) );
+		root.dispatch( 'keydown', keyboardEvent( root, 'z', 'KeyZ' ) );
+		const internals = editor as unknown as {
+			_state: { activeTransaction?: { id: string } };
+			_pointerTransactionStart: { screen: { x: number; y: number } } | null;
+			_transformPreview: { features: readonly ReturnType<typeof point>[] } | null;
+			_updatePointerTransaction(
+				transactionId: string,
+				screen: { x: number; y: number },
+				modifiers: { shift: boolean; alt: boolean },
+			): void;
+		};
+		const transactionId = internals._state.activeTransaction?.id;
+		expect( transactionId ).toBeDefined();
+		internals._pointerTransactionStart = { screen: { x: 400, y: 300 } };
+		internals._updatePointerTransaction(
+			transactionId!, { x: 400, y: 240 }, { shift: false, alt: false },
+		);
+
+		const preview = internals._transformPreview?.features[ 0 ];
+		expect( preview?.type ).toBe( 'point' );
+		if ( preview?.type !== 'point' ) expect.fail( '应生成 point Up 变换预览。' );
+		expect( Math.abs( preview.geometry.position[ 2 ] ) ).toBeGreaterThan( 1 );
+		expect( pick ).not.toHaveBeenCalled();
 		editor.dispose();
 	} );
 

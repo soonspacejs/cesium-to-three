@@ -1,4 +1,4 @@
-import type { Object3D, PerspectiveCamera } from 'three';
+import { Raycaster, type Object3D, type PerspectiveCamera } from 'three';
 import type { CesiumGroundFrameState } from '../ground';
 import { createBuiltinGeometryAdapterRegistry } from './adapters/builtins';
 import type { GeometryAdapterRegistry } from './adapters/GeometryAdapterRegistry';
@@ -96,6 +96,7 @@ import {
 	pointerRotationDegrees,
 	pointerScaleFactor,
 } from './transform/pointer-constraints';
+import { screenRayAxisParameterMeters } from './transform/pointer-axis';
 import type { GizmoCapabilities, TransformPreview } from './transform/types';
 
 export interface EditorRenderHost {
@@ -158,6 +159,7 @@ export class PlotEditor {
 	private readonly _router: CommandRouter;
 	private readonly _keyboard: KeyboardInput;
 	private readonly _pointer: PointerInput;
+	private readonly _gizmoRaycaster = new Raycaster();
 	private readonly _resolved = new Map<PlotFeatureId, ResolvedPlotGeometry>();
 	private readonly _unsubscribers: Array<() => void> = [];
 	private _drawingSession: DrawingSession | null = null;
@@ -876,19 +878,44 @@ export class PlotEditor {
 		const start = this._pointerTransactionStart;
 		let result;
 		if ( session.mode === 'translate' ) {
-			const primary = this._store.get( this._selectionModel.state.primaryId ?? '' );
-			const current = primary === undefined ? null : this._pickSurface( screen, primary.heightReference );
-			if ( current === null || start?.surface === undefined ) return;
-			const frame = createEnuFrame( session.pivot.position );
-			const origin = ecefToEnu( geodeticToEcef( start.surface ), frame );
-			const target = ecefToEnu( geodeticToEcef( current.authorPosition ), frame );
-			result = this._transform.update( {
-				translationMeters: constrainPointerTranslation( [
-					target[ 0 ] - origin[ 0 ],
-					target[ 1 ] - origin[ 1 ],
-					target[ 2 ] - origin[ 2 ],
-				], modifiers ),
-			} );
+			if ( session.axis === 'up' ) {
+				if ( start === null ) return;
+				const axisOptions = {
+					raycaster: this._gizmoRaycaster,
+					camera: this._renderHost.camera,
+					canvas: this._canvas,
+					axisOrigin: session.pivot.ecef,
+					axisDirection: session.pivot.frame.up,
+				} as const;
+				const startParameter = screenRayAxisParameterMeters( {
+					...axisOptions, screen: start.screen,
+				} );
+				const currentParameter = screenRayAxisParameterMeters( {
+					...axisOptions, screen,
+				} );
+				if ( startParameter === null || currentParameter === null ) return;
+				result = this._transform.update( {
+					translationMeters: constrainPointerTranslation( [
+						0, 0, currentParameter - startParameter,
+					], modifiers ),
+				} );
+			} else {
+				const primary = this._store.get( this._selectionModel.state.primaryId ?? '' );
+				const current = primary === undefined
+					? null
+					: this._pickSurface( screen, primary.heightReference );
+				if ( current === null || start?.surface === undefined ) return;
+				const frame = createEnuFrame( session.pivot.position );
+				const origin = ecefToEnu( geodeticToEcef( start.surface ), frame );
+				const target = ecefToEnu( geodeticToEcef( current.authorPosition ), frame );
+				result = this._transform.update( {
+					translationMeters: constrainPointerTranslation( [
+						target[ 0 ] - origin[ 0 ],
+						target[ 1 ] - origin[ 1 ],
+						target[ 2 ] - origin[ 2 ],
+					], modifiers ),
+				} );
+			}
 		} else if ( session.mode === 'rotate' ) {
 			const dx = screen.x - ( start?.screen.x ?? screen.x );
 			const dy = screen.y - ( start?.screen.y ?? screen.y );
