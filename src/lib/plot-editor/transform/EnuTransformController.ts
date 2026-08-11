@@ -356,14 +356,28 @@ function constrainTransform(
 		throw new Error( 'TRANSFORM_MODE_MISMATCH：scale 事务只接受 scale。' );
 	}
 	let scale = delta.scale ?? [ 1, 1, 1 ];
-	if ( session.axis === 'east' ) scale = [ scale[ 0 ], 1, 1 ];
-	else if ( session.axis === 'north' ) scale = [ 1, scale[ 1 ], 1 ];
+	if ( session.axis === 'east' ) {
+		scale = selectionRequiresUniformHorizontalScale( session )
+			? [ scale[ 0 ], scale[ 0 ], 1 ] : [ scale[ 0 ], 1, 1 ];
+	} else if ( session.axis === 'north' ) {
+		scale = selectionRequiresUniformHorizontalScale( session )
+			? [ scale[ 1 ], scale[ 1 ], 1 ] : [ 1, scale[ 1 ], 1 ];
+	}
 	else if ( session.axis === 'up' ) scale = [ 1, 1, scale[ 2 ] ];
 	else if ( session.axis === 'uniform' ) {
 		const uniform = scale[ 0 ];
 		scale = [ uniform, uniform, session.capabilities.scaleVertical ? uniform : 1 ];
 	}
 	return Object.freeze( { pivot: session.pivot.position, scale } );
+}
+
+/** 参数化圆形只有一个水平尺寸；组内包含此类图形时，水平轴手柄必须整体等比缩放。 */
+function selectionRequiresUniformHorizontalScale( session: ActiveTransformSession ): boolean {
+	return [ ...session.sourceFeatures.values() ].some( ( feature ) =>
+		feature.type === 'circle'
+		|| feature.type === 'sector'
+		|| feature.type === 'point' && feature.style.pointStyle !== 'image',
+	);
 }
 
 function modeEnabled( mode: TransformMode, capabilities: GizmoCapabilities ): boolean {

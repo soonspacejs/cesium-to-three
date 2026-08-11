@@ -128,6 +128,25 @@ describe( 'EnuTransformController', () => {
 		expect( history.state.undoCount ).toBe( 0 );
 	} );
 
+	it( '参数化圆形的 East/North 手柄驱动等比水平缩放', () => {
+		const { controller } = setup( [ circle( 'uniform-circle', 0 ) ] );
+		controller.begin( [ 'uniform-circle' ], 'uniform-circle', 'scale' );
+		expect( controller.constrain( 'east' ).ok ).toBe( true );
+		const east = controller.update( { scale: [ 2, 2, 2 ] } );
+		expect( east.ok ).toBe( true );
+		const eastFeature = east.preview?.features[ 0 ];
+		if ( eastFeature?.type !== 'circle' ) expect.fail( '应为 circle。' );
+		expect( eastFeature.geometry.radius ).toBe( 200 );
+
+		expect( controller.constrain( 'north' ).ok ).toBe( true );
+		const north = controller.update( { scale: [ 3, 3, 3 ] } );
+		expect( north.ok ).toBe( true );
+		const northFeature = north.preview?.features[ 0 ];
+		if ( northFeature?.type !== 'circle' ) expect.fail( '应为 circle。' );
+		expect( northFeature.geometry.radius ).toBe( 300 );
+		controller.cancel();
+	} );
+
 	it( '相同值为空事务；Escape/dispose 回滚并清空 transient preview', () => {
 		const { document, history, controller, onPreviewChange } = setup( [ circle( 'a', 0 ) ] );
 		const before = document.snapshot();
