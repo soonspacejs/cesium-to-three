@@ -61,7 +61,8 @@ export class DrawingDraftLayer {
 		}
 		validateDraftOverlay( description );
 		if ( this._description?.id === description.id
-			&& this._description.revision === description.revision ) return;
+			&& this._description.revision === description.revision
+			&& draftDescriptionsEqual( this._description, description ) ) return;
 
 		const render = draftRenderFeature( description );
 		let candidate: VariableHeightRtePrimitive | null = null;
@@ -218,4 +219,51 @@ function freezeDescription( value: DrawingDraftOverlay ): DrawingDraftOverlay {
 		} ),
 		...( value.style === undefined ? {} : { style: Object.freeze( { ...value.style } ) } ),
 	} );
+}
+
+function draftDescriptionsEqual(
+	left: DrawingDraftOverlay,
+	right: DrawingDraftOverlay,
+): boolean {
+	return left.heightReference === right.heightReference
+		&& left.valid === right.valid
+		&& left.preview.primitive === right.preview.primitive
+		&& left.preview.closed === right.preview.closed
+		&& left.preview.sourceType === right.preview.sourceType
+		&& left.preview.generated === right.preview.generated
+		&& left.preview.text === right.preview.text
+		&& positionsEqual( left.preview.positions, right.preview.positions )
+		&& optionalPositionsEqual( left.resolvedPositions, right.resolvedPositions )
+		&& recordsEqual( left.style, right.style );
+}
+
+function optionalPositionsEqual(
+	left: readonly Position3D[] | undefined,
+	right: readonly Position3D[] | undefined,
+): boolean {
+	return left === undefined || right === undefined
+		? left === right
+		: positionsEqual( left, right );
+}
+
+function positionsEqual(
+	left: readonly Position3D[],
+	right: readonly Position3D[],
+): boolean {
+	return left.length === right.length && left.every( ( position, index ) =>
+		position[ 0 ] === right[ index ][ 0 ]
+		&& position[ 1 ] === right[ index ][ 1 ]
+		&& position[ 2 ] === right[ index ][ 2 ] );
+}
+
+function recordsEqual(
+	left: Readonly<Partial<PlotStyle>> | undefined,
+	right: Readonly<Partial<PlotStyle>> | undefined,
+): boolean {
+	if ( left === undefined || right === undefined ) return left === right;
+	const leftEntries = Object.entries( left );
+	const rightKeys = Object.keys( right );
+	return leftEntries.length === rightKeys.length
+		&& leftEntries.every( ( [ key, value ] ) =>
+			value === ( right as Readonly<Record<string, unknown>> )[ key ] );
 }

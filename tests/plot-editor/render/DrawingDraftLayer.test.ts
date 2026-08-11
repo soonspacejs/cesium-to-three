@@ -37,6 +37,22 @@ describe( 'DrawingDraftLayer', () => {
 		expect( layer.root.children ).toHaveLength( 1 );
 	} );
 
+	it( '同 revision 的有效性与异步 resolved height 变化仍会替换预览', () => {
+		const layer = new DrawingDraftLayer();
+		layer.sync( lineDraft( 1, false ) );
+		const invalid = layer.root.getObjectByName( 'PlotVariableHeight:drawing-1' );
+
+		layer.sync( lineDraft( 1, true ) );
+		const valid = layer.root.getObjectByName( 'PlotVariableHeight:drawing-1' );
+		expect( valid ).not.toBe( invalid );
+
+		layer.sync( {
+			...lineDraft( 1, true ),
+			resolvedPositions: [ [ 116, 39, 110 ], [ 116.01, 39.01, 120 ] ],
+		} );
+		expect( layer.root.getObjectByName( 'PlotVariableHeight:drawing-1' ) ).not.toBe( valid );
+	} );
+
 	it( '点/文本在尚未能构成 canonical feature 时仍显示可编辑锚点', () => {
 		const layer = new DrawingDraftLayer();
 		layer.sync( {
