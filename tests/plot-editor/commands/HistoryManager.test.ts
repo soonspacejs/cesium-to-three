@@ -95,6 +95,28 @@ describe( 'HistoryManager 基本撤销与重做', () => {
 		history.redo();
 		expect( document.snapshot().metadata ).toEqual( { phase: 'after', count: 2 } );
 	} );
+
+	it( '仅替换 metadata 也生成可撤销的历史条目', () => {
+		const document = createPlotDocumentStore( {
+			id: 'document', features: [ circle( 'a' ) ], metadata: { phase: 'before' },
+		} );
+		const replacement = createPlotDocumentStore( {
+			id: 'document', features: [ circle( 'a' ) ], metadata: { phase: 'after' },
+		} ).snapshot();
+		const executor = new CommandExecutor( document );
+		const history = new HistoryManager( document );
+
+		expect( history.execute( executor, {
+			type: 'document.replace', snapshot: replacement,
+		} ) ).toMatchObject( { ok: true, changed: true, affectedIds: [] } );
+		expect( history.state.undoCount ).toBe( 1 );
+		expect( document.snapshot().metadata ).toEqual( { phase: 'after' } );
+
+		expect( history.undo() ).toMatchObject( { ok: true, changed: true, affectedIds: [] } );
+		expect( document.snapshot().metadata ).toEqual( { phase: 'before' } );
+		expect( history.redo() ).toMatchObject( { ok: true, changed: true, affectedIds: [] } );
+		expect( document.snapshot().metadata ).toEqual( { phase: 'after' } );
+	} );
 } );
 
 describe( '连续事务、回滚与合并', () => {

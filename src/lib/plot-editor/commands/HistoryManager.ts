@@ -398,7 +398,8 @@ function createEntry(
 		}
 	}
 	const orderChanged = ! arraysEqual( active.before.order, after.order );
-	if ( deltas.length === 0 && ! orderChanged ) {
+	const metadataChanged = ! jsonEqual( active.before.metadata, after.metadata );
+	if ( deltas.length === 0 && ! orderChanged && ! metadataChanged ) {
 		return null;
 	}
 	const commandType = active.commandTypes.size === 1
