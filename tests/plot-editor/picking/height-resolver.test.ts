@@ -5,6 +5,7 @@ import { HeightReference } from '../../../src/lib/plot-editor/document/types';
 import {
 	HeightResolutionManager,
 	resolveFeatureHeights,
+	resolvePositionsHeights,
 } from '../../../src/lib/plot-editor/picking/height-resolver';
 import type {
 	HeightSample,
@@ -69,6 +70,20 @@ function provider(
 }
 
 describe( 'resolveFeatureHeights', () => {
+	it( '任意草稿 position 列表复用同一套 relative 表面解析', async () => {
+		const source = provider( async ( request ) => samples( request ) );
+		const result = await resolvePositionsHeights(
+			[ [ 179.9, 30, 5 ], [ -179.9, 31, -2 ] ],
+			HeightReference.RELATIVE_TO_TERRAIN,
+			source.api,
+			new AbortController().signal,
+		);
+		expect( result ).toEqual( {
+			status: 'ready',
+			effectivePositions: [ [ 179.9, 30, 105 ], [ -179.9, 31, 198 ] ],
+		} );
+	} );
+
 	it( 'NONE 直接保留作者绝对高度且不访问 provider', async () => {
 		const source = provider( async ( request ) => samples( request ) );
 		const feature = line( 'line', HeightReference.NONE ) as never;

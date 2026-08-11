@@ -24,6 +24,11 @@ export interface HeightResolutionOutcome {
 	readonly result?: ResolvedPlotGeometry;
 }
 
+export interface ResolvedPositions {
+	readonly effectivePositions: readonly Position3D[];
+	readonly status: ResolvedPlotGeometry[ 'status' ];
+}
+
 export interface HeightResolutionManagerOptions {
 	readonly provider: PlotSurfaceHeightProvider;
 	readonly document: PlotDocument;
@@ -172,11 +177,34 @@ export async function resolveFeatureHeights(
 	previous?: ResolvedPlotGeometry,
 ): Promise<ResolvedPlotGeometry> {
 	const positions = getFeaturePositions( feature );
-	const target = getSurfaceTarget( feature.heightReference );
+	const reusablePrevious = canReusePreviousResolution( feature, positions, previous )
+		? previous
+		: undefined;
+	const resolved = await resolvePositionsHeights(
+		positions,
+		feature.heightReference,
+		provider,
+		signal,
+		reusablePrevious,
+	);
+	return freezeResolved( {
+		plotId: feature.id,
+		sourceRevision: feature.revision,
+		...resolved,
+	} );
+}
+
+/** 草稿与正式 feature 共用的逐点表面解析，不读取或写入 PlotDocument。 */
+export async function resolvePositionsHeights(
+	positions: readonly Position3D[],
+	heightReference: HeightReference,
+	provider: PlotSurfaceHeightProvider,
+	signal: AbortSignal,
+	previous?: ResolvedPositions,
+): Promise<ResolvedPositions> {
+	const target = getSurfaceTarget( heightReference );
 	if ( target === undefined ) {
-		return freezeResolved( {
-			plotId: feature.id,
-			sourceRevision: feature.revision,
+		return freezeResolvedPositions( {
 			effectivePositions: positions,
 			status: 'ready',
 		} );
@@ -193,18 +221,14 @@ export async function resolveFeatureHeights(
 
 	const hasMissing = samples.some( ( sample ) => sample.surfaceHeight === null );
 	const hasFallback = samples.some( ( sample ) => sample.source === 'ellipsoid' );
-	if ( hasMissing && canReusePreviousResolution( feature, positions, previous ) ) {
-		return freezeResolved( {
-			plotId: feature.id,
-			sourceRevision: feature.revision,
+	if ( hasMissing && canReusePreviousPositions( positions, previous ) ) {
+		return freezeResolvedPositions( {
 			effectivePositions: previous.effectivePositions,
 			status: 'pending',
 		} );
 	}
 	if ( hasMissing && target === '3d-tile' ) {
-		return freezeResolved( {
-			plotId: feature.id,
-			sourceRevision: feature.revision,
+		return freezeResolvedPositions( {
 			effectivePositions: [],
 			status: 'unavailable',
 		} );
@@ -213,7 +237,7 @@ export async function resolveFeatureHeights(
 	const effectivePositions = positions.map( ( position, index ) => {
 		const sample = samples[ index ];
 		const surfaceHeight = sample.surfaceHeight ?? 0;
-		const authorOffset = isHeightReferenceRelative( feature.heightReference )
+		const authorOffset = isHeightReferenceRelative( heightReference )
 			? position[ 2 ]
 			: 0;
 		return Object.freeze( [
@@ -222,9 +246,7 @@ export async function resolveFeatureHeights(
 			surfaceHeight + authorOffset,
 		] as Position3D );
 	} );
-	return freezeResolved( {
-		plotId: feature.id,
-		sourceRevision: feature.revision,
+	return freezeResolvedPositions( {
 		effectivePositions,
 		status: hasMissing || hasFallback ? 'pending' : 'ready',
 	} );
@@ -240,8 +262,24 @@ function canReusePreviousResolution(
 		&& previous.status === 'ready'
 		&& previous.plotId === feature.id
 		&& previous.sourceRevision === feature.revision
-		&& previous.effectivePositions.length === positions.length
-		&& previous.effectivePositions.every( ( effective, index ) =>
+		&& positionsMatchEffective( positions, previous.effectivePositions );
+}
+
+function canReusePreviousPositions(
+	positions: readonly Position3D[],
+	previous: ResolvedPositions | undefined,
+): previous is ResolvedPositions {
+	return previous !== undefined
+		&& previous.status === 'ready'
+		&& positionsMatchEffective( positions, previous.effectivePositions );
+}
+
+function positionsMatchEffective(
+	positions: readonly Position3D[],
+	effectivePositions: readonly Position3D[],
+): boolean {
+	return effectivePositions.length === positions.length
+		&& effectivePositions.every( ( effective, index ) =>
 			wrappedLongitudeDistanceDegrees( effective[ 0 ], positions[ index ][ 0 ] )
 				<= POSITION_MATCH_EPSILON_DEGREES
 			&& Math.abs( effective[ 1 ] - positions[ index ][ 1 ] )
@@ -317,6 +355,16 @@ function freezeResolved( input: ResolvedPlotGeometry ): ResolvedPlotGeometry {
 		...input,
 		effectivePositions: Object.freeze(
 			input.effectivePositions.map( ( position ) => Object.freeze( [ ...position ] ) as Position3D ),
+		),
+	} );
+}
+
+function freezeResolvedPositions( input: ResolvedPositions ): ResolvedPositions {
+	return Object.freeze( {
+		...input,
+		effectivePositions: Object.freeze(
+			input.effectivePositions.map( ( position ) =>
+				Object.freeze( [ ...position ] ) as Position3D ),
 		),
 	} );
 }
