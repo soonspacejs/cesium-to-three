@@ -71,7 +71,12 @@ export class PlotEntityRaycaster {
 			return Object.freeze( [] );
 		}
 		camera.updateMatrixWorld();
-		for ( const target of this._registry.targets ) target.updateWorldMatrix( true, true );
+		// 代理共享同一 root，一次树遍历即可刷新全部 matrixWorld，避免 1,000 个
+		// 实体逐个向上回溯父节点；直接复用的显示对象再单独刷新其所在场景树。
+		this._registry.root.updateWorldMatrix( true, true );
+		for ( const target of this._registry.targets ) {
+			if ( target.parent !== this._registry.root ) target.updateWorldMatrix( true, true );
+		}
 		this._raycaster.setFromCamera( ndc, camera );
 		const intersections = this._raycaster.intersectObjects(
 			this._registry.targets as Object3D[], true,
