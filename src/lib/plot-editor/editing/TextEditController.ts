@@ -37,9 +37,19 @@ export interface TextDraftInputSession {
 export type TextInputSession = TextEditSession | TextDraftInputSession;
 
 interface ActiveTextSessionBase {
+	readonly panel: HTMLDivElement;
 	readonly textarea: HTMLTextAreaElement;
+	readonly commitButton: HTMLButtonElement;
+	readonly cancelButton: HTMLButtonElement;
 	composing: boolean;
 	closing: boolean;
+}
+
+interface TextEditorElements {
+	readonly panel: HTMLDivElement;
+	readonly textarea: HTMLTextAreaElement;
+	readonly commitButton: HTMLButtonElement;
+	readonly cancelButton: HTMLButtonElement;
 }
 
 interface ActiveFeatureTextSession extends ActiveTextSessionBase {
@@ -90,16 +100,16 @@ export class TextEditController {
 			|| feature.properties.locked === true ) {
 			return false;
 		}
-		const textarea = this._createTextarea( feature.style.content, placement );
+		const elements = this._createEditor( feature.style.content );
 		const session: ActiveTextSession = {
 			kind: 'feature',
 			entityId,
 			source: feature,
-			textarea,
+			...elements,
 			composing: false,
 			closing: false,
 		};
-		this._open( session );
+		this._open( session, placement );
 		return true;
 	}
 
@@ -107,10 +117,10 @@ export class TextEditController {
 	public beginDraft( content = '', placement?: TextInputPlacement ): void {
 		this._assertOpen();
 		this.cancel();
-		const textarea = this._createTextarea( content, placement );
+		const elements = this._createEditor( content );
 		this._open( {
-			kind: 'draft', textarea, composing: false, closing: false,
-		} );
+			kind: 'draft', ...elements, composing: false, closing: false,
+		}, placement );
 	}
 
 	public commit( label = '编辑文本' ): CommandResult {
@@ -174,6 +184,24 @@ export class TextEditController {
 		}
 	};
 	private readonly _onKeyDown = ( event: KeyboardEvent ): void => {
+		this._handleSessionKeyDown( event );
+	};
+	private readonly _onDocumentKeyDown = ( event: KeyboardEvent ): void => {
+		// textarea 正常持有焦点时会在元素监听器中处理；这里专门兜底宿主
+		// canvas/controls 抢走焦点后的活动文本事务。
+		if ( event.target === this._session?.textarea ) return;
+		this._handleSessionKeyDown( event );
+	};
+	private readonly _onDocumentPointerDown = ( event: PointerEvent ): void => {
+		const session = this._session;
+		if ( session === null || session.panel.contains( event.target as Node | null ) ) return;
+		// 点击编辑面板外部确认当前内容。捕获阶段先
+		// 结束事务，随后 canvas 可以正常处理这次点击，不会残留 text-editing。
+		if ( session.kind === 'draft' ) this._options.onDraftCommitRequest?.();
+		else this._options.onCommitRequest?.();
+	};
+
+	private _handleSessionKeyDown( event: KeyboardEvent ): void {
 		const session = this._session;
 		if ( session === null || session.composing || event.isComposing || event.keyCode === 229 ) return;
 		if ( event.key === 'Escape' ) {
@@ -189,12 +217,18 @@ export class TextEditController {
 			if ( session.kind === 'draft' ) this._options.onDraftCommitRequest?.();
 			else this._options.onCommitRequest?.();
 		}
-	};
-	private readonly _onBlur = (): void => {
+	}
+	private readonly _onCommitClick = (): void => {
 		const session = this._session;
-		if ( session === null || session.closing ) return;
+		if ( session === null ) return;
 		if ( session.kind === 'draft' ) this._options.onDraftCommitRequest?.();
 		else this._options.onCommitRequest?.();
+	};
+	private readonly _onCancelClick = (): void => {
+		const session = this._session;
+		if ( session === null ) return;
+		if ( session.kind === 'draft' ) this._options.onDraftCancelRequest?.();
+		else this._options.onCancelRequest?.();
 	};
 
 	private _emitPreview(): void {
@@ -222,32 +256,78 @@ export class TextEditController {
 		session.textarea.removeEventListener( 'keydown', this._onKeyDown );
 		session.textarea.removeEventListener( 'compositionstart', this._onCompositionStart );
 		session.textarea.removeEventListener( 'compositionend', this._onCompositionEnd );
-		session.textarea.removeEventListener( 'blur', this._onBlur );
+		session.commitButton.removeEventListener( 'click', this._onCommitClick );
+		session.cancelButton.removeEventListener( 'click', this._onCancelClick );
+		this._options.root.ownerDocument.removeEventListener( 'keydown', this._onDocumentKeyDown, true );
+		this._options.root.ownerDocument.removeEventListener( 'pointerdown', this._onDocumentPointerDown, true );
 		session.textarea.remove();
+		session.panel.remove();
 		if ( session.kind === 'feature' ) this._options.onPreviewChange?.( null );
 	}
 
-	private _createTextarea( content: string, placement?: TextInputPlacement ): HTMLTextAreaElement {
-		const textarea = this._options.root.ownerDocument.createElement( 'textarea' );
+	private _createEditor( content: string ): TextEditorElements {
+		const ownerDocument = this._options.root.ownerDocument;
+		const panel = ownerDocument.createElement( 'div' );
+		panel.className = 'plot-editor-text-panel';
+		panel.setAttribute( 'role', 'dialog' );
+		panel.setAttribute( 'aria-label', '文本编辑器' );
+		panel.setAttribute( 'data-plot-editor-text-panel', 'true' );
+		applyPanelStyle( panel );
+
+		const header = ownerDocument.createElement( 'div' );
+		header.textContent = '编辑文本';
+		applyHeaderStyle( header );
+		panel.appendChild( header );
+
+		const textarea = ownerDocument.createElement( 'textarea' );
 		textarea.className = 'plot-editor-text-input';
 		textarea.value = content;
 		textarea.spellcheck = false;
+		textarea.autocomplete = 'off';
 		textarea.setAttribute( 'aria-label', '编辑标绘文本' );
 		textarea.setAttribute( 'data-plot-editor-native-input', 'true' );
-		applyTextareaStyle( textarea, placement );
-		return textarea;
+		textarea.title = '输入标绘文本';
+		applyTextareaStyle( textarea );
+		panel.appendChild( textarea );
+
+		const footer = ownerDocument.createElement( 'div' );
+		applyFooterStyle( footer );
+		const hint = ownerDocument.createElement( 'span' );
+		hint.textContent = 'Ctrl/⌘+Enter 保存 · Esc 取消';
+		applyHintStyle( hint );
+		footer.appendChild( hint );
+		const actions = ownerDocument.createElement( 'div' );
+		applyActionsStyle( actions );
+		const cancelButton = ownerDocument.createElement( 'button' );
+		cancelButton.type = 'button';
+		cancelButton.textContent = '取消';
+		cancelButton.setAttribute( 'data-plot-editor-text-cancel', 'true' );
+		applyButtonStyle( cancelButton, false );
+		actions.appendChild( cancelButton );
+		const commitButton = ownerDocument.createElement( 'button' );
+		commitButton.type = 'button';
+		commitButton.textContent = '保存';
+		commitButton.setAttribute( 'data-plot-editor-text-commit', 'true' );
+		applyButtonStyle( commitButton, true );
+		actions.appendChild( commitButton );
+		footer.appendChild( actions );
+		panel.appendChild( footer );
+		return { panel, textarea, commitButton, cancelButton };
 	}
 
-	private _open( session: ActiveTextSession ): void {
+	private _open( session: ActiveTextSession, placement?: TextInputPlacement ): void {
 		this._session = session;
 		const textarea = session.textarea;
 		textarea.addEventListener( 'input', this._onInput );
 		textarea.addEventListener( 'keydown', this._onKeyDown );
 		textarea.addEventListener( 'compositionstart', this._onCompositionStart );
 		textarea.addEventListener( 'compositionend', this._onCompositionEnd );
-		textarea.addEventListener( 'blur', this._onBlur );
-		this._options.root.appendChild( textarea );
-		clampTextareaToRoot( textarea, this._options.root );
+		session.commitButton.addEventListener( 'click', this._onCommitClick );
+		session.cancelButton.addEventListener( 'click', this._onCancelClick );
+		this._options.root.ownerDocument.addEventListener( 'keydown', this._onDocumentKeyDown, true );
+		this._options.root.ownerDocument.addEventListener( 'pointerdown', this._onDocumentPointerDown, true );
+		this._options.root.appendChild( session.panel );
+		placePanelAwayFromAnchor( session.panel, this._options.root, placement );
 		this._emitPreview();
 		textarea.focus( { preventScroll: true } );
 		// 新建文本中的默认提示只是占位内容；首次输入应直接替换它。
@@ -262,46 +342,110 @@ export class TextEditController {
 
 function applyTextareaStyle(
 	textarea: HTMLTextAreaElement,
-	placement?: TextInputPlacement,
 ): void {
 	const style = textarea.style;
-	style.position = 'absolute';
-	style.left = `${ placement?.x ?? 12 }px`;
-	style.top = `${ placement?.y ?? 12 }px`;
-	style.zIndex = '28';
+	style.all = 'initial';
+	style.display = 'block';
 	style.boxSizing = 'border-box';
-	style.width = '20rem';
-	style.height = '5.5rem';
-	style.maxWidth = 'calc(100% - 24px)';
-	style.maxHeight = 'calc(100% - 24px)';
-	style.minWidth = '12rem';
-	style.minHeight = '4.5rem';
-	style.padding = '8px 10px';
-	style.border = '1px solid #00e5ff';
-	style.borderRadius = '4px';
-	style.background = '#00131a';
+	style.width = '100%';
+	style.height = '8rem';
+	style.minWidth = '0';
+	style.minHeight = '5rem';
+	style.margin = '0';
+	style.padding = '10px 12px';
+	style.border = '1px solid rgba(143, 182, 200, 0.55)';
+	style.borderRadius = '6px';
+	style.background = '#071b25';
 	style.color = '#ffffff';
 	style.caretColor = '#ffffff';
-	style.font = '14px/1.5 sans-serif';
-	style.resize = 'both';
+	style.font = '14px/1.55 Inter, system-ui, sans-serif';
+	style.resize = 'vertical';
 	style.outline = 'none';
 	style.whiteSpace = 'pre-wrap';
 	style.pointerEvents = 'auto';
+	style.userSelect = 'text';
+	style.touchAction = 'auto';
+	style.opacity = '1';
+	style.visibility = 'visible';
+	style.boxShadow = 'inset 0 1px 3px rgba(0, 0, 0, 0.35)';
 }
 
-function clampTextareaToRoot( textarea: HTMLTextAreaElement, root: HTMLElement ): void {
-	const rootWidth = root.clientWidth;
+function applyPanelStyle( panel: HTMLDivElement ): void {
+	const style = panel.style;
+	style.all = 'initial';
+	style.position = 'absolute';
+	style.zIndex = '2147483647';
+	style.boxSizing = 'border-box';
+	style.width = 'min(360px, calc(100% - 24px))';
+	style.padding = '12px';
+	style.border = '1px solid rgba(0, 229, 255, 0.75)';
+	style.borderRadius = '10px';
+	style.background = 'rgba(3, 17, 24, 0.98)';
+	style.color = '#ffffff';
+	style.font = '12px/1.45 Inter, system-ui, sans-serif';
+	style.pointerEvents = 'auto';
+	style.userSelect = 'none';
+	style.isolation = 'isolate';
+	style.boxShadow = '0 18px 55px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(0, 229, 255, 0.18)';
+}
+
+function applyHeaderStyle( header: HTMLDivElement ): void {
+	header.style.all = 'initial';
+	header.style.display = 'block';
+	header.style.margin = '0 0 9px';
+	header.style.font = '600 14px/1.4 Inter, system-ui, sans-serif';
+	header.style.color = '#dff9ff';
+}
+
+function applyFooterStyle( footer: HTMLDivElement ): void {
+	footer.style.all = 'initial';
+	footer.style.display = 'flex';
+	footer.style.alignItems = 'center';
+	footer.style.justifyContent = 'space-between';
+	footer.style.gap = '10px';
+	footer.style.marginTop = '10px';
+}
+
+function applyHintStyle( hint: HTMLSpanElement ): void {
+	hint.style.all = 'initial';
+	hint.style.color = '#8fb6c8';
+	hint.style.font = '11px/1.35 Inter, system-ui, sans-serif';
+}
+
+function applyActionsStyle( actions: HTMLDivElement ): void {
+	actions.style.all = 'initial';
+	actions.style.display = 'flex';
+	actions.style.gap = '8px';
+}
+
+function applyButtonStyle( button: HTMLButtonElement, primary: boolean ): void {
+	button.style.all = 'initial';
+	button.style.display = 'inline-block';
+	button.style.boxSizing = 'border-box';
+	button.style.minWidth = '58px';
+	button.style.margin = '0';
+	button.style.padding = '6px 12px';
+	button.style.border = primary ? '1px solid #00e5ff' : '1px solid rgba(255, 255, 255, 0.22)';
+	button.style.borderRadius = '5px';
+	button.style.background = primary ? '#00e5ff' : 'rgba(255, 255, 255, 0.08)';
+	button.style.color = primary ? '#00131a' : '#ffffff';
+	button.style.font = '600 12px/1.4 Inter, system-ui, sans-serif';
+	button.style.cursor = 'pointer';
+}
+
+function placePanelAwayFromAnchor(
+	panel: HTMLDivElement,
+	root: HTMLElement,
+	placement?: TextInputPlacement,
+): void {
 	const rootHeight = root.clientHeight;
-	const inputWidth = textarea.offsetWidth;
-	const inputHeight = textarea.offsetHeight;
-	if ( rootWidth > 0 && inputWidth > 0 ) {
-		const left = Number.parseFloat( textarea.style.left );
-		textarea.style.left = `${ Math.min( Math.max( left, 12 ), Math.max( 12, rootWidth - inputWidth - 12 ) ) }px`;
-	}
-	if ( rootHeight > 0 && inputHeight > 0 ) {
-		const top = Number.parseFloat( textarea.style.top );
-		textarea.style.top = `${ Math.min( Math.max( top, 12 ), Math.max( 12, rootHeight - inputHeight - 12 ) ) }px`;
-	}
+	const anchorOnTop = placement === undefined || rootHeight <= 0 || placement.y <= rootHeight / 2;
+	// 编辑器统一靠右，避免覆盖常见的左上信息区和左下工具栏；仅按锚点
+	// 的上下半区切换垂直位置，让面板与正在编辑的地面文字保持分离。
+	panel.style.left = '';
+	panel.style.right = '12px';
+	panel.style.top = anchorOnTop ? '' : '12px';
+	panel.style.bottom = anchorOnTop ? '12px' : '';
 }
 
 function success(
