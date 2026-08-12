@@ -173,6 +173,7 @@ describe( 'resolveFeatureHeights', () => {
 			new AbortController().signal,
 		);
 		expect( result.status ).toBe( 'pending' );
+		expect( result.surfaceIncomplete ).toBe( true );
 		expect( result.effectivePositions ).toEqual( [
 			[ 179.9, 30, 5 ],
 			[ -179.9, 31, 198 ],

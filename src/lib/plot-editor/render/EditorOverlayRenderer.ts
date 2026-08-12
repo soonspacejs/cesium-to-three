@@ -84,6 +84,7 @@ export interface EditorOverlayRendererOptions {
 	readonly onPickBuildError?: ( error: PlotPickBuildError ) => void;
 	/** 默认使用 Canvas2D 实测；无 DOM 测试环境可注入等价字体测量器。 */
 	readonly measureText?: ( text: string, fontSize: number ) => number;
+	readonly requireResolvedGroundSurfaces?: boolean;
 }
 
 export interface EditorOverlaySyncInput {
@@ -158,6 +159,7 @@ export class EditorOverlayRenderer {
 			registry: this._pickRegistry,
 			adapters: options.adapters,
 			measureText: options.measureText ?? createCanvasTextMeasure(),
+			requireResolvedGroundSurfaces: options.requireResolvedGroundSurfaces,
 			onBuildError: options.onPickBuildError,
 		} );
 		this._entityRaycaster = new PlotEntityRaycaster( this._pickRegistry );

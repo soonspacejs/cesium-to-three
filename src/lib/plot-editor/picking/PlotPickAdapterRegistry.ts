@@ -1,6 +1,7 @@
 import { DoubleSide, MeshBasicMaterial } from 'three';
 import type { GeometryAdapterRegistry } from '../adapters/GeometryAdapterRegistry';
 import type { PlotFeature, PlotFeatureId, ResolvedPlotGeometry } from '../document/types';
+import { HeightReference } from '../document/types';
 import { PlotRenderProjection } from '../render/RenderProjection';
 import { AreaPickAdapter } from './adapters/AreaPickAdapter';
 import { LinePickAdapter } from './adapters/LinePickAdapter';
@@ -20,6 +21,7 @@ export interface PlotPickAdapterRegistryOptions extends TextPickAdapterOptions {
 	readonly adapters: GeometryAdapterRegistry;
 	readonly registry: PlotPickRegistry;
 	readonly onBuildError?: ( error: PlotPickBuildError ) => void;
+	readonly requireResolvedGroundSurfaces?: boolean;
 }
 
 /**
@@ -35,6 +37,7 @@ export class PlotPickAdapterRegistry {
 	private readonly _text: TextPickAdapter;
 	private readonly _material = new MeshBasicMaterial( { side: DoubleSide } );
 	private readonly _onBuildError?: PlotPickAdapterRegistryOptions[ 'onBuildError' ];
+	private readonly _requireResolvedGroundSurfaces: boolean;
 	private _disposed = false;
 
 	public constructor( options: PlotPickAdapterRegistryOptions ) {
@@ -42,6 +45,7 @@ export class PlotPickAdapterRegistry {
 		this._projection = new PlotRenderProjection( options.adapters );
 		this._text = new TextPickAdapter( options );
 		this._onBuildError = options.onBuildError;
+		this._requireResolvedGroundSurfaces = options.requireResolvedGroundSurfaces === true;
 		this._registry.registerSharedMaterial( this._material );
 	}
 
@@ -57,6 +61,22 @@ export class PlotPickAdapterRegistry {
 			const surface = validResolved( feature, resolved.get( feature.id ) );
 			const revision = pickRevision( feature, surface );
 			const current = this._registry.get( feature.id );
+			if ( surface === undefined
+				&& this._requireResolvedGroundSurfaces
+				&& isGroundFeature( feature ) ) {
+				// 高程请求首帧尚未返回时不创建椭球平板；已有完整代理仍可保留到
+				// surface invalidation 的新结果到达，避免加载期间闪烁和错位。
+				return;
+			}
+			if ( surface?.surfaceIncomplete === true ) {
+				// 首次不完整表面不可生成混合高程代理；若已有完整代理，继续沿用它，
+				// 等下一次完整采样再原子替换，避免瓦片加载过程出现反向命中。
+				if ( current !== undefined
+					&& current.revision.featureRevision !== feature.revision ) {
+					this._registry.remove( feature.id );
+				}
+				return;
+			}
 			if ( current !== undefined && revisionsEqual( current.revision, revision )
 				&& current.metadata.plotOrder === plotOrder ) return;
 			try {
@@ -103,6 +123,12 @@ export class PlotPickAdapterRegistry {
 	private _assertOpen(): void {
 		if ( this._disposed ) throw new Error( 'PlotPickAdapterRegistry 已销毁。' );
 	}
+}
+
+function isGroundFeature( feature: Readonly<PlotFeature> ): boolean {
+	return feature.heightReference === HeightReference.CLAMP_TO_GROUND
+		|| feature.heightReference === HeightReference.CLAMP_TO_TERRAIN
+		|| feature.heightReference === HeightReference.CLAMP_TO_3D_TILE;
 }
 
 function vertexPosition(

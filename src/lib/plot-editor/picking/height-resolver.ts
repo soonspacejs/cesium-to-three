@@ -27,6 +27,7 @@ export interface HeightResolutionOutcome {
 export interface ResolvedPositions {
 	readonly effectivePositions: readonly Position3D[];
 	readonly status: ResolvedPlotGeometry[ 'status' ];
+	readonly surfaceIncomplete?: true;
 }
 
 export interface HeightResolutionManagerOptions {
@@ -214,6 +215,10 @@ export async function resolveFeatureHeights(
 			effectiveRenderPositions: renderResolved.effectivePositions,
 		} ),
 		status: combineResolutionStatus( sourceResolved.status, renderResolved?.status ),
+		...( sourceResolved.surfaceIncomplete === true
+			|| renderResolved?.surfaceIncomplete === true
+			? { surfaceIncomplete: true as const }
+			: {} ),
 	} );
 }
 
@@ -272,6 +277,7 @@ export async function resolvePositionsHeights(
 	return freezeResolvedPositions( {
 		effectivePositions,
 		status: hasMissing || hasFallback ? 'pending' : 'ready',
+		...( hasMissing ? { surfaceIncomplete: true as const } : {} ),
 	} );
 }
 

@@ -224,5 +224,7 @@ export interface ResolvedPlotGeometry {
 	 * 圆、扇形、箭头等派生轮廓必须逐顶点解析，不能把中心高度铺成一张平板。
 	 */
 	readonly effectiveRenderPositions?: readonly Position3D[];
+	/** 首次采样存在空洞且没有可复用完整表面时为 true；此时不得构建拾取代理。 */
+	readonly surfaceIncomplete?: true;
 	readonly status: 'ready' | 'pending' | 'unavailable';
 }

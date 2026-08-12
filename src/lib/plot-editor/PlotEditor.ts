@@ -290,6 +290,7 @@ export class PlotEditor {
 				message: `构建 ${ error.featureType } 实体的拾取代理失败。`,
 				cause: error.error,
 			} ),
+			requireResolvedGroundSurfaces: options.surfaceProvider !== undefined,
 		} );
 		this._importer = new PlotDocumentImporter( {
 			document: this._store,

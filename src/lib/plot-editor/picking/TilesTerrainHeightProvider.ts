@@ -24,6 +24,7 @@ export class TilesTerrainHeightProvider implements PlotSurfaceHeightProvider {
 	private readonly _tilesRenderer: TilesRenderer;
 	private readonly _rayStartHeight: number;
 	private readonly _rayEndHeight: number;
+	private readonly _allowEllipsoidFallback: boolean;
 	private readonly _raycaster = new Raycaster();
 	private readonly _listeners = new Set<() => void>();
 	private readonly _localOrigin = new Vector3();
@@ -38,6 +39,8 @@ export class TilesTerrainHeightProvider implements PlotSurfaceHeightProvider {
 		options: {
 			readonly rayStartHeightMeters?: number;
 			readonly rayEndHeightMeters?: number;
+			/** 无地形模式才应启用；真实地形加载期间禁止把漏采样顶点写成 0 高。 */
+			readonly allowEllipsoidFallback?: boolean;
 		} = {},
 	) {
 		this._tilesRenderer = tilesRenderer;
@@ -49,6 +52,7 @@ export class TilesTerrainHeightProvider implements PlotSurfaceHeightProvider {
 			options.rayEndHeightMeters ?? DEFAULT_RAY_END_HEIGHT_METERS,
 			'rayEndHeightMeters',
 		);
+		this._allowEllipsoidFallback = options.allowEllipsoidFallback !== false;
 		if ( this._rayStartHeight <= this._rayEndHeight ) {
 			throw new RangeError( 'rayStartHeightMeters 必须大于 rayEndHeightMeters。' );
 		}
@@ -67,6 +71,9 @@ export class TilesTerrainHeightProvider implements PlotSurfaceHeightProvider {
 				return missingSample( position );
 			}
 			const height = this._sampleTerrainHeight( position[ 0 ], position[ 1 ] );
+			if ( height === null && ! this._allowEllipsoidFallback ) {
+				return missingSample( position );
+			}
 			return Object.freeze( {
 				longitude: position[ 0 ],
 				latitude: position[ 1 ],

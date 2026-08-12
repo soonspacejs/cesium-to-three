@@ -60,6 +60,18 @@ describe( 'TilesTerrainHeightProvider', () => {
 		expect( tile[ 0 ] ).toMatchObject( { surfaceHeight: null, source: null } );
 	} );
 
+	it( '真实地形模式下漏采样返回空洞，不把单个顶点降到椭球零高', async () => {
+		const provider = new TilesTerrainHeightProvider( new TilesRenderer( '' ), {
+			allowEllipsoidFallback: false,
+		} );
+		const samples = await provider.sampleHeights( {
+			positions: [ [ LONGITUDE, LATITUDE, 0 ] ],
+			target: 'ground',
+			signal: new AbortController().signal,
+		} );
+		expect( samples[ 0 ] ).toMatchObject( { surfaceHeight: null, source: null } );
+	} );
+
 	it( '瓦片批次完成和模型释放会通知重采样，取消订阅后不再通知', () => {
 		const tiles = new TilesRenderer( '' );
 		const provider = new TilesTerrainHeightProvider( tiles );

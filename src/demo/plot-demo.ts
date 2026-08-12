@@ -142,7 +142,11 @@ export function runPlotDemo(): void {
 	);
 	// classification 文本按瓦片深度贴地；Raycaster 代理必须解析到同一地形高度，
 	// 否则斜视时代理会停留在椭球面并投影到可见文字之外。
-	const surfaceProvider = new TilesTerrainHeightProvider( tilesRenderer );
+	const surfaceProvider = new TilesTerrainHeightProvider( tilesRenderer, {
+		// 有真实地形时，瓦片尚未覆盖的顶点必须保持 pending，不能混入椭球 0 高
+		// 形成倾斜代理；显式无地形模式下椭球才是最终可见表面。
+		allowEllipsoidFallback: disableTerrain,
+	} );
 	const status: DemoStatus = {
 		mode: 'select',
 		selection: '无',

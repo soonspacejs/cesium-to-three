@@ -12,10 +12,14 @@ function circle( revision = 0, visible = true ): PlotFeature {
 		visible, properties: {}, revision } );
 }
 
-function createSyncer( registry: PlotPickRegistry, onBuildError = vi.fn() ) {
+function createSyncer(
+	registry: PlotPickRegistry,
+	onBuildError = vi.fn(),
+	requireResolvedGroundSurfaces = false,
+) {
 	return { syncer: new PlotPickAdapterRegistry( { registry,
 		adapters: createBuiltinGeometryAdapterRegistry(), measureText: ( value, size ) => value.length * size,
-		onBuildError } ), onBuildError };
+		onBuildError, requireResolvedGroundSurfaces } ), onBuildError };
 }
 
 describe( 'PlotPickAdapterRegistry', () => {
@@ -64,6 +68,38 @@ describe( 'PlotPickAdapterRegistry', () => {
 		const first = registry.targets[ 0 ];
 		syncer.sync( [ feature ], new Map( [ [ 'circle', resolved( 5 ) ] ] ) );
 		expect( registry.targets[ 0 ] ).not.toBe( first );
+	} );
+
+	it( '要求真实表面时首帧不创建椭球代理，不完整采样沿用同 revision 完整代理', () => {
+		const registry = new PlotPickRegistry();
+		const { syncer } = createSyncer( registry, vi.fn(), true );
+		const feature = circle();
+		syncer.sync( [ feature ], new Map() );
+		expect( registry.targets ).toEqual( [] );
+		const ready: ResolvedPlotGeometry = {
+			plotId: 'circle', sourceRevision: 0, status: 'ready',
+			effectivePositions: [ [ 116, 39, 20 ] ],
+		};
+		syncer.sync( [ feature ], new Map( [ [ 'circle', ready ] ] ) );
+		const complete = registry.targets[ 0 ];
+		syncer.sync( [ feature ], new Map( [ [ 'circle', {
+			...ready, status: 'pending', surfaceIncomplete: true,
+		} ] ] ) );
+		expect( registry.targets[ 0 ] ).toBe( complete );
+	} );
+
+	it( 'feature 已修改时不得沿用旧 revision 的完整代理', () => {
+		const registry = new PlotPickRegistry();
+		const { syncer } = createSyncer( registry, vi.fn(), true );
+		syncer.sync( [ circle() ], new Map( [ [ 'circle', {
+			plotId: 'circle', sourceRevision: 0, status: 'ready',
+			effectivePositions: [ [ 116, 39, 20 ] ],
+		} ] ] ) );
+		syncer.sync( [ circle( 1 ) ], new Map( [ [ 'circle', {
+			plotId: 'circle', sourceRevision: 1, status: 'pending', surfaceIncomplete: true,
+			effectivePositions: [ [ 116, 39, 0 ] ],
+		} ] ] ) );
+		expect( registry.targets ).toEqual( [] );
 	} );
 
 	it( '候选构建失败保留上一版 entry 并上报诊断', () => {
