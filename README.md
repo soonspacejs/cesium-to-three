@@ -119,6 +119,8 @@ import {
 
 ## 文档
 
+- [GIS 图形编辑交互框架设计](docs/gis-editor/README.md)
+- [标绘编辑器 Three.js Raycaster 拾取设计](docs/plot-editor-raycaster/README.md)
 - [Ground Material / Shader 扩展体系设计与使用索引](docs/animation-material/README.md)
 - [Model Clamp GLB 渲染与性能问题修复记录](docs/model-clamp-glb-rendering-fix.md)
 - [Model Clamp GLB rendering and performance fix notes](docs/model-clamp-glb-rendering-fix.en.md)

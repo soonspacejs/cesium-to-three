@@ -1,5 +1,7 @@
 # 渲染与编辑 Overlay 集成
 
+> **拾取层修订（2026-08-12）**：标绘实体不再由 `PLOT_CONTENT` 上的二维/像素命中决定。新设计增加只供 `Raycaster` 使用、渲染相机不启用的 `PLOT_PICK` 层；可直接射线命中的显示对象复用，classification/RTE 特殊对象使用标准 Three 拾取代理。详见 [拾取 Object3D 契约](../plot-editor-raycaster/03-pick-object-contract.md)。
+
 > 状态：**Proposed**。本文描述目标实现，不表示当前仓库已经具备编辑 Overlay。
 > 前置阅读：[目标架构](./03-target-architecture.md)、[坐标与高度](./04-coordinate-height-schema.md)、[拾取与表面高度](./08-picking-surface-height.md)。
 

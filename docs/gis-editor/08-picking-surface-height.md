@@ -1,5 +1,7 @@
 # 08. 拾取、表面选择与高度解析
 
+> **职责边界修订（2026-08-12）**：本文的 terrain、3D Tiles、ellipsoid 拾取用于创建采点和拖拽落点，不再承担标绘实体单击选择。实体选择统一使用 Three.js `Raycaster`，详见 [标绘编辑器 Raycaster 拾取设计](../plot-editor-raycaster/README.md)。
+
 ## 目标
 
 本文定义屏幕指针如何得到规范 `GeoPosition`、terrain/3D Tiles/椭球之间如何按 `HeightReference` 选择，以及相对高度如何异步解析。本文的核心原则是：拾取结果可以驱动 author 坐标，但 surface height 是运行时事实，不能污染持久数据。

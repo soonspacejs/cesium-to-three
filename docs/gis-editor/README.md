@@ -1,5 +1,7 @@
 # GIS 图形编辑交互框架：设计文档集
 
+> **实体拾取设计修订（2026-08-12）**：本文档集中凡是把 CSS 像素距离、投影二维几何或 CPU geographic hit 作为标绘实体单击选择方案的描述，已由 [标绘编辑器 Three.js Raycaster 拾取设计](../plot-editor-raycaster/README.md) 替代。terrain、3D Tiles 与椭球面的表面落点仍按本设计集执行；控制点/Gizmo 和框选仍保留各自的屏幕空间语义。
+
 > 状态：**Proposed Design，尚未实现**
 > 适用项目：`cesium-to-three` `0.1.9`，分支 `edit-shape`
 > 项目源码快照：`1e0cd69bd628f23f49b9cb1f749b1118601e3482`

@@ -1,5 +1,7 @@
 # 11. 选择、框选与 ENU Transform Gizmo
 
+> **实体命中方案已替代（2026-08-12）**：本文若出现 CPU geographic hit、CSS 像素容差或 pick proxy 的自定义二维命中描述，仅保留为历史背景。新的实体选择由 `THREE.Raycaster` 对已登记的显示 `Object3D` 或标准 Three 拾取代理执行；代理不实现自定义射线算法。控制点与 Gizmo 的屏幕空间优先级仍适用。参见 [目标架构](../plot-editor-raycaster/02-target-architecture.md) 与 [选择流程](../plot-editor-raycaster/04-raycaster-selection-flow.md)。
+
 本文定义 GIS 图形实体的单选、多选、框选、命中优先级、控制点和三轴 Gizmo。编辑对象是点、线、多边形、矩形、扇形、箭头、文本、圆以及后续非模型 Cesium Graphics；不编辑 glTF 网格、节点拓扑或 3D Tiles 内容。
 
 输入 owner/capture 与相机互斥见 [05-pointer-input-and-camera.md](./05-pointer-input-and-camera.md)，键盘命令见 [06-keyboard-command-keymap.md](./06-keyboard-command-keymap.md)，共同 transaction 生命周期见 [07-editor-state-machine.md](./07-editor-state-machine.md)。高度参考、规范三元坐标和实体文档见 [03-target-architecture.md](./03-target-architecture.md)。
