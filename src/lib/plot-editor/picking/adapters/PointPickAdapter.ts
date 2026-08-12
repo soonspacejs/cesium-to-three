@@ -5,6 +5,7 @@ import {
 	enuToEcef,
 } from '../../document/geodesy';
 import type { PointFeature, Position3D } from '../../document/types';
+import { HeightReference } from '../../document/types';
 import { createTriangulatedSurface, type StandardPickObject } from './geometry';
 
 const POINT_CIRCLE_SEGMENTS = 48;
@@ -17,19 +18,26 @@ export class PointPickAdapter {
 		material: Material,
 	): StandardPickObject | null {
 		const style = feature.style;
+		const surfaceOffset = isGroundClamp( feature.heightReference ) ? 0.02 : 0;
 		if ( style.pointStyle === 'circle' ) {
 			return createTriangulatedSurface(
 				ellipseRing( worldPosition, style.size, style.size, 0, POINT_CIRCLE_SEGMENTS ),
-				material,
+				material, surfaceOffset,
 			);
 		}
 		const width = style.pointStyle === 'image' ? style.imageWidth : style.size;
 		const height = style.pointStyle === 'image' ? style.imageHeight : style.size;
 		const rotation = style.pointStyle === 'image' ? style.rotation : 0;
 		return createTriangulatedSurface(
-			ellipseRing( worldPosition, width, height, rotation, 4 ), material,
+			ellipseRing( worldPosition, width, height, rotation, 4 ), material, surfaceOffset,
 		);
 	}
+}
+
+function isGroundClamp( value: HeightReference ): boolean {
+	return value === HeightReference.CLAMP_TO_GROUND
+		|| value === HeightReference.CLAMP_TO_TERRAIN
+		|| value === HeightReference.CLAMP_TO_3D_TILE;
 }
 
 function ellipseRing(

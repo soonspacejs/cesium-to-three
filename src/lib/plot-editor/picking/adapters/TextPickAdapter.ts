@@ -1,7 +1,7 @@
 import type { Material } from 'three';
 import { measurePlotTextLayout, type PlotTextMeasure } from '../../../plot/text-layout';
 import { createEnuFrame, ecefToGeodetic, enuToEcef } from '../../document/geodesy';
-import type { Position3D, TextFeature } from '../../document/types';
+import { HeightReference, type Position3D, type TextFeature } from '../../document/types';
 import { createTriangulatedSurface, type StandardPickObject } from './geometry';
 
 export interface TextPickAdapterOptions {
@@ -40,6 +40,14 @@ export class TextPickAdapter {
 			const north = centerNorth - x * sin + y * cos;
 			return ecefToGeodetic( enuToEcef( [ east, north, 0 ], frame ), worldPosition[ 0 ] );
 		} );
-		return createTriangulatedSurface( positions, material );
+		return createTriangulatedSurface(
+			positions, material, isGroundClamp( feature.heightReference ) ? 0.02 : 0,
+		);
 	}
+}
+
+function isGroundClamp( value: HeightReference ): boolean {
+	return value === HeightReference.CLAMP_TO_GROUND
+		|| value === HeightReference.CLAMP_TO_TERRAIN
+		|| value === HeightReference.CLAMP_TO_3D_TILE;
 }

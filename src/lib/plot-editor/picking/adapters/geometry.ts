@@ -26,10 +26,13 @@ export interface StandardPickObject {
 export function createTriangulatedSurface(
 	positions: readonly Position3D[],
 	material: Material,
+	surfaceOffsetMeters = 0,
 ): StandardPickObject | null {
 	if ( positions.length < 3 ) return null;
 	const frame = createEnuFrame( positions[ 0 ] );
-	const ecef = positions.map( geodeticToEcef );
+	const ecef = positions.map( ( position ) => normalOffset(
+		position, surfaceOffsetMeters,
+	) );
 	const flat: number[] = [];
 	for ( const point of ecef ) {
 		const enu = ecefToEnu( point, frame );
@@ -38,6 +41,16 @@ export function createTriangulatedSurface(
 	const index = earcut( flat, undefined, 2 );
 	if ( index.length < 3 ) return null;
 	return createIndexedObject( ecef, index, material );
+}
+
+/** 贴地 pick 面沿 WGS84 椭球法向抬高极小距离，不修改作者/解析高度。 */
+function normalOffset( position: Position3D, offsetMeters: number ): Vector3Tuple {
+	const point = geodeticToEcef( position );
+	if ( offsetMeters === 0 ) return point;
+	const up = createEnuFrame( position ).up;
+	return [ point[ 0 ] + up[ 0 ] * offsetMeters,
+		point[ 1 ] + up[ 1 ] * offsetMeters,
+		point[ 2 ] + up[ 2 ] * offsetMeters ];
 }
 
 export function createIndexedObject(

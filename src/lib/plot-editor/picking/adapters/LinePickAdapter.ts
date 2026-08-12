@@ -1,5 +1,5 @@
 import { Vector3, type Material } from 'three';
-import { geodeticToEcef, type Vector3Tuple } from '../../document/geodesy';
+import { createEnuFrame, geodeticToEcef, type Vector3Tuple } from '../../document/geodesy';
 import type { RenderFeature } from '../../render/RenderProjection';
 import { createIndexedObject, type StandardPickObject } from './geometry';
 
@@ -13,9 +13,17 @@ export class LinePickAdapter {
 		if ( render.type !== 'line' || render.vertices.length < 2 ) return null;
 		const width = Number( render.style.strokeWidth );
 		if ( ! Number.isFinite( width ) || width <= 0 ) return null;
-		const centers = render.vertices.map( ( vertex ) => new Vector3().fromArray(
-			geodeticToEcef( [ vertex.longitude, vertex.latitude, vertex.resolvedWorldHeight ] ),
-		) );
+		const centers = render.vertices.map( ( vertex ) => {
+			const position: Vector3Tuple = [
+				vertex.longitude, vertex.latitude, vertex.resolvedWorldHeight,
+			];
+			const center = new Vector3().fromArray( geodeticToEcef( position ) );
+			// 分类面仅抬高 pick 代理；显示模型和文档高度始终保持原值。
+			if ( render.path === 'ground-classification' ) {
+				center.addScaledVector( new Vector3().fromArray( createEnuFrame( position ).up ), 0.02 );
+			}
+			return center;
+		} );
 		const dashed = render.style.strokeStyle === 'dashed';
 		const runs = dashed ? createDashedRuns( centers ) : [ centers ];
 		const positions: Vector3[] = [];

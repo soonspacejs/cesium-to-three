@@ -4,6 +4,8 @@ import { createBuiltinGeometryAdapterRegistry } from '../../../src/lib/plot-edit
 import { HeightReference, type PlotFeature } from '../../../src/lib/plot-editor/document/types';
 import { normalizeFeature } from '../../../src/lib/plot-editor/document/validate';
 import { AreaPickAdapter } from '../../../src/lib/plot-editor/picking/adapters/AreaPickAdapter';
+import { createTriangulatedSurface } from '../../../src/lib/plot-editor/picking/adapters/geometry';
+import { createEnuFrame } from '../../../src/lib/plot-editor/document/geodesy';
 import { PlotRenderProjection } from '../../../src/lib/plot-editor/render/RenderProjection';
 
 const STYLE = Object.freeze( {
@@ -49,4 +51,20 @@ describe( 'AreaPickAdapter', () => {
 			expect( raycaster.intersectObject( result!.root, true ).length ).toBeGreaterThan( 0 );
 		},
 	);
+
+	it( '贴地代理沿 WGS84 法向精确抬高 2cm，且不改写文档坐标', () => {
+		const positions = [
+			[ 116, 39, 0 ], [ 116.001, 39, 0 ], [ 116, 39.001, 0 ],
+		] as const;
+		const snapshot = JSON.stringify( positions );
+		const material = new MeshBasicMaterial( { side: DoubleSide } );
+		const base = createTriangulatedSurface( positions, material, 0 )!;
+		const raised = createTriangulatedSurface( positions, material, 0.02 )!;
+		const delta = raised.root.position.clone().sub( base.root.position );
+		const up = new Vector3().fromArray( createEnuFrame( positions[ 0 ] ).up );
+
+		expect( delta.dot( up ) ).toBeCloseTo( 0.02, 7 );
+		expect( delta.clone().addScaledVector( up, -0.02 ).length() ).toBeLessThan( 1e-8 );
+		expect( JSON.stringify( positions ) ).toBe( snapshot );
+	} );
 } );

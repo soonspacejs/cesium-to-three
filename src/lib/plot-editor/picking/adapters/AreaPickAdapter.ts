@@ -14,6 +14,8 @@ export class AreaPickAdapter {
 		const positions = render.vertices.map( ( vertex ) => Object.freeze( [
 			vertex.longitude, vertex.latitude, vertex.resolvedWorldHeight,
 		] as Position3D ) );
-		return createTriangulatedSurface( positions, material );
+		return createTriangulatedSurface(
+			positions, material, render.path === 'ground-classification' ? 0.02 : 0,
+		);
 	}
 }
