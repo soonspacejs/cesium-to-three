@@ -21,6 +21,7 @@ describe( 'editor overlay layers', () => {
 			EditorOverlayLayer.PLOT_GIZMO,
 			EditorOverlayLayer.PLOT_FEEDBACK,
 		] ) expect( camera.layers.isEnabled( layer ) ).toBe( true );
+		expect( camera.layers.isEnabled( EditorOverlayLayer.PLOT_PICK ) ).toBe( false );
 
 		// 宿主在租约期间新开的非管理 layer 必须保留。
 		camera.layers.enable( 8 );

@@ -11,6 +11,8 @@ export const EditorOverlayLayer = Object.freeze( {
 	PLOT_HANDLE: 25,
 	PLOT_GIZMO: 26,
 	PLOT_FEEDBACK: 27,
+	/** 仅供实体 Raycaster 使用；渲染相机租约绝不能启用此层。 */
+	PLOT_PICK: 28,
 } as const );
 
 export type EditorOverlayLayer =
