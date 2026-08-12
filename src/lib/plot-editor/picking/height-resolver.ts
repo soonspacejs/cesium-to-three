@@ -35,6 +35,7 @@ export interface HeightResolutionManagerOptions {
 	readonly onResolved?: ( result: ResolvedPlotGeometry ) => void;
 	readonly onInvalidate?: ( surfaceRevision: number ) => void;
 	readonly onError?: ( error: unknown, plotId: PlotFeatureId ) => void;
+	readonly getRenderPositions?: ( feature: Readonly<PlotFeature> ) => readonly Position3D[];
 }
 
 interface ActiveRequest {
@@ -55,6 +56,7 @@ export class HeightResolutionManager {
 	private readonly _onResolved?: ( result: ResolvedPlotGeometry ) => void;
 	private readonly _onInvalidate?: ( surfaceRevision: number ) => void;
 	private readonly _onError?: ( error: unknown, plotId: PlotFeatureId ) => void;
+	private readonly _getRenderPositions?: HeightResolutionManagerOptions[ 'getRenderPositions' ];
 	private readonly _active = new Map<PlotFeatureId, ActiveRequest>();
 	private readonly _ready = new Map<PlotFeatureId, ResolvedPlotGeometry>();
 	private readonly _unsubscribe: () => void;
@@ -68,6 +70,7 @@ export class HeightResolutionManager {
 		this._onResolved = options.onResolved;
 		this._onInvalidate = options.onInvalidate;
 		this._onError = options.onError;
+		this._getRenderPositions = options.getRenderPositions;
 		this._unsubscribe = this._provider.subscribe( () => this._invalidateSurface() );
 	}
 
@@ -99,6 +102,7 @@ export class HeightResolutionManager {
 				this._provider,
 				controller.signal,
 				this._ready.get( feature.id ),
+				this._getRenderPositions?.( feature ),
 			);
 			if ( ! this._isCurrent( feature.id, request ) ) {
 				return Object.freeze( { accepted: false } );
@@ -175,22 +179,41 @@ export async function resolveFeatureHeights(
 	provider: PlotSurfaceHeightProvider,
 	signal: AbortSignal,
 	previous?: ResolvedPlotGeometry,
+	renderPositions?: readonly Position3D[],
 ): Promise<ResolvedPlotGeometry> {
 	const positions = getFeaturePositions( feature );
 	const reusablePrevious = canReusePreviousResolution( feature, positions, previous )
 		? previous
 		: undefined;
-	const resolved = await resolvePositionsHeights(
+	const sourceResolved = await resolvePositionsHeights(
 		positions,
 		feature.heightReference,
 		provider,
 		signal,
 		reusablePrevious,
 	);
+	const hasDistinctRenderGeometry = renderPositions !== undefined
+		&& ! positionsExactlyMatch( positions, renderPositions );
+	const renderResolved = hasDistinctRenderGeometry
+		? await resolvePositionsHeights(
+			renderPositions,
+			feature.heightReference,
+			provider,
+			signal,
+			previous?.effectiveRenderPositions === undefined ? undefined : {
+				effectivePositions: previous.effectiveRenderPositions,
+				status: previous.status,
+			},
+		)
+		: undefined;
 	return freezeResolved( {
 		plotId: feature.id,
 		sourceRevision: feature.revision,
-		...resolved,
+		effectivePositions: sourceResolved.effectivePositions,
+		...( renderResolved === undefined ? {} : {
+			effectiveRenderPositions: renderResolved.effectivePositions,
+		} ),
+		status: combineResolutionStatus( sourceResolved.status, renderResolved?.status ),
 	} );
 }
 
@@ -287,6 +310,28 @@ function positionsMatchEffective(
 		);
 }
 
+function positionsExactlyMatch(
+	left: readonly Position3D[],
+	right: readonly Position3D[],
+): boolean {
+	return left.length === right.length && left.every( ( position, index ) => {
+		const candidate = right[ index ];
+		return candidate !== undefined
+			&& position[ 0 ] === candidate[ 0 ]
+			&& position[ 1 ] === candidate[ 1 ]
+			&& position[ 2 ] === candidate[ 2 ];
+	} );
+}
+
+function combineResolutionStatus(
+	source: ResolvedPlotGeometry[ 'status' ],
+	render: ResolvedPlotGeometry[ 'status' ] | undefined,
+): ResolvedPlotGeometry[ 'status' ] {
+	if ( source === 'unavailable' || render === 'unavailable' ) return 'unavailable';
+	if ( source === 'pending' || render === 'pending' ) return 'pending';
+	return 'ready';
+}
+
 export function getFeaturePositions(
 	feature: Readonly<PlotFeature>,
 ): readonly Position3D[] {
@@ -356,6 +401,12 @@ function freezeResolved( input: ResolvedPlotGeometry ): ResolvedPlotGeometry {
 		effectivePositions: Object.freeze(
 			input.effectivePositions.map( ( position ) => Object.freeze( [ ...position ] ) as Position3D ),
 		),
+		...( input.effectiveRenderPositions === undefined ? {} : {
+			effectiveRenderPositions: Object.freeze(
+				input.effectiveRenderPositions.map( ( position ) =>
+					Object.freeze( [ ...position ] ) as Position3D ),
+			),
+		} ),
 	} );
 }
 

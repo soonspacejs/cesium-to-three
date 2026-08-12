@@ -133,6 +133,38 @@ describe( 'resolveFeatureHeights', () => {
 		expect( source.api.sampleHeights.mock.calls[ 0 ][ 0 ].target ).toBe( 'ground' );
 	} );
 
+	it( '派生轮廓逐顶点解析表面高度，不把扇心高度复用到整片扇形', async () => {
+		const source = provider( async ( request ) => request.positions.map( ( position, index ) => ( {
+			longitude: position[ 0 ],
+			latitude: position[ 1 ],
+			surfaceHeight: 100 + index * 10,
+			source: 'terrain' as const,
+		} ) ) );
+		const feature = {
+			id: 'sector', type: 'sector', geometry: {
+				center: [ 116, 39, 0 ], radius: 100, startAngle: 0, sectorAngle: 90,
+			},
+			style: commonStyle,
+			heightReference: HeightReference.CLAMP_TO_GROUND,
+			visible: true, properties: {}, revision: 0,
+		} as const;
+		const renderPositions = [
+			[ 116, 39, 0 ], [ 116.001, 39, 0 ], [ 116, 39.001, 0 ],
+		] as const;
+		const result = await resolveFeatureHeights(
+			feature as never,
+			source.api,
+			new AbortController().signal,
+			undefined,
+			renderPositions,
+		);
+		expect( result.effectivePositions ).toEqual( [ [ 116, 39, 100 ] ] );
+		expect( result.effectiveRenderPositions ).toEqual( [
+			[ 116, 39, 100 ], [ 116.001, 39, 110 ], [ 116, 39.001, 120 ],
+		] );
+		expect( result.status ).toBe( 'ready' );
+	} );
+
 	it( 'ground/terrain 首次缺失用椭球零高 pending 兜底', async () => {
 		const source = provider( async ( request ) => samples( request, [ null, 200 ] ) );
 		const result = await resolveFeatureHeights(

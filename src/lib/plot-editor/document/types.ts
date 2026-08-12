@@ -217,6 +217,12 @@ export interface PlotDocumentSnapshot {
 export interface ResolvedPlotGeometry {
 	readonly plotId: PlotFeatureId;
 	readonly sourceRevision: number;
+	/** 与 canonical 作者控制点一一对应的运行时绝对坐标。 */
 	readonly effectivePositions: readonly Position3D[];
+	/**
+	 * 与 GeometryAdapter.toRenderDescription().positions 一一对应的表面坐标。
+	 * 圆、扇形、箭头等派生轮廓必须逐顶点解析，不能把中心高度铺成一张平板。
+	 */
+	readonly effectiveRenderPositions?: readonly Position3D[];
 	readonly status: 'ready' | 'pending' | 'unavailable';
 }
