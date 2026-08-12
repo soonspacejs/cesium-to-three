@@ -43,21 +43,34 @@ class NavigationStub implements NavigationAdapter {
 	public dispose(): void { this.disposed = true; }
 }
 
-class FakeTextarea extends FakeEventHub {
-	public readonly tagName = 'TEXTAREA';
+class FakeDomElement extends FakeEventHub {
+	public readonly tagName: string;
 	public className = '';
-	public value = '';
-	public spellcheck = true;
+	public textContent = '';
+	public title = '';
+	public type = '';
 	public readonly style: Record<string, string> = {};
 	public readonly attributes = new Map<string, string>();
+	public readonly children: FakeDomElement[] = [];
 	public removed = false;
-	public constructor( private readonly _document: Document ) { super(); }
+	public constructor( tagName: string ) { super(); this.tagName = tagName.toUpperCase(); }
 	public setAttribute( name: string, value: string ): void { this.attributes.set( name, value ); }
 	public getAttribute( name: string ): string | null { return this.attributes.get( name ) ?? null; }
+	public appendChild( child: FakeDomElement ): FakeDomElement { this.children.push( child ); return child; }
+	public contains( node: unknown ): boolean {
+		return node === this || this.children.some( ( child ) => child.contains( node ) );
+	}
+	public remove(): void { this.removed = true; }
+}
+
+class FakeTextarea extends FakeDomElement {
+	public value = '';
+	public spellcheck = true;
+	public autocomplete = '';
+	public constructor( private readonly _document: Document ) { super( 'textarea' ); }
 	public focus(): void { Object.assign( this._document, { activeElement: this } ); }
 	public select(): void { Object.assign( this, { selectionStart: 0, selectionEnd: this.value.length } ); }
 	public setSelectionRange(): void {}
-	public remove(): void { this.removed = true; }
 }
 
 function createDom() {
@@ -77,19 +90,24 @@ function createDom() {
 		visibilityState: 'visible',
 	} );
 	const textareas: FakeTextarea[] = [];
+	const editorElements: FakeDomElement[] = [];
 	Object.assign( documentHub, {
 		createElement: ( tag: string ) => {
-			if ( tag !== 'textarea' ) throw new Error( `不支持的测试元素：${ tag }。` );
-			const textarea = new FakeTextarea( documentHub );
-			textareas.push( textarea );
-			return textarea;
+			const element = tag === 'textarea'
+				? new FakeTextarea( documentHub )
+				: new FakeDomElement( tag );
+			if ( element instanceof FakeTextarea ) textareas.push( element );
+			editorElements.push( element );
+			return element;
 		},
 	} );
 	const root = new FakeEventHub() as FakeEventHub & HTMLElement;
 	Object.assign( root, {
 		ownerDocument: documentHub,
 		tabIndex: -1,
-		contains: ( node: unknown ) => node === root || textareas.includes( node as FakeTextarea ),
+		clientWidth: 800,
+		clientHeight: 600,
+		contains: ( node: unknown ) => node === root || editorElements.includes( node as FakeDomElement ),
 		focus: () => Object.assign( documentHub, { activeElement: root } ),
 		blur: () => Object.assign( documentHub, { activeElement: null } ),
 		appendChild: vi.fn(),
@@ -698,6 +716,24 @@ describe( 'PlotEditor facade', () => {
 		canvas.dispatch( 'pointerup', pointerEvent( canvas, window, 0, 'pointerup' ) );
 
 		expect( [ ...editor.selection ] ).toEqual( [ 'center-point' ] );
+		editor.dispose();
+	} );
+
+	it( '空绘制草稿首次单击已有文本优先选中，不会创建重复文本', () => {
+		const { editor, canvas, window, textareas } = createEditor( { autoAttachInputs: true } );
+		editor.execute( { type: 'feature.add', feature: text( 'existing-text' ) } );
+		editor.activateTool( {
+			type: 'text', heightReference: HeightReference.NONE,
+			options: { content: '新建文本（F2 可编辑）' },
+		} );
+
+		canvas.dispatch( 'pointerdown', pointerEvent( canvas, window, 0, 'pointerdown' ) );
+		canvas.dispatch( 'pointerup', pointerEvent( canvas, window, 0, 'pointerup' ) );
+
+		expect( editor.mode ).toBe( 'select' );
+		expect( [ ...editor.selection ] ).toEqual( [ 'existing-text' ] );
+		expect( editor.document.getAll() ).toHaveLength( 1 );
+		expect( textareas ).toHaveLength( 0 );
 		editor.dispose();
 	} );
 

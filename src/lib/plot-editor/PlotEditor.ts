@@ -1076,6 +1076,20 @@ export class PlotEditor {
 			|| dispatch.input.phase === 'up'
 			|| dispatch.input.phase === 'double-click';
 		const hit = needsHit ? this._hitTest( screen, dispatch.input.device ) : null;
+		const interaction = this._state.interaction;
+		if ( dispatch.input.phase === 'down'
+			&& interaction.kind === 'drawing'
+			&& interaction.draft.graphicsType === 'text'
+			&& interaction.draft.coordinates.length === 0
+			&& hit?.kind === 'entity'
+			&& hit.entityId !== undefined ) {
+			// 尚未落点的绘制工具不应吞掉已有图形。沿用本次 pointerdown 切换到
+			// 选择态并进入 pointer-pending：松开即选中，移动超过阈值即可拖动。
+			this.activateTool( 'select' );
+			const intents = this._router.routePointer( dispatch, hit );
+			for ( const intent of intents ) this._dispatch( intent );
+			return;
+		}
 		if ( dispatch.input.phase === 'double-click'
 			&& this._state.interaction.kind !== 'drawing'
 			&& hit?.kind === 'entity'
