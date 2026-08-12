@@ -13,3 +13,12 @@ export {
 	type PlotPickRegistration,
 	type PlotPickRevision,
 } from './PlotPickRegistry';
+export {
+	clientPointToNdc,
+	type CssViewportRect,
+} from './PointerNdc';
+export {
+	PlotEntityRaycaster,
+	type PlotEntityHit,
+	type PlotEntityRaycasterOptions,
+} from './PlotEntityRaycaster';
