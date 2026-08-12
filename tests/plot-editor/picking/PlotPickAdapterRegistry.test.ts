@@ -48,6 +48,24 @@ describe( 'PlotPickAdapterRegistry', () => {
 		expect( registry.size ).toBe( 0 );
 	} );
 
+	it( '派生轮廓任一顶点高度变化都会替换旧代理', () => {
+		const registry = new PlotPickRegistry();
+		const { syncer } = createSyncer( registry );
+		const feature = circle();
+		const derived = createBuiltinGeometryAdapterRegistry()
+			.require( 'circle' ).toRenderDescription( feature as never ).positions;
+		const resolved = ( changedIndex: number ): ResolvedPlotGeometry => Object.freeze( {
+			plotId: 'circle', sourceRevision: 0, status: 'ready',
+			effectivePositions: Object.freeze( [ [ 116, 39, 10 ] as const ] ),
+			effectiveRenderPositions: Object.freeze( derived.map( ( position, index ) =>
+				Object.freeze( [ position[ 0 ], position[ 1 ], index === changedIndex ? 20 : 10 ] as const ) ) ),
+		} );
+		syncer.sync( [ feature ], new Map( [ [ 'circle', resolved( -1 ) ] ] ) );
+		const first = registry.targets[ 0 ];
+		syncer.sync( [ feature ], new Map( [ [ 'circle', resolved( 5 ) ] ] ) );
+		expect( registry.targets[ 0 ] ).not.toBe( first );
+	} );
+
 	it( '候选构建失败保留上一版 entry 并上报诊断', () => {
 		const registry = new PlotPickRegistry();
 		const { syncer, onBuildError } = createSyncer( registry );

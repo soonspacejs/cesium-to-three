@@ -137,6 +137,9 @@ function hashResolved( resolved: ResolvedPlotGeometry ): number {
 	for ( const position of resolved.effectivePositions ) {
 		hash = ( Math.imul( hash, 31 ) + Math.round( position[ 2 ] * 1000 ) ) | 0;
 	}
+	for ( const position of resolved.effectiveRenderPositions ?? [] ) {
+		hash = ( Math.imul( hash, 31 ) + Math.round( position[ 2 ] * 1000 ) ) | 0;
+	}
 	return hash;
 }
 

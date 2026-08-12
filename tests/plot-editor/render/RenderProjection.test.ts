@@ -102,6 +102,27 @@ describe( 'PlotRenderProjection', () => {
 		}
 	} );
 
+	it( '扇形派生轮廓消费逐顶点表面高度，不退化成扇心等高平板', () => {
+		const feature = normalizeFeature( {
+			id: 'sector', type: 'sector', geometry: {
+				center: [ 10, 20, 0 ], radius: 1_000, startAngle: 20, sectorAngle: 120,
+			},
+			style: STYLE, heightReference: HeightReference.CLAMP_TO_GROUND,
+			visible: true, properties: {}, revision: 0,
+		} );
+		const derived = createBuiltinGeometryAdapterRegistry()
+			.require( 'sector' ).toRenderDescription( feature as never ).positions;
+		const render = projection.projectFeature( feature, { resolved: new Map( [ [ 'sector', {
+			plotId: 'sector', sourceRevision: 0, status: 'ready',
+			effectivePositions: [ [ 10, 20, 100 ] ],
+			effectiveRenderPositions: derived.map( ( position, index ) => [
+				position[ 0 ], position[ 1 ], 100 + index,
+			] as const ),
+		} ] ] ) } );
+		expect( render.vertices.map( ( vertex ) => vertex.resolvedWorldHeight ) )
+			.toEqual( derived.map( ( _, index ) => 100 + index ) );
+	} );
+
 	it( 'relative 保留 author offset，resolved world = surface + offset', () => {
 		const feature = normalizeFeature( {
 			...circle( HeightReference.RELATIVE_TO_TERRAIN ),

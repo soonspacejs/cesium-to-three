@@ -367,6 +367,8 @@ export class PlotEditor {
 			this._heightResolver = new HeightResolutionManager( {
 				provider: options.surfaceProvider,
 				document: this._store,
+				getRenderPositions: ( feature ) =>
+					this._adapters.require( feature.type ).toRenderDescription( feature as never ).positions,
 				onResolved: ( result ) => {
 					this._resolved.set( result.plotId, result );
 					this._events.dispatch( 'surfacechange', {

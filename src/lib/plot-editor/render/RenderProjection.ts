@@ -77,12 +77,17 @@ export class PlotRenderProjection {
 		const sourcePositions = getFeaturePositions( feature );
 		const resolved = validResolved( feature, context.resolved?.get( feature.id ) );
 		const surfaceStatus = resolveSurfaceStatus( feature.heightReference, resolved );
+		const effectiveRenderPositions = resolved?.effectiveRenderPositions;
 		const sourceVertices = sourcePositions.map( ( position, index ) =>
 			toRenderVertex(
 				position,
 				resolved?.effectivePositions[ index ]?.[ 2 ] ?? fallbackWorldHeight( feature, position ),
 			) );
-		const vertices = geometry.positions.map( ( position ) => {
+		const vertices = geometry.positions.map( ( position, renderIndex ) => {
+			const resolvedRenderPosition = effectiveRenderPositions?.[ renderIndex ];
+			if ( resolvedRenderPosition !== undefined ) {
+				return toRenderVertex( position, resolvedRenderPosition[ 2 ] );
+			}
 			const sourceIndex = closestSourceIndex( position, sourcePositions );
 			const source = sourcePositions[ sourceIndex ];
 			const effective = resolved?.effectivePositions[ sourceIndex ];
