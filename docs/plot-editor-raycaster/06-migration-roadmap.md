@@ -1,5 +1,7 @@
 # 迁移实施路线
 
+> 状态：阶段 0–6 均已完成。本文保留实施顺序，并在下方记录最终落点。
+
 ## 总原则
 
 迁移按可测试的垂直切片推进。新旧实体命中不能长期同时决定交互；过渡期可以 shadow-compare 记录差异，但用户可见选择必须只有一个权威结果。
@@ -135,3 +137,13 @@ overlayHit -> entityRayHit -> creationSurfaceHit -> camera/blank
 - demo 人工验收通过；
 - 旧 GIS 文档中的冲突描述已删除或标注历史方案。
 
+## 最终落点
+
+- `FeatureHitTester.ts` 及其单点像素命中测试已删除；区域选择由
+  `ProjectionSnapshot.ts` 和 `MarqueeSelectionProjector.ts` 独立承担；
+- `PlotEditor.ts` 使用 overlay → entity Raycaster → creation surface 的单次快照仲裁；
+- `EditorOverlayRenderer.ts` 统一拥有 pick root、registry、adapter registry 与 raycaster，
+  并在 feature 更新、隐藏、删除及 editor dispose 时同步清理；
+- point/image、line、area、text 四类适配器覆盖全部业务 feature 类型；
+- 公共 `plot-editor` barrel 已导出 registry、metadata、raycaster、NDC 与 adapter 契约；
+- 未保留迁移 feature flag、shadow compare 或 CSS 实体命中 fallback。

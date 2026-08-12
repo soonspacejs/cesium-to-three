@@ -1,6 +1,6 @@
 # 当前 Object3D 与命中能力审计
 
-> 本文只记录当前实现事实，不代表目标实现已经完成。
+> 本文主体记录迁移前审计事实；2026-08-12 已完成目标实现，末尾章节记录迁移结果。
 
 ## 结论
 
@@ -27,7 +27,8 @@ EditorOverlayRenderer
 ├─ plotDraftRoot : Object3D
 ├─ handleRoot : Object3D
 ├─ gizmoRoot : Object3D
-└─ feedbackRoot : Object3D
+├─ feedbackRoot : Object3D
+└─ plotEntityPickRoot : Group（迁移后新增，仅 layer 28）
 ```
 
 ## 命中能力矩阵
@@ -54,9 +55,9 @@ EditorOverlayRenderer
 
 因此 classification 显示 mesh 继续保持不可拾取，另由标准表面代理表达“用户可选择的区域”。
 
-## 当前 `FeatureHitTester` 的限制
+## 迁移前 `FeatureHitTester` 的限制
 
-`src/lib/plot-editor/selection/FeatureHitTester.ts` 目前以屏幕投影后的几何进行 CPU 命中。此路径存在结构性限制：
+迁移前的 `src/lib/plot-editor/selection/FeatureHitTester.ts` 以屏幕投影后的几何进行 CPU 命中。此路径存在结构性限制：
 
 - 命中与 Three 场景真实深度解耦；
 - 图形旋转、透视缩放和遮挡需要重复模拟；
@@ -64,11 +65,12 @@ EditorOverlayRenderer
 - 鼠标第一次点击究竟命中实体还是落入创建逻辑，取决于不完整的二维规则；
 - 选择框可出现，但并不证明射线命中了对象。
 
-该类在迁移完成后不再负责标绘实体命中；如框选仍需二维投影，可保留一个职责收窄后的区域选择模块。
+该类现已删除。框选所需的二维投影被拆分为
+`ProjectionSnapshot` 与 `MarqueeSelectionProjector`，它们没有单点实体选择 API。
 
 ## 当前图层事实
 
-`EditorOverlayLayer` 已使用 24–27：
+`EditorOverlayLayer` 当前使用 24–28：
 
 | 图层 | 当前用途 |
 | --- | --- |
@@ -76,8 +78,17 @@ EditorOverlayRenderer
 | 25 | `PLOT_HANDLE` |
 | 26 | `PLOT_GIZMO` |
 | 27 | `PLOT_FEEDBACK` |
+| 28 | `PLOT_PICK`（仅 Raycaster） |
 
-目标设计预留 28 为 `PLOT_PICK`。它只能由 `Raycaster.layers` 启用，不能被 `EditorCameraLayerLease` 自动启用，否则拾取代理可能被渲染。
+`PLOT_PICK` 只由 `Raycaster.layers` 启用；`EditorCameraLayerLease` 明确排除该层，
+因此拾取代理不会进入渲染截图。
+
+## 迁移结果
+
+所有现有标绘显示路径均属于 classification、RTE 或 Sprite 特殊语义，当前统一使用
+标准代理，未冒险复用不满足原生 `raycast()` 契约的显示对象。Registry 仍完整支持
+`source: 'visual'` 的受控登记、原 layer 恢复与显示资源非所有权，供未来出现安全的
+标准显示 Mesh 时直接复用。
 
 ## 必须保留的现有能力
 
@@ -88,4 +99,3 @@ EditorOverlayRenderer
 - pointer capture、相机锁、事务及撤销/重做。
 
 Raycaster 改造只替换“标绘实体怎样被命中”，不重写上述能力。
-

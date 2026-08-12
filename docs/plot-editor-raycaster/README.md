@@ -1,19 +1,24 @@
 # 标绘编辑器 Three.js Raycaster 拾取设计
 
-> 状态：Proposed Design，尚未实现  
+> 状态：Implemented，已完成实现与验收
 > 日期：2026-08-12  
+> 实现提交：`9f05ec9` 起的一组小步提交（当前分支 `edit-shape`）
 > 适用范围：`src/lib/plot-editor` 与 `src/lib/plot` 的标绘实体选择  
 > 核心决策：实体拾取统一使用 `THREE.Raycaster` 与 `Object3D.raycast()`
 
 ## 要解决的问题
 
-当前实体选择依赖屏幕投影、CSS 像素距离和二维包围形状。它会把“鼠标落在对象的屏幕包围区域”误认为“射线击中了对象”，并造成以下问题：
+迁移前的实体选择依赖屏幕投影、CSS 像素距离和二维包围形状。它会把“鼠标落在对象的屏幕包围区域”误认为“射线击中了对象”，并造成以下问题：
 
 - 单击已有文本时落入创建流程，无法稳定选中、移动；
 - 旋转文本的高亮范围与真实朝向不一致；
 - 小圆、图片点等对象因屏幕足迹规则缺失而无法选中；
 - 遮挡关系、前后深度和相机透视不能由真实几何决定；
 - 每新增一种图形，都需要重新实现一套二维命中算法。
+
+这些问题现已由 `PlotPickRegistry`、标准代理适配器与
+`PlotEntityRaycaster` 统一解决。单点实体选择不再存在 CSS 像素 fallback；
+二维投影仅保留给框选等明确的屏幕空间交互。
 
 ## 已锁定的设计决策
 
@@ -73,3 +78,17 @@ flowchart LR
 - 可选中结果由 `PlotPickRegistry` 同步。
 - 选择状态由编辑器选择控制器维护，不能写进材质颜色或从场景反推。
 
+## 实现与验收结果
+
+- point、image point、line、polygon、rectangle、circle、sector、arrow、text
+  均登记标准 Three `Object3D` 代理，并由原生 `raycast()` 求交；
+- `PLOT_PICK` 固定使用 layer 28，渲染相机租约明确排除该层；
+- classification/RTE 显示对象保持显示职责，pick 代理使用局部 ECEF
+  Float32 顶点；贴地表面仅对代理沿 WGS84 法向抬高 0.02m；
+- 同一 DOM 事件的 claim/dispatch 复用单次命中快照；overlay、实体、创建表面
+  按固定优先级仲裁；
+- 全量 plot-editor 单元测试 59 个文件、496 个用例通过，类型检查和库构建通过；
+- 1,000 个标准 Mesh 的 300 次 pointermove Raycaster 采样 P95 小于 4ms；
+  1,000 个静态 feature 连续同步 300 次零重建，单 feature revision 只替换一项；
+- Playwright 已通过八类代理 DOM 命中、小圆边缘选择、文本单击/拖动、双击编辑、
+  Escape/保存/外部确认及重复清理回归。
