@@ -152,6 +152,7 @@ export {
 	PlotEntityRaycaster,
 	PlotPickAdapterRegistry,
 	PlotPickRegistry,
+	TilesTerrainHeightProvider,
 	resolvePlotPickMetadata,
 	type CssViewportRect,
 	type PlotEntityHit,

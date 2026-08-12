@@ -27,3 +27,4 @@ export {
 	type PlotPickAdapterRegistryOptions,
 	type PlotPickBuildError,
 } from './PlotPickAdapterRegistry';
+export { TilesTerrainHeightProvider } from './TilesTerrainHeightProvider';
