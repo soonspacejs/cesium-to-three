@@ -4,6 +4,7 @@ import {
 	Vector3,
 	type Camera,
 	type Object3D,
+	type Vector2,
 } from 'three';
 import type { CesiumGroundFrameState } from '../../ground';
 import type { GeometryAdapterRegistry } from '../adapters/GeometryAdapterRegistry';
@@ -15,6 +16,13 @@ import type {
 	ResolvedPlotGeometry,
 } from '../document/types';
 import type { SelectionState } from '../state/SelectionModel';
+import {
+	PlotEntityRaycaster,
+	PlotPickAdapterRegistry,
+	PlotPickRegistry,
+	type PlotEntityHit,
+	type PlotPickBuildError,
+} from '../picking';
 import type { HitTarget, ScreenPoint, TransformMode } from '../state/types';
 import type {
 	EditorProjectionSnapshot,
@@ -70,6 +78,9 @@ export interface EditorOverlayRendererOptions {
 	readonly adapters: GeometryAdapterRegistry;
 	readonly requestRender?: ( reason: EditorRenderReason ) => void;
 	readonly onRenderError?: ( error: OverlayRenderError ) => void;
+	readonly onPickBuildError?: ( error: PlotPickBuildError ) => void;
+	/** 默认使用 Canvas2D 实测；无 DOM 测试环境可注入等价字体测量器。 */
+	readonly measureText?: ( text: string, fontSize: number ) => number;
 }
 
 export interface EditorOverlaySyncInput {
@@ -109,10 +120,12 @@ export class EditorOverlayRenderer {
 	public readonly plotCommittedRoot = namedRoot( 'plotCommittedRoot' );
 	public readonly plotDraftRoot = namedRoot( 'plotDraftRoot' );
 	public readonly plotSelectionRoot = namedRoot( 'plotSelectionRoot' );
+	public readonly plotEntityPickRoot: Group;
 	public readonly plotHandleRoot: Group;
 	public readonly plotGizmoRoot: Group;
 
 	private readonly _scene: Object3D;
+	private readonly _camera: Camera;
 	private readonly _cameraLease: EditorCameraLayerLease;
 	private readonly _adapters: GeometryAdapterRegistry;
 	private readonly _requestRender?: EditorOverlayRendererOptions[ 'requestRender' ];
@@ -124,14 +137,27 @@ export class EditorOverlayRenderer {
 	private readonly _gizmo: ScreenSpaceMarkerLayer;
 	private readonly _feedbackMarkers: ScreenSpaceMarkerLayer;
 	private readonly _boxSelection = new BoxSelectionFeedbackLayer();
+	private readonly _pickRegistry: PlotPickRegistry;
+	private readonly _pickAdapters: PlotPickAdapterRegistry;
+	private readonly _entityRaycaster: PlotEntityRaycaster;
 	private _sessionRevision = -1;
 	private _disposed = false;
 
 	public constructor( options: EditorOverlayRendererOptions ) {
 		this._scene = options.scene;
+		this._camera = options.camera;
 		this._adapters = options.adapters;
 		this._requestRender = options.requestRender;
 		this._cameraLease = new EditorCameraLayerLease( options.camera );
+		this._pickRegistry = new PlotPickRegistry();
+		this.plotEntityPickRoot = this._pickRegistry.root;
+		this._pickAdapters = new PlotPickAdapterRegistry( {
+			registry: this._pickRegistry,
+			adapters: options.adapters,
+			measureText: options.measureText ?? createCanvasTextMeasure(),
+			onBuildError: options.onPickBuildError,
+		} );
+		this._entityRaycaster = new PlotEntityRaycaster( this._pickRegistry );
 		this._handles = new ScreenSpaceMarkerLayer(
 			'plotHandleRoot', EditorOverlayLayer.PLOT_HANDLE,
 		);
@@ -170,6 +196,7 @@ export class EditorOverlayRenderer {
 			this.plotSelectionRoot,
 			this.plotHandleRoot,
 			this.plotGizmoRoot,
+			this.plotEntityPickRoot,
 		);
 	}
 
@@ -185,6 +212,7 @@ export class EditorOverlayRenderer {
 		const committed = this._committed.sync(
 			input.features, input.documentRevision, resolved,
 		);
+		this._pickAdapters.sync( input.features, resolved );
 		const drafts = ( input.draftFeatures ?? [] ).map( ( feature ) =>
 			cloneTransientFeature(
 				feature,
@@ -297,6 +325,12 @@ export class EditorOverlayRenderer {
 		] );
 	}
 
+	/** entity hit 只消费一次事件产生的 NDC 快照，返回原生 Raycaster 交点。 */
+	public hitTestEntity( ndc: Readonly<Vector2> ): PlotEntityHit | null {
+		if ( this._disposed ) return null;
+		return this._entityRaycaster.hitTest( ndc, this._cameraLeaseCamera() );
+	}
+
 	public dispose(): void {
 		if ( this._disposed ) return;
 		this._disposed = true;
@@ -307,6 +341,7 @@ export class EditorOverlayRenderer {
 			this.plotSelectionRoot,
 			this.plotHandleRoot,
 			this.plotGizmoRoot,
+			this.plotEntityPickRoot,
 		);
 		this._committed.dispose();
 		this._draft.dispose();
@@ -316,12 +351,19 @@ export class EditorOverlayRenderer {
 		this._gizmo.dispose();
 		this._feedbackMarkers.dispose();
 		this._boxSelection.dispose();
+		this._entityRaycaster.dispose();
+		this._pickAdapters.dispose();
+		this._pickRegistry.dispose();
 		this._cameraLease.release();
 		this._requestRender?.( 'dispose' );
 	}
 
 	private _assertOpen(): void {
 		if ( this._disposed ) throw new Error( 'EditorOverlayRenderer 已销毁。' );
+	}
+
+	private _cameraLeaseCamera(): Camera {
+		return this._camera;
 	}
 }
 
@@ -363,6 +405,20 @@ function namedRoot( name: string ): Group {
 	root.name = name;
 	root.matrixAutoUpdate = false;
 	return root;
+}
+
+function createCanvasTextMeasure(): ( text: string, fontSize: number ) => number {
+	if ( typeof document === 'undefined' ) {
+		// 纯 Node 测试不会显示文本；生产浏览器始终走下方 Canvas2D 实测。
+		return ( text, fontSize ) => Array.from( text ).length * fontSize;
+	}
+	const canvas = document.createElement( 'canvas' );
+	const context = canvas.getContext( '2d' );
+	if ( context === null ) throw new Error( '浏览器不支持 Canvas2D 文本测量。' );
+	return ( text, fontSize ) => {
+		context.font = `${ Math.max( fontSize, 1 ) }px sans-serif`;
+		return context.measureText( text ).width;
+	};
 }
 
 function cloneTransientFeature(

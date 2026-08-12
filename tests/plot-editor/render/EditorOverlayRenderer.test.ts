@@ -87,11 +87,11 @@ function createRenderer() {
 }
 
 describe( 'EditorOverlayRenderer', () => {
-	it( '以固定顺序挂载五个可见根，渲染相机不启用 PLOT_PICK', () => {
+	it( '以固定顺序挂载五个可见根与拾取根，渲染相机不启用 PLOT_PICK', () => {
 		const { scene, camera, overlay } = createRenderer();
 		expect( scene.children.map( ( child ) => child.name ) ).toEqual( [
 			'plotCommittedRoot', 'plotDraftRoot', 'plotSelectionRoot',
-			'plotHandleRoot', 'plotGizmoRoot',
+			'plotHandleRoot', 'plotGizmoRoot', 'plotEntityPickRoot',
 		] );
 		for ( const layer of [ EditorOverlayLayer.PLOT_CONTENT, EditorOverlayLayer.PLOT_HANDLE,
 			EditorOverlayLayer.PLOT_GIZMO, EditorOverlayLayer.PLOT_FEEDBACK ] ) {
@@ -99,6 +99,19 @@ describe( 'EditorOverlayRenderer', () => {
 		}
 		expect( camera.layers.isEnabled( EditorOverlayLayer.PLOT_PICK ) ).toBe( false );
 		overlay.dispose();
+	} );
+
+	it( 'sync 同帧建立标准拾取代理，dispose 后从 scene 移除', () => {
+		const { scene, overlay } = createRenderer();
+		const feature = point();
+		overlay.sync( { features: [ feature ], documentRevision: 0, sessionRevision: 0 } );
+		expect( overlay.plotEntityPickRoot.children ).toHaveLength( 1 );
+		expect( overlay.plotEntityPickRoot.children[ 0 ].userData.plotPick ).toMatchObject( {
+			featureId: feature.id, source: 'proxy', part: 'fill',
+		} );
+		overlay.dispose();
+		expect( scene.getObjectByName( 'plotEntityPickRoot' ) ).toBeUndefined();
+		expect( overlay.plotEntityPickRoot.children ).toHaveLength( 0 );
 	} );
 
 	it( '同帧显示 committed、selection outline、单选控制点与 ENU Gizmo', () => {
