@@ -4,6 +4,7 @@ export interface PlotTextLayoutInput {
 	readonly boxWidth?: number;
 	readonly boxHeight?: number;
 	readonly padding?: number | readonly [ number, number, number, number ];
+	readonly layoutDirection?: 'horizontal' | 'vertical-rl' | 'vertical-lr';
 }
 
 export interface PlotTextPadding {
@@ -19,6 +20,8 @@ export interface PlotTextLayout {
 	readonly fontSize: number;
 	readonly lineHeight: number;
 	readonly lines: readonly string[];
+	readonly columns: readonly ( readonly string[] )[];
+	readonly direction: NonNullable<PlotTextLayoutInput[ 'layoutDirection' ]>;
 	readonly padding: PlotTextPadding;
 }
 
@@ -32,11 +35,18 @@ export function measurePlotTextLayout(
 	const padding = normalizePlotTextPadding( input.padding );
 	const fontSize = Math.max( input.fontSize, 1 );
 	const lines = Object.freeze( String( input.content ).split( /\r\n?|\n/g ) );
-	const measuredWidth = Math.max( 1, ...lines.map( ( line ) => measure( line, fontSize ) ) );
 	const lineHeight = fontSize * 1.2;
-	const autoWidth = Math.ceil( measuredWidth + padding.left + padding.right );
-	const autoHeight = Math.ceil( lineHeight * Math.max( lines.length, 1 )
-		+ padding.top + padding.bottom );
+	const direction = input.layoutDirection ?? 'horizontal';
+	const columns = Object.freeze( lines.map( ( line ) => Object.freeze( Array.from( line ) ) ) );
+	const vertical = direction !== 'horizontal';
+	const measuredWidth = Math.max( 1, ...lines.map( ( line ) => measure( line, fontSize ) ) );
+	const autoWidth = vertical
+		? Math.ceil( lineHeight * Math.max( columns.length, 1 ) + padding.left + padding.right )
+		: Math.ceil( measuredWidth + padding.left + padding.right );
+	const autoHeight = vertical
+		? Math.ceil( fontSize * Math.max( 1, ...columns.map( ( column ) => column.length ) )
+			+ padding.top + padding.bottom )
+		: Math.ceil( lineHeight * Math.max( lines.length, 1 ) + padding.top + padding.bottom );
 	return Object.freeze( {
 		width: Math.max( 1, Math.ceil( input.boxWidth && input.boxWidth > 0
 			? input.boxWidth : autoWidth ) ),
@@ -45,6 +55,8 @@ export function measurePlotTextLayout(
 		fontSize,
 		lineHeight,
 		lines,
+		columns,
+		direction,
 		padding,
 	} );
 }

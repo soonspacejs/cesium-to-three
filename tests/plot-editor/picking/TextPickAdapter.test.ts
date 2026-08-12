@@ -48,4 +48,16 @@ describe( 'TextPickAdapter', () => {
 		expect( rotatedBox.getSize( new Vector3() ).distanceTo( baseBox.getSize( new Vector3() ) ) )
 			.toBeGreaterThan( 40 );
 	} );
+
+	it( '竖排布局改变代理宽高，拾取平面与显示排版继续同源', () => {
+		const adapter = new TextPickAdapter( { measureText: ( value, size ) => value.length * size } );
+		const material = new MeshBasicMaterial( { side: DoubleSide } );
+		const horizontal = adapter.build( text( { content: 'ABCD', layoutDirection: 'horizontal' } ),
+			[ 116, 39, 100 ], material )!;
+		const vertical = adapter.build( text( { content: 'ABCD', layoutDirection: 'vertical-rl' } ),
+			[ 116, 39, 100 ], material )!;
+		const horizontalSize = new Box3().setFromObject( horizontal.root ).getSize( new Vector3() );
+		const verticalSize = new Box3().setFromObject( vertical.root ).getSize( new Vector3() );
+		expect( horizontalSize.distanceTo( verticalSize ) ).toBeGreaterThan( 50 );
+	} );
 } );

@@ -1355,8 +1355,9 @@ function createTextCanvas(
 	const layout = measurePlotTextLayout( {
 		content: options.content, fontSize: options.fontSize,
 		boxWidth: options.boxWidth, boxHeight: options.boxHeight, padding: options.padding,
+		layoutDirection: options.layoutDirection,
 	}, ( line ) => ctx.measureText( line ).width );
-	const { padding, fontSize, lines, lineHeight } = layout;
+	const { padding, fontSize, lines, columns, lineHeight } = layout;
 	canvas.width = layout.width;
 	canvas.height = layout.height;
 
@@ -1388,10 +1389,28 @@ function createTextCanvas(
 
 	ctx.globalAlpha = 1.0;
 	ctx.fillStyle = safeColor( options.fontColor ?? '#ffffff', '#ffffff' ).getStyle();
-	ctx.textAlign =
-		options.textAlign === 'center' ? 'center'
-			: options.textAlign === 'right' ? 'right'
-				: 'left';
+	ctx.textAlign = options.textAlign === 'center' ? 'center'
+		: options.textAlign === 'right' ? 'right' : 'left';
+	if ( layout.direction !== 'horizontal' ) {
+		ctx.textAlign = 'center';
+		const ordered = layout.direction === 'vertical-rl' ? [ ...columns ].reverse() : columns;
+		const contentWidth = lineHeight * ordered.length;
+		const startX = options.textAlign === 'left' ? padding.left + lineHeight / 2
+			: options.textAlign === 'right' ? canvas.width - padding.right - contentWidth + lineHeight / 2
+				: ( canvas.width - contentWidth ) / 2 + lineHeight / 2;
+		for ( let columnIndex = 0; columnIndex < ordered.length; columnIndex++ ) {
+			const column = ordered[ columnIndex ];
+			const contentHeight = fontSize * column.length;
+			const startY = options.verticalAlign === 'top' ? padding.top + fontSize
+				: options.verticalAlign === 'bottom' ? canvas.height - padding.bottom - contentHeight + fontSize
+					: ( canvas.height - contentHeight ) / 2 + fontSize;
+			for ( let row = 0; row < column.length; row++ ) {
+				ctx.fillText( column[ row ], startX + columnIndex * lineHeight, startY + row * fontSize );
+			}
+		}
+		ctx.globalAlpha = 1.0;
+		return canvas;
+	}
 	const textX =
 		ctx.textAlign === 'center' ? canvas.width * 0.5
 			: ctx.textAlign === 'right' ? canvas.width - padding.right
