@@ -55,7 +55,7 @@ describe( 'SelectionModel', () => {
 		} );
 	} );
 
-	it( '默认排除 invisible、locked、editable=false，并支持类型 allow-list', () => {
+	it( '默认排除 invisible 与 editable=false，但 locked 可选且不可编辑', () => {
 		const document = createPlotDocumentStore( {
 			id: 'filter',
 			features: [
@@ -66,7 +66,7 @@ describe( 'SelectionModel', () => {
 			],
 		} );
 		const selection = new SelectionModel( document );
-		expect( selection.selectAll().ids ).toEqual( [ 'ok' ] );
+		expect( selection.selectAll().ids ).toEqual( [ 'ok', 'locked' ] );
 		expect( selection.selectAll( { lockedOnly: true } ).ids ).toEqual( [ 'locked' ] );
 		expect( selection.selectAll( { typeAllowList: [ 'line' ] } ).ids ).toEqual( [] );
 	} );

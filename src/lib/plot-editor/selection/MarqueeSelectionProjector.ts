@@ -121,7 +121,7 @@ function eligibleFeature( feature: Readonly<PlotFeature>, filter: SelectionFilte
 	if ( ( filter.visibleOnly ?? true ) && ! feature.visible ) return false;
 	if ( ( filter.editableOnly ?? true ) && feature.properties.editable === false ) return false;
 	const locked = feature.properties.locked === true;
-	if ( filter.lockedOnly === true ? ! locked : locked ) return false;
+	if ( filter.lockedOnly === true && ! locked ) return false;
 	return filter.typeAllowList === undefined || filter.typeAllowList.includes( feature.type );
 }
 

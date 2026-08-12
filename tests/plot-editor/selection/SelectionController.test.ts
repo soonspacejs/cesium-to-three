@@ -106,7 +106,7 @@ describe( 'SelectionController', () => {
 
 	it( 'selectAll 默认排除 locked，Delete active vertex 后清除 stale handle', () => {
 		const { document, history, model, controller } = setup();
-		expect( controller.selectAll().ids ).toEqual( [ 'a', 'b', 'polygon' ] );
+		expect( controller.selectAll().ids ).toEqual( [ 'a', 'b', 'locked', 'polygon' ] );
 		model.apply( { kind: 'replace', ids: [ 'polygon' ] } );
 		model.setActiveHandle( 'vertex:3', 'polygon' );
 		expect( controller.deleteContext().ok ).toBe( true );

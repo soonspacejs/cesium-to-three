@@ -249,7 +249,8 @@ function eligibleFeature(
 	const locked = feature.properties.locked === true;
 	if ( ( filter.visibleOnly ?? true ) && ! visible ) return false;
 	if ( ( filter.editableOnly ?? true ) && ! editable ) return false;
-	if ( filter.lockedOnly === true ? ! locked : locked ) return false;
+	// locked 默认仍可被选中以查看属性和获得高亮；编辑控制器会单独拒绝写操作。
+	if ( filter.lockedOnly === true && ! locked ) return false;
 	return allow === null || allow.has( feature.type );
 }
 
