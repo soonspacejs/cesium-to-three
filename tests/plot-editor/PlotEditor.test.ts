@@ -711,8 +711,12 @@ describe( 'PlotEditor facade', () => {
 	it( 'DOM pointer 使用 ECEF/CSS 投影命中 canonical entity 并更新 selection', () => {
 		const { editor, canvas, window } = createEditor( { autoAttachInputs: true } );
 		editor.execute( { type: 'feature.add', feature: point( 'center-point' ) } );
+		const entityHit = vi.spyOn( ( editor as unknown as {
+			_overlay: { hitTestEntity( ndc: unknown ): unknown };
+		} )._overlay, 'hitTestEntity' );
 
 		canvas.dispatch( 'pointerdown', pointerEvent( canvas, window, 0, 'pointerdown' ) );
+		expect( entityHit ).toHaveBeenCalledTimes( 1 );
 		canvas.dispatch( 'pointerup', pointerEvent( canvas, window, 0, 'pointerup' ) );
 
 		expect( [ ...editor.selection ] ).toEqual( [ 'center-point' ] );

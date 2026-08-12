@@ -185,6 +185,8 @@ export class PlotEditor {
 	private _vertexEditId: PlotFeatureId | undefined;
 	private _pointerTransactionStart: PointerTransactionStart | null = null;
 	private _pointerRotationAccumulator: PointerRotationAccumulator | null = null;
+	/** claim 与随后同步派发的同一个 DOM 事件共享一次命中快照。 */
+	private _claimedHitSnapshot: ClaimedHitSnapshot | null = null;
 	private _internalCommandDepth = 0;
 	private _pendingDocumentRevision: number | undefined;
 	private _sessionRevision = 0;
@@ -1083,7 +1085,10 @@ export class PlotEditor {
 		const needsHit = dispatch.input.phase === 'down'
 			|| dispatch.input.phase === 'up'
 			|| dispatch.input.phase === 'double-click';
-		const hit = needsHit ? this._hitTest( screen, dispatch.input.device ) : null;
+		const claimed = this._takeClaimedHitSnapshot( dispatch.input );
+		const hit = needsHit
+			? claimed?.hit ?? this._hitTest( screen, dispatch.input.device )
+			: null;
 		const interaction = this._state.interaction;
 		if ( dispatch.input.phase === 'down'
 			&& interaction.kind === 'drawing'
@@ -1118,12 +1123,17 @@ export class PlotEditor {
 	}
 
 	private _claimPointer( input: NormalizedPointerInput ): PointerClaim {
+		this._claimedHitSnapshot = null;
 		if ( input.modifiers.space ) return pointerClaim( 'navigation', 'camera-override', false, false );
 		if ( input.button !== 'primary' ) return pointerClaim( 'navigation', 'empty-surface', false, false );
 		if ( this._state.interaction.kind === 'drawing' ) {
 			return pointerClaim( 'editor', 'draw', true, true );
 		}
 		const hit = this._hitTest( { x: input.canvasX, y: input.canvasY }, input.device );
+		this._claimedHitSnapshot = Object.freeze( {
+			originalEvent: input.originalEvent,
+			hit,
+		} );
 		if ( hit?.kind === 'vertex' || hit?.kind === 'midpoint' ) {
 			return pointerClaim( 'editor', 'handle', true, true );
 		}
@@ -1131,6 +1141,15 @@ export class PlotEditor {
 		if ( hit?.kind === 'entity' ) return pointerClaim( 'editor', 'entity', true, true );
 		if ( input.modifiers.primary ) return pointerClaim( 'editor', 'box-select', true, true );
 		return pointerClaim( 'navigation', 'empty-surface', false, false );
+	}
+
+	private _takeClaimedHitSnapshot(
+		input: NormalizedPointerInput,
+	): ClaimedHitSnapshot | null {
+		const snapshot = this._claimedHitSnapshot;
+		if ( snapshot === null || snapshot.originalEvent !== input.originalEvent ) return null;
+		this._claimedHitSnapshot = null;
+		return snapshot;
 	}
 
 	private _hitTest(
@@ -1584,6 +1603,11 @@ interface PointerTransactionStart {
 interface PointerRotationAccumulator {
 	readonly wrapped: number;
 	readonly unwrapped: number;
+}
+
+interface ClaimedHitSnapshot {
+	readonly originalEvent: PointerEvent | MouseEvent;
+	readonly hit: HitTarget | null;
 }
 
 function subtractVector( left: Vector3Tuple, right: Vector3Tuple ): Vector3Tuple {
