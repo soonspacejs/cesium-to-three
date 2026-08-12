@@ -22,3 +22,8 @@ export {
 	type PlotEntityHit,
 	type PlotEntityRaycasterOptions,
 } from './PlotEntityRaycaster';
+export {
+	PlotPickAdapterRegistry,
+	type PlotPickAdapterRegistryOptions,
+	type PlotPickBuildError,
+} from './PlotPickAdapterRegistry';
