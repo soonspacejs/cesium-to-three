@@ -87,8 +87,8 @@ flowchart LR
   Float32 顶点；贴地表面仅对代理沿 WGS84 法向抬高 0.02m；
 - 同一 DOM 事件的 claim/dispatch 复用单次命中快照；overlay、实体、创建表面
   按固定优先级仲裁；
-- 全量 plot-editor 单元测试 59 个文件、496 个用例通过，类型检查和库构建通过；
+- 全量 plot-editor 单元测试 59 个文件、498 个用例通过，类型检查和库构建通过；
 - 1,000 个标准 Mesh 的 300 次 pointermove Raycaster 采样 P95 小于 4ms；
   1,000 个静态 feature 连续同步 300 次零重建，单 feature revision 只替换一项；
-- Playwright 已通过八类代理 DOM 命中、小圆边缘选择、文本单击/拖动、双击编辑、
-  Escape/保存/外部确认及重复清理回归。
+- Playwright 20 个集成用例全部通过，覆盖八类代理 DOM 命中、小圆边缘选择、
+  实体表面起步框选、文本单击/拖动、双击编辑、Escape/保存/外部确认及重复清理。
