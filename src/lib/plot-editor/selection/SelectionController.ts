@@ -8,16 +8,15 @@ import {
 } from '../state/SelectionModel';
 import type { HitTarget, ScreenPoint, SelectionOperation } from '../state/types';
 import {
-	FeatureHitTester,
-	type BoxSelectionOptions,
-	type BoxSelectionResult,
-	type EditorProjectionSnapshot,
-	type PointHitTestOptions,
-} from './FeatureHitTester';
+	MarqueeSelectionProjector,
+	type MarqueeSelectionOptions,
+	type MarqueeSelectionResult,
+} from './MarqueeSelectionProjector';
+import type { EditorProjectionSnapshot } from './ProjectionSnapshot';
 
 export interface SelectionControllerOptions {
 	readonly model: SelectionModel;
-	readonly hitTester: FeatureHitTester;
+	readonly marqueeProjector: MarqueeSelectionProjector;
 	readonly shapeEditor: ShapeEditController;
 }
 
@@ -26,41 +25,25 @@ export interface SelectAtResult {
 	readonly selection: SelectionState;
 }
 
-export interface SelectBoxResult extends BoxSelectionResult {
+export interface SelectBoxResult extends MarqueeSelectionResult {
 	readonly selection: SelectionState;
 }
 
 /** 将 click/box/delete 语义组合到 SelectionModel，但选择变化本身永远不写 history。 */
 export class SelectionController {
 	private readonly _model: SelectionModel;
-	private readonly _hitTester: FeatureHitTester;
+	private readonly _marqueeProjector: MarqueeSelectionProjector;
 	private readonly _shapeEditor: ShapeEditController;
 	private _disposed = false;
 
 	public constructor( options: SelectionControllerOptions ) {
 		this._model = options.model;
-		this._hitTester = options.hitTester;
+		this._marqueeProjector = options.marqueeProjector;
 		this._shapeEditor = options.shapeEditor;
 	}
 
 	public get state(): SelectionState {
 		return this._model.state;
-	}
-
-	public selectAt(
-		screen: ScreenPoint,
-		projection: EditorProjectionSnapshot,
-		operation: SelectionOperation,
-		options: Omit<PointHitTestOptions, 'selectedIds' | 'activeHandleId'> = {},
-	): SelectAtResult {
-		this._assertOpen();
-		const current = this._model.state;
-		const hit = this._hitTester.hitTest( screen, projection, {
-			...options,
-			selectedIds: current.ids,
-			activeHandleId: current.activeHandleId,
-		} );
-		return this.applyHit( hit, operation, options.filter );
 	}
 
 	public applyHit(
@@ -95,10 +78,10 @@ export class SelectionController {
 		end: ScreenPoint,
 		projection: EditorProjectionSnapshot,
 		operation: SelectionOperation,
-		options: BoxSelectionOptions = {},
+		options: MarqueeSelectionOptions = {},
 	): SelectBoxResult {
 		this._assertOpen();
-		const result = this._hitTester.selectBox( start, end, projection, options );
+		const result = this._marqueeProjector.select( start, end, projection, options );
 		if ( operation === 'replace' ) {
 			this._model.apply( { kind: 'replace', ids: result.ids }, options.filter );
 		} else if ( operation === 'add' ) {
@@ -117,22 +100,6 @@ export class SelectionController {
 	public clear(): SelectionState {
 		this._assertOpen();
 		return this._model.apply( { kind: 'clear' } );
-	}
-
-	public hoverAt(
-		screen: ScreenPoint,
-		projection: EditorProjectionSnapshot,
-		options: Omit<PointHitTestOptions, 'selectedIds' | 'activeHandleId'> = {},
-	): HitTarget | null {
-		this._assertOpen();
-		const current = this._model.state;
-		const hit = this._hitTester.hitTest( screen, projection, {
-			...options,
-			selectedIds: current.ids,
-			activeHandleId: current.activeHandleId,
-		} );
-		this._model.setHover( hit );
-		return hit;
 	}
 
 	/** Delete 优先删除活动 source vertex；没有活动 vertex 时原子删除全部 selection。 */

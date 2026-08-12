@@ -8,7 +8,7 @@ import type { Position3D } from '../document/types';
 import type {
 	EditorProjectionSnapshot,
 	ProjectedEditorPoint,
-} from './FeatureHitTester';
+} from './ProjectionSnapshot';
 
 export interface CameraProjectionSnapshotOptions {
 	readonly camera: Camera;

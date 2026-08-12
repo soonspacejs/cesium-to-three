@@ -154,7 +154,7 @@ export {
 export type {
 	EditorProjectionSnapshot,
 	ProjectedEditorPoint,
-} from './selection/FeatureHitTester';
+} from './selection/ProjectionSnapshot';
 export type {
 	SelectionFilter,
 	SelectionState,

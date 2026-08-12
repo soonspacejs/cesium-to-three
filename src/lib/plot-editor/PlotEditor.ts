@@ -75,9 +75,9 @@ import {
 	type EditorRenderReason,
 } from './render/EditorOverlayRenderer';
 import {
-	FeatureHitTester,
 	type EditorProjectionSnapshot,
-} from './selection/FeatureHitTester';
+} from './selection/ProjectionSnapshot';
+import { MarqueeSelectionProjector } from './selection/MarqueeSelectionProjector';
 import { createCameraProjectionSnapshot } from './selection/CameraProjectionSnapshot';
 import {
 	SelectionController,
@@ -157,7 +157,7 @@ export class PlotEditor {
 	private readonly _history: HistoryManager;
 	private readonly _events = new PlotEditorEventDispatcher();
 	private readonly _selectionModel;
-	private readonly _hitTester: FeatureHitTester;
+	private readonly _marqueeProjector: MarqueeSelectionProjector;
 	private readonly _selectionController: SelectionController;
 	private readonly _drawing: PlotDrawingController;
 	private readonly _shapeEditor: ShapeEditController;
@@ -261,10 +261,10 @@ export class PlotEditor {
 				type: 'cancelCurrentOperation', reason: 'escape',
 			} ),
 		} );
-		this._hitTester = new FeatureHitTester( this._store, adapters );
+		this._marqueeProjector = new MarqueeSelectionProjector( this._store, adapters );
 		this._selectionController = new SelectionController( {
 			model: this._selectionModel,
-			hitTester: this._hitTester,
+			marqueeProjector: this._marqueeProjector,
 			shapeEditor: this._shapeEditor,
 		} );
 		this._drawing = new PlotDrawingController( {

@@ -6,7 +6,7 @@ import { createPlotDocumentStore } from '../../../src/lib/plot-editor/document/P
 import { HeightReference, type PlotFeature } from '../../../src/lib/plot-editor/document/types';
 import { normalizeFeature } from '../../../src/lib/plot-editor/document/validate';
 import { ShapeEditController } from '../../../src/lib/plot-editor/editing/ShapeEditController';
-import { FeatureHitTester } from '../../../src/lib/plot-editor/selection/FeatureHitTester';
+import { MarqueeSelectionProjector } from '../../../src/lib/plot-editor/selection/MarqueeSelectionProjector';
 import {
 	SelectionController,
 	createAdapterAwareSelectionModel,
@@ -50,7 +50,7 @@ function setup() {
 	const shapeEditor = new ShapeEditController( { document, executor, history, adapters } );
 	const controller = new SelectionController( {
 		model,
-		hitTester: new FeatureHitTester( document, adapters ),
+		marqueeProjector: new MarqueeSelectionProjector( document, adapters ),
 		shapeEditor,
 	} );
 	const projection = {
@@ -63,32 +63,31 @@ function setup() {
 }
 
 describe( 'SelectionController', () => {
-	it( 'click replace/add/toggle/empty 按协议更新 primary，且不写 history', () => {
-		const { document, history, controller, projection } = setup();
-		expect( controller.selectAt( { x: 0, y: 0 }, projection, 'replace' ).selection )
+	it( 'Raycaster 命中快照的 replace/add/toggle/empty 更新 primary，且不写 history', () => {
+		const { document, history, controller } = setup();
+		const hit = ( entityId: string ) => ( { kind: 'entity' as const, entityId, distanceCssPixels: 0 } );
+		expect( controller.applyHit( hit( 'a' ), 'replace' ).selection )
 			.toMatchObject( { ids: [ 'a' ], primaryId: 'a' } );
-		expect( controller.selectAt( { x: 200, y: 0 }, projection, 'add' ).selection )
+		expect( controller.applyHit( hit( 'b' ), 'add' ).selection )
 			.toMatchObject( { ids: [ 'a', 'b' ], primaryId: 'b' } );
-		expect( controller.selectAt( { x: 0, y: 0 }, projection, 'toggle' ).selection )
+		expect( controller.applyHit( hit( 'a' ), 'toggle' ).selection )
 			.toMatchObject( { ids: [ 'b' ], primaryId: 'b' } );
-		expect( controller.selectAt( { x: 900, y: 900 }, projection, 'replace' ).selection.ids )
+		expect( controller.applyHit( null, 'replace' ).selection.ids )
 			.toEqual( [] );
 		expect( document.revision ).toBe( 0 );
 		expect( history.state.undoCount ).toBe( 0 );
 	} );
 
-	it( 'handle hit 激活稳定 handle；hover 只进入 transient selection state', () => {
-		const { document, model, controller, projection } = setup();
+	it( 'overlay handle 命中快照激活稳定 handle，且不写 document', () => {
+		const { document, model, controller } = setup();
 		model.apply( { kind: 'replace', ids: [ 'polygon' ] } );
-		const selected = controller.selectAt( { x: 0, y: 0 }, projection, 'replace' );
+		const selected = controller.applyHit( {
+			kind: 'vertex', entityId: 'polygon', handleId: 'vertex:0', distanceCssPixels: 0,
+		}, 'replace' );
 		expect( selected.hit ).toMatchObject( {
 			kind: 'vertex', entityId: 'polygon', handleId: 'vertex:0',
 		} );
 		expect( selected.selection.activeHandleId ).toBe( 'vertex:0' );
-		expect( controller.hoverAt( { x: 200, y: 0 }, projection ) ).toMatchObject( {
-			kind: 'vertex', handleId: 'vertex:1',
-		} );
-		expect( controller.state.hoverTarget ).toMatchObject( { handleId: 'vertex:1' } );
 		expect( document.revision ).toBe( 0 );
 	} );
 

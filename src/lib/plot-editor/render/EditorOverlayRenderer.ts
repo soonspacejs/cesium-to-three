@@ -25,8 +25,12 @@ import { PlotPickRegistry } from '../picking/PlotPickRegistry';
 import type { HitTarget, ScreenPoint, TransformMode } from '../state/types';
 import type {
 	EditorProjectionSnapshot,
-	OverlayHitCandidate,
-} from '../selection/FeatureHitTester';
+} from '../selection/ProjectionSnapshot';
+
+export interface OverlayHitCandidate {
+	readonly layer: 'active-handle' | 'gizmo' | 'handle';
+	readonly target: HitTarget;
+}
 import {
 	computeSelectionPivot,
 	createGizmoHandleDescriptions,
