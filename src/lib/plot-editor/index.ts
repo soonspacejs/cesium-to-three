@@ -148,6 +148,24 @@ export type {
 } from './persistence/PlotDocumentImporter';
 
 export {
+	clientPointToNdc,
+	PlotEntityRaycaster,
+	PlotPickAdapterRegistry,
+	PlotPickRegistry,
+	resolvePlotPickMetadata,
+	type CssViewportRect,
+	type PlotEntityHit,
+	type PlotEntityRaycasterOptions,
+	type PlotPickBuildError,
+	type PlotPickEntry,
+	type PlotPickMetadata,
+	type PlotPickPart,
+	type PlotPickRegistration,
+	type PlotPickRevision,
+	type PlotPickSource,
+} from './picking';
+
+export {
 	createCameraProjectionSnapshot,
 	type CameraProjectionSnapshotOptions,
 } from './selection/CameraProjectionSnapshot';

@@ -281,6 +281,13 @@ export class PlotEditor {
 			adapters,
 			requestRender: ( reason ) => options.renderHost.requestRender( reason ),
 			onRenderError: ( error ) => this._events.dispatch( 'rendererror', error ),
+			onPickBuildError: ( error ) => this._events.dispatch( 'rendererror', {
+				code: 'RENDER_BUILD_FAILED',
+				featureId: error.featureId,
+				pass: 'picking',
+				message: `构建 ${ error.featureType } 实体的拾取代理失败。`,
+				cause: error.error,
+			} ),
 		} );
 		this._importer = new PlotDocumentImporter( {
 			document: this._store,

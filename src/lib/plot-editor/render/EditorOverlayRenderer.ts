@@ -72,7 +72,7 @@ export type EditorRenderReason =
 	| 'dispose';
 
 export interface OverlayRenderError extends PlotRenderError {
-	readonly pass: 'committed' | 'draft' | 'selection';
+	readonly pass: 'committed' | 'draft' | 'selection' | 'picking';
 }
 
 export interface EditorOverlayRendererOptions {
