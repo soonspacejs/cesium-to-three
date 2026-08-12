@@ -25,10 +25,10 @@ export class TextPickAdapter {
 		const layout = measurePlotTextLayout( style, this._measureText );
 		const width = layout.width * style.scale;
 		const height = layout.height * style.scale;
-		const centerEast = style.offsetX + ( style.anchorX === 'left' ? width / 2
-			: style.anchorX === 'right' ? - width / 2 : 0 );
-		const centerNorth = style.offsetY + ( style.anchorY === 'top' ? - height / 2
-			: style.anchorY === 'bottom' ? height / 2 : 0 );
+		const centerLocalEast = style.anchorX === 'left' ? width / 2
+			: style.anchorX === 'right' ? - width / 2 : 0;
+		const centerLocalNorth = style.anchorY === 'top' ? - height / 2
+			: style.anchorY === 'bottom' ? height / 2 : 0;
 		const rotation = style.rotation * Math.PI / 180;
 		const cos = Math.cos( rotation );
 		const sin = Math.sin( rotation );
@@ -36,8 +36,12 @@ export class TextPickAdapter {
 		const corners = [ [ -width / 2, -height / 2 ], [ width / 2, -height / 2 ],
 			[ width / 2, height / 2 ], [ -width / 2, height / 2 ] ] as const;
 		const positions = corners.map( ( [ x, y ] ) => {
-			const east = centerEast + x * cos + y * sin;
-			const north = centerNorth - x * sin + y * cos;
+			// anchor 位移属于文本框局部坐标，必须与四角一同旋转；offset 才是
+			// 不随文本旋转的全局 ENU 位移。顺序与贴地文本显示 footprint 完全一致。
+			const localEast = centerLocalEast + x;
+			const localNorth = centerLocalNorth + y;
+			const east = style.offsetX + localEast * cos + localNorth * sin;
+			const north = style.offsetY - localEast * sin + localNorth * cos;
 			return ecefToGeodetic( enuToEcef( [ east, north, 0 ], frame ), worldPosition[ 0 ] );
 		} );
 		return createTriangulatedSurface(

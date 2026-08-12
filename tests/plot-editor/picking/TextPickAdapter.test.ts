@@ -1,5 +1,6 @@
-import { Box3, DoubleSide, MeshBasicMaterial, Vector3 } from 'three';
+import { Box3, DoubleSide, MeshBasicMaterial, Raycaster, Vector3 } from 'three';
 import { describe, expect, it, vi } from 'vitest';
+import { createEnuFrame, enuToEcef } from '../../../src/lib/plot-editor/document/geodesy';
 import { HeightReference, type TextFeature } from '../../../src/lib/plot-editor/document/types';
 import { normalizeFeature } from '../../../src/lib/plot-editor/document/validate';
 import { TextPickAdapter } from '../../../src/lib/plot-editor/picking/adapters/TextPickAdapter';
@@ -47,6 +48,33 @@ describe( 'TextPickAdapter', () => {
 			.toBeGreaterThan( 20 );
 		expect( rotatedBox.getSize( new Vector3() ).distanceTo( baseBox.getSize( new Vector3() ) ) )
 			.toBeGreaterThan( 40 );
+	} );
+
+	it( '旋转文本只命中真实四边形，不命中轴对齐外包框的空角', () => {
+		const worldPosition = [ 116, 39, 100 ] as const;
+		const adapter = new TextPickAdapter( { measureText: ( value, size ) => value.length * size } );
+		const material = new MeshBasicMaterial( { side: DoubleSide } );
+		const result = adapter.build(
+			text( { boxWidth: 120, boxHeight: 20, rotation: 45 } ),
+			worldPosition,
+			material,
+		)!;
+		result.root.updateWorldMatrix( true, true );
+		const frame = createEnuFrame( worldPosition );
+		const raycaster = new Raycaster();
+		const castAt = ( east: number, north: number ) => {
+			const surface = enuToEcef( [ east, north, 0 ], frame );
+			const origin = new Vector3(
+				surface[ 0 ] + frame.up[ 0 ] * 100,
+				surface[ 1 ] + frame.up[ 1 ] * 100,
+				surface[ 2 ] + frame.up[ 2 ] * 100,
+			);
+			raycaster.set( origin, new Vector3( ...frame.up ).negate() );
+			return raycaster.intersectObject( result.root, true );
+		};
+		expect( castAt( 0, 0 ) ).toHaveLength( 1 );
+		// (0, 40) 位于旋转后 AABB 内，但位于 120×20 的真实文本四边形外。
+		expect( castAt( 0, 40 ) ).toHaveLength( 0 );
 	} );
 
 	it( '竖排布局改变代理宽高，拾取平面与显示排版继续同源', () => {

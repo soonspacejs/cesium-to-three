@@ -39,7 +39,11 @@ export function measurePlotTextLayout(
 	const direction = input.layoutDirection ?? 'horizontal';
 	const columns = Object.freeze( lines.map( ( line ) => Object.freeze( Array.from( line ) ) ) );
 	const vertical = direction !== 'horizontal';
-	const measuredWidth = Math.max( 1, ...lines.map( ( line ) => measure( line, fontSize ) ) );
+	// 贴地文本逐字符绘制，因此宽度也必须逐字符累计；整行 measureText 会引入
+	// kerning，令拾取框与真实纹理在 AV 等组合处产生尺寸差异。
+	const measuredWidth = Math.max( 1, ...columns.map( ( characters ) =>
+		characters.reduce( ( width, character ) => width + measure( character, fontSize ), 0 ),
+	) );
 	const autoWidth = vertical
 		? Math.ceil( lineHeight * Math.max( columns.length, 1 ) + padding.left + padding.right )
 		: Math.ceil( measuredWidth + padding.left + padding.right );
