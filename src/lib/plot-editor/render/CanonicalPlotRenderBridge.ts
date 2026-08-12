@@ -1,7 +1,7 @@
 import type { Object3D } from 'three';
 import type { CesiumGroundFrameState } from '../../ground';
 import { PlotPrimitiveBridge } from '../../plot/PlotPrimitiveBridge';
-import { plotOrderToRenderOrder } from '../../plot/plot-order';
+import { plotOrderToRenderOrder, sanitizePlotOrder } from '../../plot/plot-order';
 import { GisPlotBase } from '../../plot/plugins/base';
 import {
 	GisPlotArrow,
@@ -39,6 +39,11 @@ export interface CanonicalPlotRenderBridgeOptions {
 	readonly projection: PlotRenderProjection;
 	readonly requestRender?: ( reason: 'document' | 'surface' | 'dispose' ) => void;
 	readonly onRenderError?: ( error: PlotRenderError ) => void;
+	/**
+	 * 为当前 bridge 预留 plot-order 分带。committed、draft 与 selection 不能
+	 * 共用同一分带，因为每个贴地面都拥有不可拆分的前/后 stencil 与着色命令块。
+	 */
+	readonly plotOrderOffset?: number;
 	/** 测试/宿主扩展点；默认使用内置 variable-height RTE primitive。 */
 	readonly createVariablePrimitive?: (
 		render: RenderFeature,
@@ -63,6 +68,7 @@ export class CanonicalPlotRenderBridge {
 	private readonly _projection: PlotRenderProjection;
 	private readonly _requestRender?: CanonicalPlotRenderBridgeOptions[ 'requestRender' ];
 	private readonly _onRenderError?: CanonicalPlotRenderBridgeOptions[ 'onRenderError' ];
+	private readonly _plotOrderOffset: number;
 	private readonly _createVariablePrimitive: NonNullable<CanonicalPlotRenderBridgeOptions[ 'createVariablePrimitive' ]>;
 	private readonly _legacyBridge: PlotPrimitiveBridge;
 	private readonly _legacyPlots = new Map<PlotFeatureId, GisPlotBase>();
@@ -79,12 +85,13 @@ export class CanonicalPlotRenderBridge {
 		this._projection = options.projection;
 		this._requestRender = options.requestRender;
 		this._onRenderError = options.onRenderError;
+		this._plotOrderOffset = sanitizePlotOrder( options.plotOrderOffset ?? 0 );
 		this._createVariablePrimitive = options.createVariablePrimitive
 			?? createVariableHeightRtePrimitive;
 		this._legacyBridge = new PlotPrimitiveBridge( {
 			scene: options.root,
 			getRenderOrder: ( id, fallback ) => plotOrderToRenderOrder(
-				this._order.get( id ) ?? fallback,
+				this._plotOrderOffset + ( this._order.get( id ) ?? fallback ),
 			),
 			getRevision: ( id ) => this._renderVersions.get( id ),
 			onBuildError: ( error, id ) => this._legacyBuildFailures.set( id, error ),
@@ -163,7 +170,9 @@ export class CanonicalPlotRenderBridge {
 			try {
 				const candidate = this._createVariablePrimitive(
 					render,
-					plotOrderToRenderOrder( this._order.get( feature.id ) ?? 0 ),
+					plotOrderToRenderOrder(
+						this._plotOrderOffset + ( this._order.get( feature.id ) ?? 0 ),
+					),
 				);
 				if ( candidate === null ) throw new Error( legacy.message );
 				// 候选成功后再替换，旧 GPU 资源在此之前保持可见。

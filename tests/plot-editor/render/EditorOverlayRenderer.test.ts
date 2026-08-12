@@ -35,6 +35,39 @@ function point(): PlotFeature {
 	} );
 }
 
+function textFeature(): PlotFeature {
+	return normalizeFeature( {
+		id: 'text-a', type: 'text', geometry: { position: [ 116, 39, 10 ] },
+		style: {
+			...STYLE, content: '单击后应高亮', fontColor: '#ffffff', fontSize: 20,
+			scale: 1, textAlign: 'center', verticalAlign: 'middle',
+			anchorX: 'center', anchorY: 'middle', padding: 5,
+			layoutDirection: 'horizontal', rotation: 0, offsetX: 0, offsetY: 0,
+			showBorder: true,
+		},
+		heightReference: HeightReference.NONE, visible: true, properties: {}, revision: 0,
+	} );
+}
+
+function groundCircle( id: string, longitude: number, revision = 0 ): PlotFeature {
+	return normalizeFeature( {
+		id, type: 'circle', geometry: { center: [ longitude, 39, 0 ], radius: 100 },
+		style: { ...STYLE, fillColor: '#8b572a' },
+		heightReference: HeightReference.CLAMP_TO_GROUND,
+		visible: true, properties: {}, revision,
+	} );
+}
+
+function meshRenderOrders( root: Group ): number[] {
+	const orders: number[] = [];
+	root.traverse( ( object ) => {
+		if ( object instanceof Mesh && object.name.startsWith( 'CesiumClassification' ) ) {
+			orders.push( object.renderOrder );
+		}
+	} );
+	return orders.sort( ( left, right ) => left - right );
+}
+
 function createRenderer() {
 	const scene = new Group();
 	const camera = new PerspectiveCamera( 60, 16 / 9, 1, 1e8 );
@@ -91,6 +124,36 @@ describe( 'EditorOverlayRenderer', () => {
 				if ( object instanceof Mesh ) expect( object.layers.isEnabled( 0 ) ).toBe( false );
 			} );
 		}
+	} );
+
+	it( '拖拽贴地圆时 committed、draft 与 selection 的 stencil 命令块不交错', () => {
+		const { overlay } = createRenderer();
+		const committed = groundCircle( 'circle-a', 116 );
+		const draft = groundCircle( 'circle-a', 116.01, 1 );
+		overlay.sync( {
+			features: [ committed ], documentRevision: 0, sessionRevision: 1,
+			draftFeatures: [ draft ],
+			selection: { ids: [ 'circle-a' ], primaryId: 'circle-a' },
+			transformMode: 'translate',
+		} );
+
+		const committedOrders = meshRenderOrders( overlay.plotCommittedRoot );
+		const draftOrders = meshRenderOrders( overlay.plotDraftRoot );
+		const selectionOrders = meshRenderOrders( overlay.plotSelectionRoot );
+		expect( committedOrders ).toHaveLength( 3 );
+		expect( draftOrders ).toHaveLength( 3 );
+		expect( selectionOrders ).toHaveLength( 3 );
+		expect( committedOrders ).toEqual( [
+			committedOrders[ 0 ], committedOrders[ 0 ] + 1, committedOrders[ 0 ] + 2,
+		] );
+		expect( draftOrders ).toEqual( [
+			draftOrders[ 0 ], draftOrders[ 0 ] + 1, draftOrders[ 0 ] + 2,
+		] );
+		expect( selectionOrders ).toEqual( [
+			selectionOrders[ 0 ], selectionOrders[ 0 ] + 1, selectionOrders[ 0 ] + 2,
+		] );
+		expect( Math.max( ...committedOrders ) ).toBeLessThan( Math.min( ...draftOrders ) );
+		expect( Math.max( ...draftOrders ) ).toBeLessThan( Math.min( ...selectionOrders ) );
 	} );
 
 	it( '控制点/Gizmo 命中使用 CSS 形状代理，完全不依赖 Three Raycaster', () => {
@@ -162,15 +225,28 @@ describe( 'EditorOverlayRenderer', () => {
 		) ).toBeDefined();
 	} );
 
-	it( '点/文本选择使用独立屏幕反馈，不复制业务内容材质', () => {
+	it( '点选中后同时渲染整体轮廓和锚点反馈', () => {
 		const { overlay } = createRenderer();
 		const feature = point();
 		const result = overlay.sync( {
 			features: [ feature ], documentRevision: 0, sessionRevision: 1,
 			selection: { ids: [ feature.id ], primaryId: feature.id },
 		} );
-		expect( result.selection.renderedCount ).toBe( 0 );
+		expect( result.selection.renderedCount ).toBe( 1 );
 		expect( overlay.plotSelectionRoot.getObjectByName( 'EditorMarker:selection-marker:point-a' ) ).toBeDefined();
+	} );
+
+	it( '文本选中后渲染整块青色轮廓，同时保留锚点反馈', () => {
+		const { overlay } = createRenderer();
+		const feature = textFeature();
+		const result = overlay.sync( {
+			features: [ feature ], documentRevision: 0, sessionRevision: 1,
+			selection: { ids: [ feature.id ], primaryId: feature.id },
+		} );
+		expect( result.selection.renderedCount ).toBe( 1 );
+		expect( overlay.plotSelectionRoot.getObjectByName(
+			'EditorMarker:selection-marker:text-a',
+		) ).toBeDefined();
 	} );
 
 	it( 'hover outline 与 selection 并存，且 hover 不改变文档', () => {

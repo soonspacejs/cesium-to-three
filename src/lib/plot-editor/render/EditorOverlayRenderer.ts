@@ -150,12 +150,15 @@ export class EditorOverlayRenderer {
 		const projection = new PlotRenderProjection( options.adapters );
 		this._committed = createBridge(
 			this.plotCommittedRoot, projection, 'committed', options,
+			OVERLAY_PLOT_ORDER_OFFSETS.committed,
 		);
 		this._draft = createBridge(
 			this.plotDraftRoot, projection, 'draft', options,
+			OVERLAY_PLOT_ORDER_OFFSETS.draft,
 		);
 		this._selection = createBridge(
 			this.plotSelectionRoot, projection, 'selection', options,
+			OVERLAY_PLOT_ORDER_OFFSETS.selection,
 		);
 
 		isolateOverlayObjects( this.plotCommittedRoot, EditorOverlayLayer.PLOT_CONTENT );
@@ -202,14 +205,13 @@ export class EditorOverlayRenderer {
 			: sourceById.get( selectionState.hoverTarget.entityId );
 		const selectionFeatures = [
 			...selected
-			.filter( ( feature ) => feature.type !== 'point' && feature.type !== 'text' )
 			.map( ( feature ) => cloneTransientFeature(
 				feature,
 				selectionRenderId( feature.id ),
 				input.sessionRevision,
 				selectionStyle( feature, false ),
 			) ),
-			...( hovered === undefined || hovered.type === 'point' || hovered.type === 'text'
+			...( hovered === undefined
 				? []
 				: [ cloneTransientFeature(
 					hovered,
@@ -326,15 +328,27 @@ export class EditorOverlayRenderer {
 const EMPTY_RESOLVED: ReadonlyMap<PlotFeatureId, ResolvedPlotGeometry> = new Map();
 const EMPTY_SELECTION: SelectionState = Object.freeze( { ids: Object.freeze( [] ) } );
 
+// classification 表面占用三个连续 renderOrder。旧实现的三个 bridge 都从零开始，
+// 拖动贴地圆时 committed、draft、selection 的 stencil 命令会交错，进而暴露本应
+// 隐藏的 shadow volume。每段预留一百万个序位，使命令块全局连续且不依赖 feature id。
+const OVERLAY_PLOT_ORDER_BAND_SIZE = 1_000_000;
+const OVERLAY_PLOT_ORDER_OFFSETS = Object.freeze( {
+	committed: 0,
+	draft: OVERLAY_PLOT_ORDER_BAND_SIZE,
+	selection: OVERLAY_PLOT_ORDER_BAND_SIZE * 2,
+} );
+
 function createBridge(
 	root: Group,
 	projection: PlotRenderProjection,
 	pass: OverlayRenderError[ 'pass' ],
 	options: EditorOverlayRendererOptions,
+	plotOrderOffset: number,
 ): CanonicalPlotRenderBridge {
 	return new CanonicalPlotRenderBridge( {
 		root,
 		projection,
+		plotOrderOffset,
 		requestRender: ( reason ) => options.requestRender?.(
 			pass === 'committed' ? reason : pass === 'draft' ? 'draft' : 'selection',
 		),
