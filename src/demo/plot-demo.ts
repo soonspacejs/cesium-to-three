@@ -34,6 +34,7 @@ import {
 	EditorSurfacePicker,
 	GlobeControlsNavigationAdapter,
 	HeightReference,
+	TilesTerrainHeightProvider,
 	createPlotEditor,
 	type DrawTool,
 	type PlotDocumentSnapshot,
@@ -139,6 +140,9 @@ export function runPlotDemo(): void {
 	const surfacePicker = new EditorSurfacePicker(
 		createDemoSurfaceRaycastPort( renderer, camera, tilesRenderer ),
 	);
+	// classification 文本按瓦片深度贴地；Raycaster 代理必须解析到同一地形高度，
+	// 否则斜视时代理会停留在椭球面并投影到可见文字之外。
+	const surfaceProvider = new TilesTerrainHeightProvider( tilesRenderer );
 	const status: DemoStatus = {
 		mode: 'select',
 		selection: '无',
@@ -163,6 +167,7 @@ export function runPlotDemo(): void {
 			} ),
 		},
 		surfacePicker,
+		surfaceProvider,
 		cameraController: navigation,
 		requestSave: ( snapshot ) => {
 			localStorage.setItem( 'cesium-to-three/plot-editor-demo', JSON.stringify( snapshot ) );
