@@ -87,15 +87,17 @@ function createRenderer() {
 }
 
 describe( 'EditorOverlayRenderer', () => {
-	it( '以固定顺序挂载五个根，并开启对应相机 layer', () => {
+	it( '以固定顺序挂载五个可见根，渲染相机不启用 PLOT_PICK', () => {
 		const { scene, camera, overlay } = createRenderer();
 		expect( scene.children.map( ( child ) => child.name ) ).toEqual( [
 			'plotCommittedRoot', 'plotDraftRoot', 'plotSelectionRoot',
 			'plotHandleRoot', 'plotGizmoRoot',
 		] );
-		for ( const layer of Object.values( EditorOverlayLayer ) ) {
+		for ( const layer of [ EditorOverlayLayer.PLOT_CONTENT, EditorOverlayLayer.PLOT_HANDLE,
+			EditorOverlayLayer.PLOT_GIZMO, EditorOverlayLayer.PLOT_FEEDBACK ] ) {
 			expect( camera.layers.isEnabled( layer ) ).toBe( true );
 		}
+		expect( camera.layers.isEnabled( EditorOverlayLayer.PLOT_PICK ) ).toBe( false );
 		overlay.dispose();
 	} );
 
