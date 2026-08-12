@@ -1,6 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import type { EditorCommand, PlotFeature, Position3D } from '../../../src/lib/plot-editor';
+import {
+	createEnuFrame,
+	ecefToGeodetic,
+	enuToEcef,
+} from '../../../src/lib/plot-editor/document/geodesy';
 
 interface DemoEditorApi {
 	dispose(): void;
@@ -68,25 +73,35 @@ test( '八类图形的可见内部点均经 DOM pointer 命中 canonical selecti
 	const browserErrors = collectBrowserErrors( page );
 	await openDemo( page );
 	const targets = await page.evaluate( () => {
-		const editor = window.__plotDemo!.editor;
-		const projection = editor._createProjectionSnapshot();
-		return editor.document.getAll().map( ( feature ) => {
-			let position: Position3D;
-			if ( feature.type === 'point' || feature.type === 'text' ) {
-				position = feature.geometry.position;
-			} else if ( feature.type === 'circle' || feature.type === 'sector' ) {
-				position = feature.geometry.center;
-			} else if ( feature.type === 'line' || feature.type === 'arrow' ) {
-				position = feature.geometry.positions[ Math.floor( feature.geometry.positions.length / 2 ) ];
-			} else {
-				const positions = feature.geometry.positions;
-				position = [
-					positions.reduce( ( sum, point ) => sum + point[ 0 ], 0 ) / positions.length,
-					positions.reduce( ( sum, point ) => sum + point[ 1 ], 0 ) / positions.length,
-					0,
-				];
-			}
-			return { id: feature.id as string, type: feature.type as string, point: projection.project( position ) };
+		const demo = window.__plotDemo!;
+		const editor = demo.editor as unknown as { readonly _overlay: { readonly plotEntityPickRoot: {
+			traverse( callback: ( object: any ) => void ): void;
+		} } };
+		const canvas = demo.renderer.domElement;
+		const rect = canvas.getBoundingClientRect();
+		return demo.editor.document.getAll().map( ( feature ) => {
+			let mesh: any;
+			editor._overlay.plotEntityPickRoot.traverse( ( object ) => {
+				if ( mesh === undefined && object.userData.plotPick?.featureId === feature.id ) {
+					object.traverse( ( child: any ) => {
+						if ( mesh === undefined && child.geometry?.getAttribute( 'position' ) !== undefined ) mesh = child;
+					} );
+				}
+			} );
+			if ( mesh === undefined ) throw new Error( `${ feature.id } 缺少拾取 Mesh。` );
+			const attribute = mesh.geometry.getAttribute( 'position' );
+			const index = mesh.geometry.index;
+			const a = mesh.position.clone().fromBufferAttribute( attribute, index?.getX( 0 ) ?? 0 );
+			const b = mesh.position.clone().fromBufferAttribute( attribute, index?.getX( 1 ) ?? 1 );
+			const c = mesh.position.clone().fromBufferAttribute( attribute, index?.getX( 2 ) ?? 2 );
+			const world = a.add( b ).add( c ).multiplyScalar( 1 / 3 );
+			mesh.localToWorld( world );
+			const ndc = world.project( demo.camera as any );
+			return { id: feature.id as string, type: feature.type as string, point: {
+				x: rect.left + ( ndc.x + 1 ) * rect.width / 2,
+				y: rect.top + ( 1 - ndc.y ) * rect.height / 2,
+				visible: ndc.z >= -1 && ndc.z <= 1,
+			} };
 		} );
 	} );
 
@@ -134,12 +149,40 @@ test( '八类图形的可见内部点均经 DOM pointer 命中 canonical selecti
 		'plotSelectionRoot',
 		'plotHandleRoot',
 		'plotGizmoRoot',
+		'plotEntityPickRoot',
 	] );
 	await page.evaluate( () => window.__plotDemo!.editor.enterVertexEdit( 'demo-line' ) );
 	await expect.poll( () => page.evaluate( () => window.__plotDemo!.scene
 		.getObjectByName( 'plotHandleRoot' )?.children.length ?? 0 ) ).toBeGreaterThanOrEqual( 5 );
 
 	expect( browserErrors ).toEqual( [] );
+} );
+
+test( '点图形的可见圆面边缘可选中，并显示整体选中轮廓', async ( { page } ) => {
+	await openDemo( page );
+	const point = await page.evaluate( () => {
+		const editor = window.__plotDemo!.editor;
+		const feature = editor.document.get( 'demo-point' );
+		if ( feature?.type !== 'point' || feature.style.pointStyle === 'image' ) {
+			throw new Error( 'demo-point 不存在或不是几何点。' );
+		}
+		return { position: feature.geometry.position, size: feature.style.size };
+	} );
+	const frame = createEnuFrame( point.position );
+	const edgeEcef = enuToEcef( [ point.size * 0.4, 0, 0 ], frame );
+	const edge = ecefToGeodetic( edgeEcef, point.position[ 0 ] );
+	const target = await page.evaluate( ( edgePosition ) => {
+		const projected = window.__plotDemo!.editor._createProjectionSnapshot().project( edgePosition );
+		if ( projected === null || ! projected.visible ) throw new Error( '点边缘不可见。' );
+		return { x: projected.x, y: projected.y };
+	}, edge );
+
+	await page.mouse.click( target.x, target.y );
+	await expect.poll( () => selectedIds( page ) ).toEqual( [ 'demo-point' ] );
+	await expect.poll( () => page.evaluate( () => {
+		const root = window.__plotDemo!.scene.getObjectByName( 'plotSelectionRoot' );
+		return root?.children.length ?? 0;
+	} ) ).toBeGreaterThan( 1 );
 } );
 
 test( '绘制、历史、原生文本和键盘变换形成完整浏览器闭环', async ( { page } ) => {
