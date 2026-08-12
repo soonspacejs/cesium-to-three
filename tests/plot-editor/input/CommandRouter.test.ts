@@ -120,6 +120,22 @@ describe( 'CommandRouter pointer', () => {
 			.toMatchObject( { type: 'selectAt', hit: pendingHit } );
 	} );
 
+	it( 'Primary 从实体可见面起步时 click 保持 toggle，越阈值则升级为框选', () => {
+		const pendingHit = { kind: 'entity' as const, entityId: 'text', distanceCssPixels: 0 };
+		const router = new CommandRouter( context( {
+			interaction: 'pointer-pending', pendingHit,
+		} ) );
+		const primary = { ...modifiers, primary: true, ctrl: true, shift: true };
+		expect( router.routePointer( pointer( 'up', { modifiers: primary } ), null )[ 0 ] )
+			.toMatchObject( { type: 'selectAt', operation: 'toggle', hit: pendingHit } );
+		expect( router.routePointer( pointer( 'move', { modifiers: primary }, {
+			gesture: 'dragging',
+		} ) )[ 0 ] ).toEqual( {
+			type: 'beginBoxSelection', pointerId: 1,
+			screen: { x: 12, y: 34 }, additive: true,
+		} );
+	} );
+
 	it( '活动拖拽的 move/up 携带当帧 Shift/Alt，不沿用 pointerdown 快照', () => {
 		const router = new CommandRouter( context( { interaction: 'dragging-handle' } ) );
 		const current = { ...modifiers, shift: true, alt: true };

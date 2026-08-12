@@ -743,10 +743,15 @@ function beginBoxSelection(
 	event: Extract<EditorIntent, { type: 'beginBoxSelection' }>,
 ): EditorTransition {
 	if ( state.activeTransaction !== undefined ) return transactionBusy( state );
+	if ( state.interaction.kind === 'pointer-pending'
+		&& state.interaction.pointerId !== event.pointerId ) return transition( state );
+	const start = state.interaction.kind === 'pointer-pending'
+		? state.interaction.start
+		: event.screen;
 	return transition( withState( state, {
 		interaction: Object.freeze( {
 			kind: 'box-selecting', pointerId: event.pointerId,
-			start: freezeScreen( event.screen ), current: freezeScreen( event.screen ),
+			start: freezeScreen( start ), current: freezeScreen( event.screen ),
 			additive: event.additive,
 		} ),
 	} ) );

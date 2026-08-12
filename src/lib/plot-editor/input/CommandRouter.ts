@@ -102,16 +102,22 @@ export class CommandRouter {
 			}
 			if ( context.interaction === 'pointer-pending' ) {
 				const pending = context.pendingHit;
-				return dispatch.gesture === 'dragging' && pending?.kind === 'entity'
-					&& pending.entityId !== undefined
+				if ( dispatch.gesture !== 'dragging' || pending?.kind !== 'entity'
+					|| pending.entityId === undefined ) return Object.freeze( [] );
+				// Primary+click 仍是 toggle；只有越过拖拽阈值才升级为框选。
+				// 这样框选起点即使落在文本/图片的真实可见平面内也不会误移动实体。
+				return input.modifiers.primary
 					? one( {
+						type: 'beginBoxSelection', pointerId: input.pointerId, screen,
+						additive: input.modifiers.shift,
+					} )
+					: one( {
 						type: 'beginEntityDrag',
 						pointerId: input.pointerId,
 						entityId: pending.entityId,
 						screen,
 						modifiers: interactionModifiers( input.modifiers.shift, input.modifiers.alt ),
-					} )
-					: Object.freeze( [] );
+					} );
 			}
 			return dispatch.owner === 'editor'
 				? Object.freeze( [] )

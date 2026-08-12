@@ -335,6 +335,20 @@ describe( 'PlotEditorMachine selection and transactions', () => {
 		} );
 	} );
 
+	it( '实体 pending 升级框选时保留 pointerdown 起点', () => {
+		let state = step( ready(), {
+			type: 'beginPointerPending', pointerId: 7, screen: { x: 10, y: 20 },
+			hit: { kind: 'entity', entityId: 'text', distanceCssPixels: 0 }, operation: 'toggle',
+		} ).state;
+		state = step( state, {
+			type: 'beginBoxSelection', pointerId: 7, screen: { x: 40, y: 60 }, additive: true,
+		} ).state;
+		expect( state.interaction ).toEqual( {
+			kind: 'box-selecting', pointerId: 7,
+			start: { x: 10, y: 20 }, current: { x: 40, y: 60 }, additive: true,
+		} );
+	} );
+
 	it( 'G/R/S 复用事务；多键 nudge 在最后一个 keyup 才提交', () => {
 		let transition = step( ready( [ 'a' ] ), { type: 'beginTransform', mode: 'translate' } );
 		let state = transition.state;

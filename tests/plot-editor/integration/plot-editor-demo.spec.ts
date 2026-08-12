@@ -345,6 +345,9 @@ test( '绘制中右键拖拽只导航，右键单击才完成草稿', async ( { 
 } );
 
 test( '鼠标修饰键点选与框选遵守选择、相机和 revision 契约', async ( { page } ) => {
+	// SwiftShader 下本用例串行执行四轮完整 pointer 手势，使用慢用例预算；
+	// 各阶段仍由 expect.poll 的 10 秒局部超时约束，逻辑卡死不会被掩盖。
+	test.slow();
 	const browserErrors = collectBrowserErrors( page );
 	await openDemo( page );
 	const point = await featureAnchorProjection( page, 'demo-point' );
