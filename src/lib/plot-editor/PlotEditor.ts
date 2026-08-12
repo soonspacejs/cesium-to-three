@@ -65,6 +65,7 @@ import {
 	type ResolvedPositions,
 } from './picking/height-resolver';
 import { getSurfaceTarget } from './picking/EditorPicker';
+import { clientPointToNdc } from './picking/PointerNdc';
 import type {
 	PlotSurfaceHeightProvider,
 	PlotSurfacePicker,
@@ -1127,7 +1128,7 @@ export class PlotEditor {
 
 	private _hitTest(
 		screen: ScreenPoint,
-		pointerType: 'mouse' | 'pen' | 'touch',
+		_pointerType: 'mouse' | 'pen' | 'touch',
 	): HitTarget | null {
 		let projection: EditorProjectionSnapshot;
 		try {
@@ -1135,17 +1136,25 @@ export class PlotEditor {
 		} catch {
 			return null;
 		}
-		const selectedIds = this._vertexEditId === undefined
-			? Object.freeze( [] )
-			: Object.freeze( [ this._vertexEditId ] );
 		const overlayHits = this._overlay.hitTestOverlayMarkers( screen, projection );
-		return this._hitTester.hitTest( screen, projection, {
-			pointerType,
-			selectedIds,
-			activeHandleId: this._vertexEditId === undefined
-				? undefined
-				: this._selectionModel.state.activeHandleId,
-			overlayHits,
+		const overlayHit = overlayHits[ 0 ]?.target;
+		if ( overlayHit !== undefined ) return overlayHit;
+		const rect = this._canvas.getBoundingClientRect();
+		const ndc = clientPointToNdc(
+			rect.left + screen.x,
+			rect.top + screen.y,
+			rect,
+		);
+		if ( ndc === null ) return null;
+		const entityHit = this._overlay.hitTestEntity( ndc );
+		return entityHit === null ? null : Object.freeze( {
+			kind: 'entity' as const,
+			entityId: entityHit.featureId,
+			// 状态机保留旧字段兼容性；实体最终裁决只来自世界空间射线距离。
+			distanceCssPixels: 0,
+			depth: entityHit.distance,
+			zOrder: entityHit.metadata.plotOrder,
+			depthApproximate: false,
 		} );
 	}
 

@@ -16,13 +16,12 @@ import type {
 	ResolvedPlotGeometry,
 } from '../document/types';
 import type { SelectionState } from '../state/SelectionModel';
+import { PlotEntityRaycaster, type PlotEntityHit } from '../picking/PlotEntityRaycaster';
 import {
-	PlotEntityRaycaster,
 	PlotPickAdapterRegistry,
-	PlotPickRegistry,
-	type PlotEntityHit,
 	type PlotPickBuildError,
-} from '../picking';
+} from '../picking/PlotPickAdapterRegistry';
+import { PlotPickRegistry } from '../picking/PlotPickRegistry';
 import type { HitTarget, ScreenPoint, TransformMode } from '../state/types';
 import type {
 	EditorProjectionSnapshot,
@@ -319,10 +318,15 @@ export class EditorOverlayRenderer {
 		projection: EditorProjectionSnapshot,
 	): readonly OverlayHitCandidate[] {
 		if ( this._disposed ) return Object.freeze( [] );
-		return Object.freeze( [
+		const hits = [
 			...markerHitCandidates( this._handles.getDescriptions(), screen, projection, false ),
 			...markerHitCandidates( this._gizmo.getDescriptions(), screen, projection, true ),
-		] );
+		];
+		hits.sort( ( left, right ) => overlayLayerPriority( right.layer )
+			- overlayLayerPriority( left.layer )
+			|| left.target.distanceCssPixels - right.target.distanceCssPixels
+			|| ( right.target.zOrder ?? 0 ) - ( left.target.zOrder ?? 0 ) );
+		return Object.freeze( hits );
 	}
 
 	/** entity hit 只消费一次事件产生的 NDC 快照，返回原生 Raycaster 交点。 */
@@ -707,6 +711,10 @@ function markerHitCandidates(
 		} ) );
 	}
 	return results;
+}
+
+function overlayLayerPriority( layer: OverlayHitCandidate[ 'layer' ] ): number {
+	return layer === 'active-handle' ? 3 : layer === 'gizmo' ? 2 : 1;
 }
 
 function markerDistance(

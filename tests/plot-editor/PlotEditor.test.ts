@@ -829,7 +829,7 @@ describe( 'PlotEditor facade', () => {
 
 	it( 'dispose 幂等地摘除 overlay 并归还导航资源', () => {
 		const { editor, scene, navigation } = createEditor();
-		expect( scene.children ).toHaveLength( 5 );
+		expect( scene.children ).toHaveLength( 6 );
 
 		editor.dispose();
 		editor.dispose();
