@@ -114,6 +114,22 @@ describe( 'Ground classification stencil system shaders', () => {
 		expect( source.fragmentShader ).not.toContain( 'gl_FragDepth' );
 	} );
 
+	it( 'uses north-zero clockwise headings for rotated circle sectors', () => {
+		const source = createGroundClassificationColorShaders(
+			'surface',
+			COLOR_MATERIAL,
+			true,
+		);
+
+		// localMeters = (东, 北)，atan(东, 北) 才与标绘和拾取统一为正北 0°、顺时针。
+		expect( source.fragmentShader )
+			.toContain( 'atan(circleVectorMeters.x, circleVectorMeters.y)' );
+		expect( source.fragmentShader )
+			.not.toContain( 'atan(circleVectorMeters.y, circleVectorMeters.x)' );
+		expect( source.fragmentShader )
+			.toContain( '(circleHeading - sectorStart) * sectorDirection' );
+	} );
+
 	it( 'uses decal footprint inputs without enabling surface shape branches', () => {
 		const source = createGroundClassificationColorShaders(
 			'decal',

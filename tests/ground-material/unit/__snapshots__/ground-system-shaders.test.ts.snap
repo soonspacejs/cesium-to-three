@@ -1299,9 +1299,12 @@ void c23_evaluateCircle(inout c23_surfaceEvaluation evaluation) {
 	float safeSectorAngle = clamp(abs(c23_circleSectorAngleRadians), 0.0, c23_twoPi);
 	float sectorDirection = c23_circleSectorAngleRadians < 0.0 ? -1.0 : 1.0;
 	bool fullCircleSector = safeSectorAngle >= c23_twoPi - 1e-5;
-	float circleAngle = c23_wrappedPositiveAngle(atan(circleVectorMeters.y, circleVectorMeters.x));
+	// localMeters 的 x/y 分别表示东/北方向。标绘方位角约定为正北 0°、顺时针递增，
+	// 因此必须使用 atan(东, 北)；atan(北, 东) 会退回数学角度，导致旋转后的扇形
+	// 显示区域与按地理方位角生成的拾取代理错开。
+	float circleHeading = c23_wrappedPositiveAngle(atan(circleVectorMeters.x, circleVectorMeters.y));
 	float sectorStart = c23_wrappedPositiveAngle(c23_circleSectorStartRadians);
-	float sectorLocalAngle = c23_wrappedPositiveAngle((circleAngle - sectorStart) * sectorDirection);
+	float sectorLocalAngle = c23_wrappedPositiveAngle((circleHeading - sectorStart) * sectorDirection);
 	bool insideSectorAngle = fullCircleSector || sectorLocalAngle <= safeSectorAngle;
 	if (!insideSectorAngle) {
 		evaluation.coverage = 0.0;
