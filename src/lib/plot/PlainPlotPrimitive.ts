@@ -43,6 +43,7 @@ import { encodeScalarRTE } from '../ground/math/rte-encoding';
 import { acquireImageTexture } from '../ground/image';
 
 import type { GisPlotBase } from './plugins/base';
+import { measurePlotTextLayout } from './text-layout';
 import type {
 	PlotCircleOptions,
 	PlotLineOptions,
@@ -1307,6 +1308,8 @@ function buildTextGroup(
 		// Text still uses a billboard sprite; line/fill precision is handled by RTE mesh paths.
 		depthTest: false,
 		depthWrite: false,
+		// SpriteMaterial.rotation 才是 billboard 文本的真实显示旋转来源。
+		rotation: - ( options.rotation ?? 0 ) * DEG_TO_RAD,
 	} );
 	const sprite = new Sprite( material );
 	const metersPerPixel = Number.isFinite( options.scale ) && ( options.scale ?? 0 ) > 0
@@ -1340,9 +1343,6 @@ function createTextCanvas(
 	options: PlotTextOptions,
 	style: PlainStyle,
 ): HTMLCanvasElement {
-	const padding = normalizePadding( options.padding );
-	const fontSize = Math.max( options.fontSize ?? 16, 1 );
-	const lines = String( options.content ?? '' ).split( /\r\n?|\n/g );
 	const canvas = document.createElement( 'canvas' );
 	const ctx = canvas.getContext( '2d' );
 	if ( ! ctx ) {
@@ -1351,13 +1351,14 @@ function createTextCanvas(
 		return canvas;
 	}
 
-	ctx.font = `${ fontSize }px sans-serif`;
-	const measuredWidth = Math.max( 1.0, ...lines.map( line => ctx.measureText( line ).width ) );
-	const lineHeight = fontSize * 1.2;
-	const autoWidth = Math.ceil( measuredWidth + padding.left + padding.right );
-	const autoHeight = Math.ceil( lineHeight * Math.max( lines.length, 1 ) + padding.top + padding.bottom );
-	canvas.width = Math.max( 1, Math.ceil( options.boxWidth && options.boxWidth > 0 ? options.boxWidth : autoWidth ) );
-	canvas.height = Math.max( 1, Math.ceil( options.boxHeight && options.boxHeight > 0 ? options.boxHeight : autoHeight ) );
+	ctx.font = `${ Math.max( options.fontSize ?? 16, 1 ) }px sans-serif`;
+	const layout = measurePlotTextLayout( {
+		content: options.content, fontSize: options.fontSize,
+		boxWidth: options.boxWidth, boxHeight: options.boxHeight, padding: options.padding,
+	}, ( line ) => ctx.measureText( line ).width );
+	const { padding, fontSize, lines, lineHeight } = layout;
+	canvas.width = layout.width;
+	canvas.height = layout.height;
 
 	ctx.clearRect( 0, 0, canvas.width, canvas.height );
 	ctx.font = `${ fontSize }px sans-serif`;
@@ -1406,19 +1407,4 @@ function createTextCanvas(
 	}
 	ctx.globalAlpha = 1.0;
 	return canvas;
-}
-
-function normalizePadding(
-	padding: number | [ number, number, number, number ] | undefined,
-): { top: number; right: number; bottom: number; left: number } {
-	if ( Array.isArray( padding ) ) {
-		return {
-			top: Math.max( padding[ 0 ] ?? 0, 0 ),
-			right: Math.max( padding[ 1 ] ?? 0, 0 ),
-			bottom: Math.max( padding[ 2 ] ?? 0, 0 ),
-			left: Math.max( padding[ 3 ] ?? 0, 0 ),
-		};
-	}
-	const value = Math.max( padding ?? 4, 0 );
-	return { top: value, right: value, bottom: value, left: value };
 }
